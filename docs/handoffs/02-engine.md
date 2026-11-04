@@ -29,8 +29,10 @@ below, each with its reason:
   acknowledgement: a `SeqCst` fence pair between the swap and the tick's flag proves no tick
   holds one. So the list of kept graphs is bounded (empty after any `prepare` or `reap` with no
   tick mid-cycle) and a stopped engine releases them at once. `prepare` may drop graphs itself.
-  Lane 00's test that two unticked graphs survive a `reap` became two stronger ones (dropped at
-  once with nothing ticking; kept while a tick is mid-cycle until its acknowledgement passes).
+  Lane 00's test that two unticked graphs survive a `reap` became two stronger ones: a unit
+  test that they are dropped at once with nothing ticking, and `tests/handoff.rs`, where two
+  graphs prepared while a gated probe holds the tick mid-cycle are kept until its
+  acknowledgement passes them, and then dropped on the host thread.
 - **Step 4: one tick at a time** is enforced (a `ticking` flag; a concurrent call plays
   silence) because a chain needs `&mut` and `process` takes `&self`. The `unsafe impl Sync` is
   one type, `TickOnly<T>`, holding the working bus, each graph's chains and each lent

@@ -93,8 +93,12 @@ instance home on the dropping thread.
 `trait Lender { fn lend(&self, instance, plugin_id) -> Result<Option<Box<dyn
 AudioProcessor>>, LendError>; fn generation(&self) -> u64; }`. `Ok(None)` is an instance the
 lender does not hold (a missing plugin); `Err` is one it holds and cannot lend now —
-`LendError::Busy` (lent to someone) or `OtherPlugin` (the instance now names another plugin).
-The generation moves whenever what the lender holds changes. `NoPlugins` lends nothing.
+`LendError::Busy` (lent and not home yet: for an instance the engine holds, to the engine
+itself, which keeps it; for any other, to another borrower, and the insert is a reported
+pass-through until it comes home and the generation moves) or `OtherPlugin` (the instance now
+names another plugin). The generation moves whenever what the lender holds changes (an
+instance added or retired); a move alone sets no held instance up again (§ Setting an instance
+up again). `NoPlugins` lends nothing.
 
 **An instance is lent once and shared between graphs.** `prepare` runs on the host thread while
 the tick is still running the current graph, whose chains hold every lent instance; lending
@@ -204,8 +208,8 @@ changes, and a data thread that pumps on command.
 
 - `src/engine.rs`: a channel at unity reaches Monitor bit-exact while its muted Master send
   reaches nothing; −6 dB on a send follows the taper and the ear button plays Master in Monitor;
-  with no tick running a replaced graph is dropped at once; a tick in flight keeps every graph
-  it may hold until its acknowledgement passes it; stats count frames, the quantum and the rate;
+  with no tick running a replaced graph is dropped at once and the acknowledgement follows the
+  tick; stats count frames, the quantum and the rate;
   the engine runs at the quantum limit whatever block it was given, and `set_rate` changes only
   a different rate.
 - `tests/graph.rs`: a sine through a −6.02 dB chain with MON on and MST off lands in Monitor at
@@ -221,7 +225,8 @@ changes, and a data thread that pumps on command.
   backend; a second tick at the same time plays silence.
 - `tests/handoff.rs`: the previous graph drops on the host thread only after the tick
   acknowledges the next (a homecoming counter and the thread id, with the data thread held
-  mid-cycle by a gated probe); with nothing ticking a replaced graph and its instances go home
+  mid-cycle by a gated probe while two graphs are prepared, both kept until the tick
+  acknowledges the newest); with nothing ticking a replaced graph and its instances go home
   at once; an instance survives a new insert and a move to another strip without a new setup;
   a retired instance goes home and its insert is reported; a new instance under a held id takes
   over; a new rate sets every instance up again once no running graph holds it, playing as a
