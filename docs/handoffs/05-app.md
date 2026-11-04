@@ -1,6 +1,37 @@
 # 05 — App
 
-**Record — not yet built.**
+**Record — look gate rendered 2026-11-04, awaiting the user's verdict; steps 2–9 not started.**
+Step 1 is built: the theme as named constants (`app/src/theme.rs`: every colour, the meter
+gradient, the corners, the strip and header sizes, the font sizes), IBM Plex Sans Condensed
+400/500/600 and Plex Mono 400/500 embedded with their OFL licence (`app/assets/fonts/`), the
+console drawn static from `FakeHost` (`strip.rs`, `console.rs`, `meters.rs`, `icons.rs`,
+`ui.rs`), and the headless capture `--dump-png` (`capture.rs`), whose output is
+[egui-look-gate.png](../design/prototype/egui-look-gate.png) beside
+[screenshot.png](../design/prototype/screenshot.png). `cargo run -p vix-mix -- --fake
+--quit-after-frames 3` still exits 0. [reference/app.md](../reference/app.md) says what is
+built. `crates/vixmix-host/src/fake.rs` is unchanged: the example data already held everything
+the strips show. Deviations, each with its reason:
+
+- **The capture is the whole console, not one strip of each.** Every channel strip is the
+  one `strip::channel` and both mixes the one `strip::mix`, so six and two cost nothing more,
+  and the screenshot is the whole console: like beside like is what the user judges. The
+  header's display and the add-channel column (steps 6 and 3) are drawn too, static, for the
+  same reason; nothing senses the pointer.
+- **`--dump-png`, not `egui_kittest`.** The flag draws through the window's own paint path
+  (`gpu::upload`, `gpu::encode`, now shared), so the PNG is what the window shows; it adds
+  only `png`, already in the lock; and `cargo test` stays free of a GPU, which neither CI leg
+  has. It is deterministic (`FakeHost` is seeded): the same adapter draws the same PNG.
+- **The peak-hold line is built now** (step 3's `MeterFader` holds 900 ms, then falls 0.006
+  a frame), as window state in `meters.rs`, because the peak lines are part of the look; the
+  fader's gestures are not.
+- **Icons are the prototype's SVG paths followed with egui's painter** (`icons.rs`), because
+  egui draws no SVG and a rasterizing crate would add a dependency for fourteen strokes.
+- **Type.** Sans 500 is embedded as listed but prototype v5 sets nothing in it (its 500s are
+  all mono). The MST tag's mono 600 is drawn in mono 500, the heaviest mono embedded.
+- **The header** says "Vix Mix" (the charter's name), not the prototype's "Mixer", draws no
+  in-app window buttons (step 6: the desktop's decorations), and the display is the
+  prototype's cells (`48 kHz`, `256 samples`, `5.3 ms`, `DSP` with its bar) instead of lane
+  00's one line; its test changed with it. The window has no 1-point border of its own.
 **Needs:** 00. **Runs alongside:** 01, 02, 03, 04. **Size:** XL. Starts on Windows against
 `FakeHost`.
 

@@ -64,6 +64,14 @@ the data thread or the rings (03), the instances (04) or when to prepare (06). S
 [docs/reference/engine.md](docs/reference/engine.md) and
 [handoff 02](docs/handoffs/02-engine.md).
 
+**The look gate is rendered (2026-11-04), awaiting the user's verdict:**
+[handoff 05](docs/handoffs/05-app.md) step 1 put prototype v5's theme (`app/src/theme.rs`) and
+embedded Plex fonts into the window, which now draws the console static from the host, and
+`cargo run -p vix-mix -- --dump-png <file>` captures it offscreen at 2×
+(`docs/design/prototype/egui-look-gate.png`, beside `screenshot.png`). No gesture, popover,
+browser or editor window yet: steps 2–9 wait on the verdict (keep going in egui, or Slint). See
+`docs/reference/app.md`.
+
 ## Git workflow (read first)
 
 **Work on a branch, never on `master`/`main`.** Every change is a PR: `kit push --yes` runs
