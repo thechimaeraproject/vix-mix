@@ -1,12 +1,14 @@
 //! The catalog the plugin browser searches: every VST3 effect a scan found, classified into
-//! the prototype's types, with favourites and the recent list, cached as `plugins.ron`.
+//! the prototype's types, with favourites and the recent list, cached as `plugins.ron` beside
+//! the scan's per-bundle record (`crate::scan`).
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use chimaeraproject_fs::{FsError, Loaded, atomic_write, load_or_default};
-use chimaeraproject_vst3_host::{HostContext, ScanOptions, scan};
 use serde::{Deserialize, Serialize};
+
+use crate::scan::CachedBundle;
 
 /// The cache's file name in the profile's directory, beside `setup.ron`.
 pub const FILE_NAME: &str = "plugins.ron";
@@ -129,56 +131,7 @@ pub struct Catalog {
     pub recent: Vec<String>,
 }
 
-/// What a scan produced: the catalog, and every bundle that could not be described, each a
-/// message ending with what to do.
-#[derive(Debug, Default)]
-pub struct ScanOutcome {
-    pub catalog: Catalog,
-    pub failures: Vec<String>,
-}
-
 impl Catalog {
-    /// Scans `dirs` (the SDK's places from `default_search_dirs()` plus the preferences'
-    /// extras) for VST3 effects, on the UI thread. Favourites and recent are empty: the caller
-    /// carries them over from the catalog it had.
-    pub fn scan(dirs: &[PathBuf], host: &HostContext) -> ScanOutcome {
-        let report = scan(dirs, host, &ScanOptions::default());
-        let mut plugins = Vec::new();
-        for bundle in &report.bundles {
-            for class in bundle.audio_classes() {
-                let is_effect = class
-                    .sub_categories
-                    .iter()
-                    .flat_map(|s| s.split('|'))
-                    .any(|part| part.trim() == "Fx");
-                if !is_effect {
-                    continue;
-                }
-                plugins.push(PluginEntry {
-                    id: class.id.processor_id(),
-                    name: class.name.clone(),
-                    vendor: class.vendor.clone(),
-                    kind: PluginKind::from_sub_categories(&class.sub_categories),
-                    bundle: bundle.name.clone(),
-                    path: bundle.path.clone(),
-                });
-            }
-        }
-        plugins.sort_by_key(|p| p.name.to_lowercase());
-        let failures = report
-            .failures
-            .iter()
-            .map(|f| format!("{}: {}", f.path.display(), f.error))
-            .collect();
-        ScanOutcome {
-            catalog: Catalog {
-                plugins,
-                ..Catalog::default()
-            },
-            failures,
-        }
-    }
-
     /// The entry with `id`.
     pub fn get(&self, id: &str) -> Option<&PluginEntry> {
         self.plugins.iter().find(|p| p.id == id)
@@ -252,20 +205,90 @@ impl Catalog {
         }
     }
 
-    /// Reads `dir/plugins.ron`; no file is an empty catalog (scan to fill it).
-    pub fn load(dir: &Path) -> Loaded<Catalog> {
-        load_or_default(dir.join(FILE_NAME), |bytes| {
-            ron::from_str::<Catalog>(&String::from_utf8_lossy(bytes))
-        })
+    /// The browser's Maker list: every vendor with how many plugins it has, by name.
+    pub fn vendors(&self) -> Vec<(&str, usize)> {
+        let mut vendors: Vec<(&str, usize)> = Vec::new();
+        for plugin in &self.plugins {
+            match vendors.iter_mut().find(|(v, _)| *v == plugin.vendor) {
+                Some((_, count)) => *count += 1,
+                None => vendors.push((&plugin.vendor, 1)),
+            }
+        }
+        vendors.sort_by_key(|(v, _)| v.to_lowercase());
+        vendors
     }
 
-    /// Writes `dir/plugins.ron` atomically. `dir` must exist.
-    pub fn save(&self, dir: &Path) -> Result<(), FsError> {
-        let text = ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default())
-            // Plain data with string keys; serializing cannot fail.
-            .unwrap_or_default();
-        atomic_write(dir.join(FILE_NAME), text.as_bytes())
+    /// Reads the catalog in `dir/plugins.ron`; no file is an empty catalog (scan to fill it).
+    pub fn load(dir: &Path) -> Loaded<Catalog> {
+        let (file, problem) = load_file(dir).into_parts();
+        Loaded {
+            value: Catalog {
+                plugins: file.plugins,
+                favorites: file.favorites,
+                recent: file.recent,
+            },
+            problem,
+        }
     }
+
+    /// Writes the catalog to `dir/plugins.ron` atomically, keeping the scan's per-bundle
+    /// record already in the file (a scan saves its own with
+    /// [`ScanOutcome::save`](crate::ScanOutcome::save)). `dir` must exist.
+    pub fn save(&self, dir: &Path) -> Result<(), FsError> {
+        write_file(dir, self, &read_file(dir).bundles)
+    }
+}
+
+/// `plugins.ron`: the catalog's three lists and the scan's per-bundle record. Every field
+/// defaults, so a file written before the record existed still loads.
+#[derive(Default, Deserialize)]
+pub(crate) struct CacheFile {
+    #[serde(default)]
+    plugins: Vec<PluginEntry>,
+    #[serde(default)]
+    favorites: BTreeSet<String>,
+    #[serde(default)]
+    recent: Vec<String>,
+    #[serde(default)]
+    pub(crate) bundles: Vec<CachedBundle>,
+}
+
+/// The same shape, borrowed, for writing.
+#[derive(Serialize)]
+struct CacheFileRef<'a> {
+    plugins: &'a [PluginEntry],
+    favorites: &'a BTreeSet<String>,
+    recent: &'a [String],
+    bundles: &'a [CachedBundle],
+}
+
+fn load_file(dir: &Path) -> Loaded<CacheFile> {
+    load_or_default(dir.join(FILE_NAME), |bytes| {
+        ron::from_str::<CacheFile>(&String::from_utf8_lossy(bytes))
+    })
+}
+
+/// `dir/plugins.ron`, or an empty one when it is missing or unreadable.
+pub(crate) fn read_file(dir: &Path) -> CacheFile {
+    load_file(dir).into_parts().0
+}
+
+/// Writes `dir/plugins.ron` atomically.
+pub(crate) fn write_file(
+    dir: &Path,
+    catalog: &Catalog,
+    bundles: &[CachedBundle],
+) -> Result<(), FsError> {
+    let file = CacheFileRef {
+        plugins: &catalog.plugins,
+        favorites: &catalog.favorites,
+        recent: &catalog.recent,
+        bundles,
+    };
+    let text = ron::ser::to_string_pretty(&file, ron::ser::PrettyConfig::default())
+        // Plain data with string keys; serializing cannot fail.
+        .unwrap_or_default();
+    atomic_write(dir.join(FILE_NAME), text.as_bytes())
 }
 
 #[cfg(test)]
@@ -383,6 +406,53 @@ mod tests {
         let (loaded, problem) = Catalog::load(&dir).into_parts();
         assert!(problem.is_none(), "{problem:?}");
         assert_eq!(loaded, catalog);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_maker_list_counts_each_vendor_by_name() {
+        assert_eq!(
+            catalog().vendors(),
+            [
+                ("FabFilter", 2),
+                ("Nobody", 1),
+                ("Prolific", 1),
+                ("Tokyo Dawn Labs", 1),
+                ("Xfer Records", 1)
+            ]
+        );
+    }
+
+    #[test]
+    fn saving_the_catalog_keeps_the_scans_record_and_an_older_file_still_loads() {
+        let dir =
+            std::env::temp_dir().join(format!("vixmix-plugins-record-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let bundles = vec![CachedBundle {
+            path: PathBuf::from("OTT.vst3"),
+            modified: Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000)),
+            entries: vec![entry("OTT", "Xfer Records", PluginKind::Dynamics)],
+            failure: None,
+        }];
+        let mut catalog = catalog();
+        write_file(&dir, &catalog, &bundles).unwrap();
+        // A star saved later must not lose the record a rescan needs.
+        catalog.set_favorite("vst3:OTT", true);
+        catalog.save(&dir).unwrap();
+        assert_eq!(read_file(&dir).bundles, bundles);
+        let (loaded, problem) = Catalog::load(&dir).into_parts();
+        assert!(problem.is_none(), "{problem:?}");
+        assert_eq!(loaded, catalog);
+
+        // The catalog alone, as lane 00 wrote it: no record, nothing lost.
+        let older =
+            ron::ser::to_string_pretty(&catalog, ron::ser::PrettyConfig::default()).unwrap();
+        std::fs::write(dir.join(FILE_NAME), older).unwrap();
+        let (loaded, problem) = Catalog::load(&dir).into_parts();
+        assert!(problem.is_none(), "{problem:?}");
+        assert_eq!(loaded, catalog);
+        assert!(read_file(&dir).bundles.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
