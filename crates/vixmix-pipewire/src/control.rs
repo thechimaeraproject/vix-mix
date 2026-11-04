@@ -323,6 +323,8 @@ struct Pending {
 #[derive(Default)]
 struct Seen {
     connected: bool,
+    /// The host has been told the tick source since the connection opened.
+    tick_source: bool,
     ticks_at_open: u64,
     quantum: u32,
     xruns: u64,
@@ -944,8 +946,9 @@ impl Control {
     /// Tells the host when the output expected to tick changes.
     fn elect(&mut self) {
         let tick = self.wanted_tick();
-        let changed = tick != self.shared.expected();
+        let changed = tick != self.shared.expected() || !self.seen.tick_source;
         if changed {
+            self.seen.tick_source = true;
             self.shared.expect(tick);
             let source = tick.map_or(crate::TickSource::Stopped, Role::tick_source);
             log::info!("vix-mix-pipewire: the tick is now {source:?}");
@@ -1200,19 +1203,21 @@ impl Control {
         self.events.flush();
     }
 
-    /// Connects again the streams the session manager gave up on whose device is present.
+    /// Connects again the streams the daemon or the session manager gave up on, once a second,
+    /// while the device they name (if any) is present.
     fn retry_streams(&mut self) {
         let Some(conn) = &mut self.conn else {
             return;
         };
         let now = Instant::now();
+        // A stream that names a device waits for it; one that names none is retried anyway.
         let due = |live: &Live, conn_devices: &HashMap<u32, DeviceInfo>| {
             !live.alive()
                 && live.retry_at.is_some_and(|at| now >= at)
                 && live
                     .spec
                     .target()
-                    .is_some_and(|t| conn_devices.values().any(|d| d.device.name == t))
+                    .is_none_or(|t| conn_devices.values().any(|d| d.device.name == t))
         };
         let mut retried = false;
         let devices = &conn.devices;
