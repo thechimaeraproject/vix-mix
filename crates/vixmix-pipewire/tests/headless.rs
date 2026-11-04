@@ -20,14 +20,17 @@ use assert_no_alloc::AllocDisabler;
 use vixmix_engine::{Engine, EngineConfig, MAX_QUANTUM, NoPlugins};
 use vixmix_model::{ChannelId, DeviceRef, Setup, snapshot};
 use vixmix_pipewire::{
-    Backend, BackendConfig, BackendEvent, BackendGraph, GraphChannel, GraphInput, channel_node_name,
+    Backend, BackendConfig, BackendEvent, BackendGraph, BackendStats, GraphChannel, GraphInput,
+    TickSource, channel_node_name, master_node_name, master_out_node_name, monitor_out_node_name,
 };
 
 #[global_allocator]
 static A: AllocDisabler = AllocDisabler;
 
 const NULL_SINK: &str = "vixmix-ci-null-sink";
+const NULL_SOURCE: &str = "vixmix-ci-null-source";
 const RATE: usize = 48_000;
+const QUANTUM: usize = 256;
 const HOW: &str = "the backend's integration tests need the headless daemon: run `source scripts/ci/headless-pipewire.sh` in this shell first (docs/cookbook/run-headless-pipewire.md); they never run against a desktop session";
 
 static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
@@ -84,6 +87,37 @@ fn run(program: &str, args: &[&str]) -> String {
         .output()
         .unwrap_or_else(|e| panic!("{program} did not start ({e}): {HOW}"));
     String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+/// Polls `check` every 50 ms for up to `timeout`.
+fn eventually(timeout: Duration, check: impl Fn() -> bool) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if check() {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// Whether some port of the node `from` is linked to some port of the node `to`
+/// (`pw-link -l` lists each port as `node:port`, then its peers as `|-> node:port`).
+fn linked(from: &str, to: &str) -> bool {
+    let listing = run("pw-link", &["-l"]);
+    let mut port = "";
+    for line in listing.lines() {
+        if !line.starts_with(char::is_whitespace) {
+            port = line;
+        } else if port.starts_with(&format!("{from}:"))
+            && line.trim().starts_with(&format!("|-> {to}:"))
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// A scratch directory for this test's files.
@@ -143,8 +177,65 @@ fn read_wav_left(path: &Path) -> Vec<f32> {
     Vec::new()
 }
 
+/// A 440 Hz sine at half scale.
 fn sine(i: usize) -> f32 {
     (i as f32 * 440.0 * std::f32::consts::TAU / RATE as f32).sin() * 0.5
+}
+
+/// A sine WAV of `seconds` in this test's scratch directory.
+fn sine_wav(dir: &Path, seconds: f32) -> PathBuf {
+    let path = dir.join("sine.wav");
+    write_wav(&path, seconds, sine);
+    path
+}
+
+/// The longest run of exact silence in `samples`, and how many places the signal breaks from
+/// the sine's continuation (frames lost, repeated or replaced).
+fn gaps(samples: &[f32]) -> (usize, usize) {
+    let w = 440.0 * std::f32::consts::TAU / RATE as f32;
+    let k = 2.0 * w.cos();
+    let (mut longest, mut silent, mut breaks) = (0, 0, 0);
+    for (i, s) in samples.iter().enumerate() {
+        if *s == 0.0 {
+            silent += 1;
+            longest = longest.max(silent);
+        } else {
+            silent = 0;
+        }
+        if i >= 2 && (samples[i] - (k * samples[i - 1] - samples[i - 2])).abs() > 0.05 {
+            breaks += 1;
+        }
+    }
+    (longest, breaks)
+}
+
+/// `pw-play` of `file` as an app named `name`, whose media role is its own, so WirePlumber
+/// remembers its routing apart from every other test's.
+fn play(file: &Path, name: &str) -> Proc {
+    let props = format!("{{ application.name = \"{name}\" node.name = \"{name}\" }}");
+    Proc::spawn(
+        "pw-play",
+        &["-P", &props, "--media-role", name, file.to_str().unwrap()],
+    )
+}
+
+/// `pw-record` of `target` (a sink's monitor when `sink`) as 32-bit float into `file`.
+fn record(target: &str, sink: bool, file: &Path) -> Proc {
+    let mut args = vec![
+        "--target",
+        target,
+        "--format",
+        "f32",
+        "--rate",
+        "48000",
+        "--channels",
+        "2",
+    ];
+    if sink {
+        args.extend(["-P", "{ stream.capture.sink = true }"]);
+    }
+    args.push(file.to_str().unwrap());
+    Proc::spawn("pw-record", &args)
 }
 
 /// One backend with an engine of one channel (id 1, both sends at unity), and the events it
@@ -164,7 +255,7 @@ impl Rig {
         let (tx, events) = sync_channel(256);
         let config = BackendConfig {
             app_name: app,
-            wanted_quantum: 256,
+            wanted_quantum: QUANTUM as u32,
         };
         let backend = Backend::connect(config, Arc::clone(&engine), tx)
             .unwrap_or_else(|e| panic!("{e}: {HOW}"));
@@ -181,12 +272,23 @@ impl Rig {
         self.backend.as_ref().unwrap()
     }
 
-    /// The channel's sink: `<app>.ch1.test`.
-    fn sink(&self) -> String {
-        channel_node_name(self.app, ChannelId(1), "Test")
+    fn stats(&self) -> BackendStats {
+        self.backend().stats()
     }
 
-    fn graph(&self, monitor: Option<&str>, master: Option<&str>, source: bool) -> BackendGraph {
+    /// Channel 1's sink, `<app>.ch1.<slug of name>`.
+    fn sink(&self, name: &str) -> String {
+        channel_node_name(self.app, ChannelId(1), name)
+    }
+
+    /// Channel 1 as an app sink named `name`, and the outputs.
+    fn graph(
+        &self,
+        name: &str,
+        monitor: Option<&str>,
+        master: Option<&str>,
+        source: bool,
+    ) -> BackendGraph {
         let device = |name: &str| DeviceRef {
             name: name.to_string(),
             description: name.to_string(),
@@ -194,13 +296,26 @@ impl Rig {
         BackendGraph {
             channels: vec![GraphChannel {
                 id: ChannelId(1),
-                name: "Test".into(),
+                name: name.into(),
                 input: GraphInput::AppSink,
             }],
             monitor: monitor.map(device),
             master: master.map(device),
             master_source: source,
         }
+    }
+
+    /// Applies `graph` and waits until the tick runs.
+    fn start(&mut self, graph: &BackendGraph) {
+        self.backend().apply(graph);
+        let connected = self.wait(Duration::from_secs(5), |e| {
+            matches!(e, BackendEvent::Connected { .. })
+        });
+        assert!(
+            connected.is_some(),
+            "the tick did not run within 5 s; saw {:?}",
+            self.seen
+        );
     }
 
     /// Waits up to `timeout` for an event `want` accepts; every event is kept in `seen`.
@@ -244,16 +359,16 @@ impl Rig {
         }
     }
 
-    /// Waits for the engine's channel 1 to hear something on its Monitor send (or for
-    /// silence when `heard` is false), for up to `timeout`.
+    /// Whether the engine's channel 1 hears a signal (`true`) or stays silent for 300 ms
+    /// (`false`) within `timeout`.
     fn channel_hears(&self, heard: bool, timeout: Duration) -> bool {
-        let meters = self.engine.meters();
+        let meter = &self.engine.meters().channel(0).monitor;
+        let _ = meter.take();
         let deadline = Instant::now() + timeout;
-        let _ = meters.channel(0).monitor.take();
         let mut quiet_since = Instant::now();
         while Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(50));
-            let (left, _) = meters.channel(0).monitor.take();
+            let (left, _) = meter.take();
             if heard && left > 0.1 {
                 return true;
             }
@@ -277,56 +392,6 @@ impl Drop for Rig {
     }
 }
 
-#[test]
-#[ignore = "exploration: prints what the daemon does"]
-fn explore() {
-    let Some(_daemon) = headless() else {
-        return;
-    };
-    let dir = scratch("explore");
-    let wav = dir.join("sine.wav");
-    write_wav(&wav, 8.0, sine);
-    let mut rig = Rig::new("vixmix-explore");
-    rig.backend()
-        .apply(&rig.graph(Some(NULL_SINK), Some(NULL_SINK), true));
-    let connected = rig.wait(Duration::from_secs(5), |e| {
-        matches!(e, BackendEvent::Connected { .. })
-    });
-    eprintln!("connected: {connected:?}");
-    let play = Proc::spawn("pw-play", &[wav.to_str().unwrap()]);
-    let node = rig.app_stream("pw-play");
-    eprintln!("pw-play is node {node}");
-    rig.backend().route(node, Some(&rig.sink()));
-    eprintln!("hears: {}", rig.channel_hears(true, Duration::from_secs(3)));
-    let record = dir.join("master.wav");
-    let rec = Proc::spawn(
-        "pw-record",
-        &[
-            "--target",
-            &vixmix_pipewire::master_node_name(rig.app),
-            "--format",
-            "f32",
-            "--rate",
-            "48000",
-            "--channels",
-            "2",
-            record.to_str().unwrap(),
-        ],
-    );
-    for _ in 0..6 {
-        std::thread::sleep(Duration::from_millis(500));
-        eprintln!("{:?}", rig.backend().stats());
-    }
-    eprintln!("{}", run("pw-top", &["-b", "-n", "2"]));
-    eprintln!("{}", run("pw-link", &["-l"]));
-    rec.interrupt();
-    let recorded = read_wav_left(&record);
-    let peak = recorded.iter().fold(0.0f32, |p, s| p.max(s.abs()));
-    eprintln!("recorded {} frames, peak {peak}", recorded.len());
-    drop(play);
-    eprintln!("events: {:?}", rig.seen);
-}
-
 /// The id of the node named `name`, from `pw-cli ls Node`.
 fn node_id(name: &str) -> Option<u32> {
     let listing = run("pw-cli", &["ls", "Node"]);
@@ -342,7 +407,7 @@ fn node_id(name: &str) -> Option<u32> {
     None
 }
 
-/// A null sink made for one test and destroyed when it ends (or earlier, by `remove`).
+/// A null sink made for one test, destroyed when it ends or earlier by `remove`.
 struct NullSink {
     name: String,
 }
@@ -353,11 +418,10 @@ impl NullSink {
             "{{ factory.name=support.null-audio-sink node.name={name} node.description={name} media.class=Audio/Sink object.linger=true audio.position=[FL FR] monitor.channel-volumes=true }}"
         );
         run("pw-cli", &["create-node", "adapter", &spec]);
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while node_id(name).is_none() {
-            assert!(Instant::now() < deadline, "pw-cli did not create {name}");
-            std::thread::sleep(Duration::from_millis(50));
-        }
+        assert!(
+            eventually(Duration::from_secs(5), || node_id(name).is_some()),
+            "pw-cli did not create {name}"
+        );
         NullSink {
             name: name.to_string(),
         }
@@ -376,88 +440,483 @@ impl Drop for NullSink {
     }
 }
 
-/// The longest run of exact silence in `samples`, and how many places the signal breaks
-/// from a 440 Hz sine's continuation (a jump: frames lost or repeated).
-fn gaps(samples: &[f32]) -> (usize, usize) {
-    let w = 440.0 * std::f32::consts::TAU / RATE as f32;
-    let k = 2.0 * w.cos();
-    let (mut longest, mut run_len, mut breaks) = (0, 0, 0);
-    for (i, s) in samples.iter().enumerate() {
-        if *s == 0.0 {
-            run_len += 1;
-            longest = longest.max(run_len);
-        } else {
-            run_len = 0;
-        }
-        if i >= 2 {
-            let predicted = k * samples[i - 1] - samples[i - 2];
-            if (samples[i] - predicted).abs() > 0.05 {
-                breaks += 1;
-            }
-        }
+#[test]
+fn devices_and_app_streams_are_reported_with_their_identity() {
+    let Some(_daemon) = headless() else {
+        return;
+    };
+    let dir = scratch("identity");
+    let mut rig = Rig::new("vixmix-identity");
+    rig.start(&rig.graph("Test", Some(NULL_SINK), None, false));
+    for (name, output) in [(NULL_SINK, true), (NULL_SOURCE, false)] {
+        let device = rig.wait(
+            Duration::from_secs(2),
+            |e| matches!(e, BackendEvent::DeviceAdded(d) if d.device.name == name),
+        );
+        let Some(BackendEvent::DeviceAdded(info)) = device else {
+            panic!("{name} was not reported; saw {:?}", rig.seen);
+        };
+        assert_eq!(
+            info.direction == vixmix_model::DeviceDirection::Output,
+            output,
+            "{info:?}"
+        );
     }
-    (longest, breaks)
+    assert!(
+        !rig.seen
+            .iter()
+            .any(|e| matches!(e, BackendEvent::DeviceAdded(d)
+            if d.device.name.starts_with("vixmix-identity."))),
+        "our own nodes are not devices: {:?}",
+        rig.seen
+    );
+
+    let app = play(&sine_wav(&dir, 5.0), "vixmix-identity-app");
+    let found = rig.wait(
+        Duration::from_secs(5),
+        |e| matches!(e, BackendEvent::AppStreamAdded(s) if s.app.name == "vixmix-identity-app"),
+    );
+    let Some(BackendEvent::AppStreamAdded(stream)) = found else {
+        panic!("the app stream was not reported; saw {:?}", rig.seen);
+    };
+    assert!(
+        stream
+            .app
+            .binary
+            .as_deref()
+            .is_some_and(|b| b.starts_with("pw-")),
+        "{stream:?}"
+    );
+    drop(app);
+    assert!(
+        rig.wait(Duration::from_secs(5), |e| {
+            *e == BackendEvent::AppStreamRemoved(stream.node)
+        })
+        .is_some(),
+        "the app's going was not reported; saw {:?}",
+        rig.seen
+    );
 }
 
 #[test]
-#[ignore = "exploration: prints what the daemon does when Monitor's device goes"]
-fn explore_failover() {
+fn an_app_routed_to_a_channel_reaches_the_engine_one_quantum_behind() {
+    let Some(_daemon) = headless() else {
+        return;
+    };
+    let dir = scratch("route");
+    let mut rig = Rig::new("vixmix-route");
+    rig.start(&rig.graph("Test", Some(NULL_SINK), None, false));
+    let _app = play(&sine_wav(&dir, 8.0), "vixmix-route-app");
+    let node = rig.app_stream("vixmix-route-app");
+    rig.backend().route(node, Some(&rig.sink("Test")));
+    assert!(
+        rig.channel_hears(true, Duration::from_secs(3)),
+        "the app routed to {} never reached the engine",
+        rig.sink("Test")
+    );
+    assert!(linked("vixmix-route-app", &rig.sink("Test")));
+    // Once it runs (moving an app between sinks may cost the cycle the link changes in),
+    // every check of its ring finds it exactly one quantum ahead.
+    std::thread::sleep(Duration::from_millis(200));
+    let before = rig.stats();
+    std::thread::sleep(Duration::from_secs(2));
+    let after = rig.stats();
+    assert!(
+        after.ring_checks - before.ring_checks > 300,
+        "{before:?} {after:?}"
+    );
+    assert_eq!(after.ring_off - before.ring_off, 0, "{before:?} {after:?}");
+    assert_eq!(after.xruns - before.xruns, 0, "{before:?} {after:?}");
+    assert_eq!(after.quantum, QUANTUM as u32, "{after:?}");
+}
+
+#[test]
+fn the_master_source_carries_the_mix_of_the_cycle_the_tick_ran_in() {
+    let Some(_daemon) = headless() else {
+        return;
+    };
+    let dir = scratch("source");
+    let mut rig = Rig::new("vixmix-source");
+    rig.start(&rig.graph("Test", Some(NULL_SINK), None, true));
+    let _app = play(&sine_wav(&dir, 8.0), "vixmix-source-app");
+    let node = rig.app_stream("vixmix-source-app");
+    rig.backend().route(node, Some(&rig.sink("Test")));
+    assert!(rig.channel_hears(true, Duration::from_secs(3)));
+    let before = rig.stats();
+    let file = dir.join("master.wav");
+    let recorder = record(&master_node_name(rig.app), false, &file);
+    std::thread::sleep(Duration::from_millis(1500));
+    recorder.interrupt();
+    let after = rig.stats();
+    // Each cycle Master ran in, it wrote the mix the tick made in that same cycle.
+    assert!(
+        after.master_source_cycles - before.master_source_cycles > 100,
+        "{after:?}"
+    );
+    assert_eq!(after.stale_cycles, 0, "{after:?}");
+    let recorded = read_wav_left(&file);
+    assert!(recorded.len() > RATE / 2, "{} frames", recorded.len());
+    let steady = &recorded[RATE / 10..];
+    let peak = steady.iter().fold(0.0f32, |p, s| p.max(s.abs()));
+    assert!((peak - 0.5).abs() < 0.01, "peak {peak}");
+    let (silence, breaks) = gaps(steady);
+    assert!(
+        silence <= 8 && breaks == 0,
+        "{silence} silent frames, {breaks} breaks"
+    );
+}
+
+#[test]
+fn monitor_out_plays_to_its_device() {
+    let Some(_daemon) = headless() else {
+        return;
+    };
+    let dir = scratch("monitor");
+    let mut rig = Rig::new("vixmix-monitor");
+    rig.start(&rig.graph("Test", Some(NULL_SINK), None, false));
+    assert!(linked(&monitor_out_node_name(rig.app), NULL_SINK));
+    let _app = play(&sine_wav(&dir, 8.0), "vixmix-monitor-app");
+    let node = rig.app_stream("vixmix-monitor-app");
+    rig.backend().route(node, Some(&rig.sink("Test")));
+    assert!(rig.channel_hears(true, Duration::from_secs(3)));
+    let file = dir.join("monitor.wav");
+    let recorder = record(NULL_SINK, true, &file);
+    std::thread::sleep(Duration::from_millis(1500));
+    recorder.interrupt();
+    let recorded = read_wav_left(&file);
+    let steady = &recorded[(RATE / 10).min(recorded.len())..];
+    let peak = steady.iter().fold(0.0f32, |p, s| p.max(s.abs()));
+    assert!(
+        (peak - 0.5).abs() < 0.01,
+        "peak {peak} over {} frames",
+        steady.len()
+    );
+    assert_eq!(gaps(steady).1, 0);
+}
+
+#[test]
+fn a_capture_channel_records_from_its_device() {
+    let Some(_daemon) = headless() else {
+        return;
+    };
+    let mut rig = Rig::new("vixmix-capture");
+    let mut graph = rig.graph("Test", Some(NULL_SINK), None, false);
+    graph.channels.push(GraphChannel {
+        id: ChannelId(2),
+        name: "Mic".into(),
+        input: GraphInput::Capture(Some(DeviceRef {
+            name: NULL_SOURCE.into(),
+            description: NULL_SOURCE.into(),
+        })),
+    });
+    rig.start(&graph);
+    let capture = channel_node_name(rig.app, ChannelId(2), "Mic");
+    assert!(
+        eventually(Duration::from_secs(3), || linked(NULL_SOURCE, &capture)),
+        "{capture} is not linked to {NULL_SOURCE}:\n{}",
+        run("pw-link", &["-l"])
+    );
+}
+
+#[test]
+fn an_app_unassigned_while_absent_goes_back_to_the_default_when_it_appears() {
+    let Some(_daemon) = headless() else {
+        return;
+    };
+    let dir = scratch("absent");
+    let wav = sine_wav(&dir, 8.0);
+    let name = "vixmix-absent-app";
+    let mut rig = Rig::new("vixmix-absent");
+    rig.start(&rig.graph("Test", Some(NULL_SINK), None, false));
+    let sink = rig.sink("Test");
+    let sink_id = node_id(&sink).expect("our sink is a node").to_string();
+    // What WirePlumber's restore-stream writes when an app it routed before appears.
+    let restore = |node: u32| {
+        run(
+            "pw-metadata",
+            &[
+                "-n",
+                "default",
+                &node.to_string(),
+                "target.node",
+                &sink_id,
+                "Spa:Id",
+            ],
+        )
+    };
+    let home = || {
+        eventually(Duration::from_secs(3), || {
+            linked(name, NULL_SINK) && !linked(name, &sink)
+        })
+    };
+
+    // Routed to the channel while it plays, then gone.
+    let app = play(&wav, name);
+    let node = rig.app_stream(name);
+    rig.backend().route(node, Some(&sink));
+    assert!(rig.channel_hears(true, Duration::from_secs(3)));
+    drop(app);
+    assert!(rig.channel_hears(false, Duration::from_secs(3)));
+
+    // The host un-assigned it meanwhile. It appears, the session manager restores it to our
+    // sink, and the host's routing on appear sends it home.
+    let app = play(&wav, name);
+    let node = rig.app_stream(name);
+    restore(node);
+    assert!(
+        rig.channel_hears(true, Duration::from_secs(3)),
+        "the restore did not take"
+    );
+    rig.backend().route(node, None);
+    assert!(
+        home(),
+        "the app did not go back to the default:\n{}",
+        run("pw-link", &["-l"])
+    );
+    assert!(rig.channel_hears(false, Duration::from_secs(1)));
+    drop(app);
+
+    // The same when the restore lands after the host's routing: the host's routing stands.
+    let _app = play(&wav, name);
+    let node = rig.app_stream(name);
+    rig.backend().route(node, None);
+    std::thread::sleep(Duration::from_millis(200));
+    restore(node);
+    assert!(home(), "a late restore won:\n{}", run("pw-link", &["-l"]));
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(linked(name, NULL_SINK) && !linked(name, &sink));
+    assert!(rig.channel_hears(false, Duration::from_secs(1)));
+}
+
+#[test]
+fn a_renamed_channel_keeps_its_apps() {
+    let Some(_daemon) = headless() else {
+        return;
+    };
+    let dir = scratch("rename");
+    let name = "vixmix-rename-app";
+    let mut rig = Rig::new("vixmix-rename");
+    rig.start(&rig.graph("Test", Some(NULL_SINK), None, false));
+    let _app = play(&sine_wav(&dir, 8.0), name);
+    let node = rig.app_stream(name);
+    rig.backend().route(node, Some(&rig.sink("Test")));
+    assert!(rig.channel_hears(true, Duration::from_secs(3)));
+    rig.backend()
+        .apply(&rig.graph("Renamed", Some(NULL_SINK), None, false));
+    let renamed = rig.sink("Renamed");
+    assert!(
+        eventually(Duration::from_secs(3), || linked(name, &renamed)),
+        "the app did not follow the rename to {renamed}:\n{}",
+        run("pw-link", &["-l"])
+    );
+    assert!(rig.channel_hears(true, Duration::from_secs(3)));
+}
+
+#[test]
+fn when_the_monitor_device_goes_master_out_ticks_without_a_gap() {
     let Some(_daemon) = headless() else {
         return;
     };
     let dir = scratch("failover");
-    let wav = dir.join("sine.wav");
-    write_wav(&wav, 10.0, sine);
-    let monitor = NullSink::new("vixmix-test-monitor-device");
+    let monitor = NullSink::new("vixmix-failover-monitor-device");
     let mut rig = Rig::new("vixmix-failover");
-    rig.backend()
-        .apply(&rig.graph(Some(&monitor.name), Some(NULL_SINK), true));
-    let connected = rig.wait(Duration::from_secs(5), |e| {
-        matches!(e, BackendEvent::Connected { .. })
-    });
-    eprintln!("connected: {connected:?}");
-    let play = Proc::spawn("pw-play", &[wav.to_str().unwrap()]);
-    let node = rig.app_stream("pw-play");
-    rig.backend().route(node, Some(&rig.sink()));
+    rig.start(&rig.graph("Test", Some(&monitor.name), Some(NULL_SINK), false));
+    assert!(
+        rig.wait(Duration::from_secs(2), |e| {
+            *e == BackendEvent::TickSource(TickSource::Monitor)
+        })
+        .is_some()
+    );
+    let _app = play(&sine_wav(&dir, 10.0), "vixmix-failover-app");
+    let node = rig.app_stream("vixmix-failover-app");
+    rig.backend().route(node, Some(&rig.sink("Test")));
     assert!(rig.channel_hears(true, Duration::from_secs(3)));
-    let record = dir.join("master.wav");
-    let rec = Proc::spawn(
-        "pw-record",
-        &[
-            "--target",
-            NULL_SINK,
-            "-P",
-            "stream.capture.sink=true",
-            "--format",
-            "f32",
-            "--rate",
-            "48000",
-            "--channels",
-            "2",
-            record.to_str().unwrap(),
-        ],
-    );
-    std::thread::sleep(Duration::from_millis(1500));
-    eprintln!("before: {:?}", rig.backend().stats());
-    let removed_at = Instant::now();
+    assert!(linked(&master_out_node_name(rig.app), NULL_SINK));
+
+    let file = dir.join("master.wav");
+    let recorder = record(NULL_SINK, true, &file);
+    std::thread::sleep(Duration::from_millis(1000));
+    let before = rig.stats();
     monitor.remove();
-    let moved = rig.wait(Duration::from_secs(5), |e| {
-        matches!(
-            e,
-            BackendEvent::TickSource(vixmix_pipewire::TickSource::MasterOut)
-        )
-    });
-    eprintln!("moved after {:?}: {moved:?}", removed_at.elapsed());
-    std::thread::sleep(Duration::from_millis(1500));
-    eprintln!("after: {:?}", rig.backend().stats());
-    eprintln!("{}", run("pw-top", &["-b", "-n", "2"]));
-    rec.interrupt();
-    let recorded = read_wav_left(&record);
-    eprintln!(
-        "recorded {} frames; longest silence and breaks: {:?}",
-        recorded.len(),
-        gaps(&recorded[4800..])
+    assert!(
+        rig.wait(Duration::from_secs(2), |e| {
+            *e == BackendEvent::TickSource(TickSource::MasterOut)
+        })
+        .is_some(),
+        "the tick did not move to Master out; saw {:?}",
+        rig.seen
     );
-    drop(play);
-    eprintln!("events: {:?}", rig.seen);
+    std::thread::sleep(Duration::from_millis(1000));
+    recorder.interrupt();
+    let after = rig.stats();
+    // About a second of cycles, every one ticked: none lost to the move.
+    assert!(after.ticks - before.ticks > 150, "{before:?} {after:?}");
+    assert_eq!(after.xruns - before.xruns, 0, "{before:?} {after:?}");
+    assert_eq!(
+        after.master_out_cycles - before.master_out_cycles,
+        after.ticks - before.ticks
+    );
+    let recorded = read_wav_left(&file);
+    let steady = &recorded[(RATE / 10).min(recorded.len())..];
+    assert!(steady.len() > RATE, "{} frames", steady.len());
+    let (silence, breaks) = gaps(steady);
+    assert!(
+        silence <= QUANTUM && breaks <= 2,
+        "Master's gap: {silence} silent frames, {breaks} breaks"
+    );
+}
+
+/// Puts `clock.force-quantum` back to "not forced" however the test ends.
+struct ForcedQuantum;
+
+impl ForcedQuantum {
+    fn set(quantum: u32) -> ForcedQuantum {
+        run(
+            "pw-metadata",
+            &[
+                "-n",
+                "settings",
+                "0",
+                "clock.force-quantum",
+                &quantum.to_string(),
+            ],
+        );
+        ForcedQuantum
+    }
+}
+
+impl Drop for ForcedQuantum {
+    fn drop(&mut self) {
+        run(
+            "pw-metadata",
+            &["-n", "settings", "0", "clock.force-quantum", "0"],
+        );
+    }
+}
+
+#[test]
+fn a_quantum_change_is_reported_and_the_tick_follows_it() {
+    let Some(_daemon) = headless() else {
+        return;
+    };
+    let mut rig = Rig::new("vixmix-quantum");
+    rig.start(&rig.graph("Test", Some(NULL_SINK), None, false));
+    assert_eq!(rig.stats().quantum, QUANTUM as u32);
+    let forced = ForcedQuantum::set(512);
+    assert!(
+        rig.wait(Duration::from_secs(3), |e| *e
+            == BackendEvent::QuantumChanged(512))
+            .is_some(),
+        "no QuantumChanged(512); saw {:?}",
+        rig.seen
+    );
+    assert_eq!(rig.stats().quantum, 512);
+    drop(forced);
+    assert!(
+        rig.wait(Duration::from_secs(3), |e| *e
+            == BackendEvent::QuantumChanged(QUANTUM as u32))
+            .is_some(),
+        "the quantum did not come back; saw {:?}",
+        rig.seen
+    );
+}
+
+/// The acceptance run (`docs/handoffs/03-pipewire-backend.md`): two minutes with null devices
+/// at 256, zero xruns, every ring exactly one quantum ahead at every tick. Two minutes is too
+/// long for every push, so it runs on request:
+/// `cargo test -p vixmix-pipewire --test headless -- --ignored two_minutes`.
+#[test]
+#[ignore = "two minutes long: the acceptance run, on request"]
+fn two_minutes_at_256_without_an_xrun() {
+    let Some(_daemon) = headless() else {
+        return;
+    };
+    let dir = scratch("two-minutes");
+    let mut rig = Rig::new("vixmix-acceptance");
+    rig.start(&rig.graph("Test", Some(NULL_SINK), Some(NULL_SINK), true));
+    let _app = play(&sine_wav(&dir, 130.0), "vixmix-acceptance-app");
+    let node = rig.app_stream("vixmix-acceptance-app");
+    rig.backend().route(node, Some(&rig.sink("Test")));
+    assert!(rig.channel_hears(true, Duration::from_secs(3)));
+    let recorder = record(&master_node_name(rig.app), false, &dir.join("master.wav"));
+    std::thread::sleep(Duration::from_secs(1));
+    let before = rig.stats();
+    std::thread::sleep(Duration::from_secs(120));
+    let after = rig.stats();
+    let top = run("pw-top", &["-b", "-n", "2"]);
+    recorder.interrupt();
+    eprintln!("before {before:?}\nafter  {after:?}\n{top}");
+    let ticks = after.ticks - before.ticks;
+    assert!(
+        ticks >= 120 * RATE as u64 / QUANTUM as u64 - 100,
+        "{ticks} ticks"
+    );
+    assert_eq!(after.quantum, QUANTUM as u32);
+    assert_eq!(after.xruns - before.xruns, 0);
+    assert_eq!(after.ring_off - before.ring_off, 0);
+    assert_eq!(after.ring_checks - before.ring_checks, ticks);
+    assert_eq!(after.stale_cycles, 0);
+    for counted in [
+        after.monitor_cycles - before.monitor_cycles,
+        after.master_out_cycles - before.master_out_cycles,
+        after.master_source_cycles - before.master_source_cycles,
+    ] {
+        assert_eq!(counted, ticks);
+    }
+    // PipeWire's own count: the ERR column of every node of ours is 0 (the app is pw-play,
+    // whose own start may cost it one).
+    let last = top.rsplit("S   ID").next().unwrap_or_default();
+    let ours: Vec<&str> = last
+        .lines()
+        .filter(|l| l.contains("vixmix-acceptance."))
+        .collect();
+    assert_eq!(ours.len(), 4, "{last}");
+    for line in ours {
+        let err: u64 = line
+            .split_whitespace()
+            .nth(8)
+            .and_then(|e| e.parse().ok())
+            .unwrap_or(u64::MAX);
+        assert_eq!(err, 0, "pw-top: {line}");
+    }
+}
+
+/// The daemon goes away and comes back: the backend says so, reconnects with backoff, and
+/// makes the same streams again. It restarts the test daemon, so it runs on request:
+/// `cargo test -p vixmix-pipewire --test headless -- --ignored daemon_restarts`.
+#[test]
+#[ignore = "restarts the daemon the other tests share: on request"]
+fn the_backend_reconnects_after_the_daemon_restarts() {
+    let Some(_daemon) = headless() else {
+        return;
+    };
+    let mut rig = Rig::new("vixmix-reconnect");
+    rig.start(&rig.graph("Test", Some(NULL_SINK), None, false));
+    let _ = run("pkill", &["-x", "pipewire"]);
+    assert!(
+        rig.wait(Duration::from_secs(5), |e| *e == BackendEvent::Disconnected)
+            .is_some(),
+        "the daemon's going was not reported; saw {:?}",
+        rig.seen
+    );
+    rig.seen.clear();
+    std::thread::sleep(Duration::from_millis(500));
+    // Started again as scripts/ci/headless-pipewire.sh does; left running for what follows.
+    std::mem::forget(Proc::spawn("pipewire", &[]));
+    std::thread::sleep(Duration::from_millis(500));
+    if run("pgrep", &["-x", "wireplumber"]).trim().is_empty() {
+        std::mem::forget(Proc::spawn("wireplumber", &[]));
+    }
+    assert!(
+        rig.wait(Duration::from_secs(15), |e| {
+            matches!(e, BackendEvent::Connected { .. })
+        })
+        .is_some(),
+        "the backend did not come back; saw {:?}",
+        rig.seen
+    );
+    assert!(eventually(Duration::from_secs(3), || linked(
+        &monitor_out_node_name(rig.app),
+        NULL_SINK
+    )));
 }

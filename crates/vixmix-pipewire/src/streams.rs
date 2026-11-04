@@ -93,8 +93,8 @@ impl Spec {
             Spec::Capture { target, .. } | Spec::Output { target, .. } => {
                 props.insert("target.object", target.as_str());
                 // When the device goes away the stream waits for it (we reconnect it when
-                // the registry shows it again) instead of following the default device:
-                // WirePlumber's 0.4 and 0.5 series read one key each.
+                // the registry shows it again) instead of following the default device: the
+                // WirePlumber Ubuntu 24.04 ships reads the first key, newer ones the second.
                 props.insert("node.dont-reconnect", "true");
                 props.insert("node.dont-fallback", "true");
                 props.insert(
@@ -110,14 +110,12 @@ impl Spec {
         props
     }
 
-    /// The connect flags. `trigger`: the stream runs only when the tick triggers it.
-    pub(crate) fn flags(&self, trigger: bool) -> StreamFlags {
+    /// The connect flags: every stream processes on the data thread with mapped buffers;
+    /// those that name a device ask the session manager to link them.
+    pub(crate) fn flags(&self) -> StreamFlags {
         let mut flags = StreamFlags::RT_PROCESS | StreamFlags::MAP_BUFFERS;
         if matches!(self, Spec::Capture { .. } | Spec::Output { .. }) {
             flags |= StreamFlags::AUTOCONNECT;
-        }
-        if trigger {
-            flags |= StreamFlags::TRIGGER;
         }
         flags
     }
@@ -207,9 +205,9 @@ enum RtListener {
     Output(StreamListener<OutputRt>),
 }
 
-/// One connected (or connecting) stream. Dropping it retracts it from the tick's triggers,
-/// disconnects it (which removes its node from the data loop before returning), then drops
-/// its listeners, then the stream: the order the fields are declared in.
+/// One connected (or connecting) stream. Dropping it disconnects it (which removes its node
+/// from the data loop before returning), then drops its listeners, then the stream: the order
+/// the fields are declared in.
 pub(crate) struct Live {
     _rt: RtListener,
     _ctl: StreamListener<()>,
@@ -218,28 +216,22 @@ pub(crate) struct Live {
     /// Unique per stream this backend ever made: stale notes name an old serial.
     pub serial: u64,
     pub phase: Phase,
-    /// The current connection was made with `TRIGGER`.
-    pub triggered: bool,
-    /// The tick triggers this stream (published in [`Triggers`](rt::Triggers)).
-    published: bool,
     /// Counts this stream's connections. A reconnect's own disconnect reports `Unconnected`
     /// after the new connection has begun: the count tells such a note from a real one.
     connection: Rc<Cell<u64>>,
     /// When a stream the session manager gave up on may be connected again.
     pub retry_at: Option<Instant>,
-    shared: Arc<Shared>,
     pod: Vec<u8>,
 }
 
 impl Live {
     /// Makes the stream `spec` describes with its realtime side (`input` for an input stream,
-    /// built by [`rt::input_ring`]) and connects it, with `TRIGGER` when `trigger`.
+    /// built by [`rt::input_ring`]) and connects it.
     pub(crate) fn create(
         make: &Factory<'_>,
         spec: Spec,
         input: Option<InputRt>,
         serial: u64,
-        trigger: bool,
     ) -> Result<Live, pipewire::Error> {
         let name = spec.node_name(make.config);
         let stream = StreamRc::new(make.core.clone(), &name, spec.properties(make.config))?;
@@ -277,14 +269,11 @@ impl Live {
             spec,
             serial,
             phase: Phase::Connecting,
-            triggered: false,
-            published: false,
             connection,
             retry_at: None,
-            shared: Arc::clone(make.shared),
             pod: format_pod(),
         };
-        live.connect(trigger)?;
+        live.connect()?;
         Ok(live)
     }
 
@@ -296,65 +285,31 @@ impl Live {
         )
     }
 
-    fn connect(&mut self, trigger: bool) -> Result<(), pipewire::Error> {
+    fn connect(&mut self) -> Result<(), pipewire::Error> {
         let Some(pod) = Pod::from_bytes(&self.pod) else {
             return Err(pipewire::Error::CreationFailed);
         };
-        // `connect` with `TRIGGER` writes `node.trigger = true` into the stream's properties
-        // and nothing ever takes it out, so a stream connected again without the flag would
-        // still wait for a trigger nobody sends: say which it is each time.
-        let trigger_prop = properties! { "node.trigger" => if trigger { "true" } else { "false" } };
-        // SAFETY: the stream and the dictionary are alive for the call, which copies the
-        // dictionary; called on the control thread (the stream's main loop), as it must be.
-        unsafe {
-            pipewire::sys::pw_stream_update_properties(
-                self.stream.as_raw_ptr(),
-                trigger_prop.dict().as_raw(),
-            );
-        }
-        self.stream.connect(
-            self.spec.direction(),
-            None,
-            self.spec.flags(trigger),
-            &mut [pod],
-        )?;
-        self.triggered = trigger;
-        if trigger && let Some(role) = self.spec.role() {
-            self.shared.triggers.publish(role, &self.stream);
-            self.published = true;
-        }
-        Ok(())
+        self.stream
+            .connect(self.spec.direction(), None, self.spec.flags(), &mut [pod])
     }
 
-    /// Disconnects and connects again, with or without `TRIGGER`: the same node name and
-    /// properties, so WirePlumber links it as before.
-    pub(crate) fn reconnect(&mut self, trigger: bool) -> Result<(), pipewire::Error> {
-        self.retract();
+    /// Disconnects and connects again: the same node name and properties, so the session
+    /// manager links it as before (to its device, once that is back).
+    pub(crate) fn reconnect(&mut self) -> Result<(), pipewire::Error> {
         let _ = self.stream.disconnect();
         self.connection.set(self.connection.get() + 1);
         self.phase = Phase::Connecting;
-        self.connect(trigger)
+        self.connect()
     }
 
     /// Which connection a note must name to be about the stream as it is now.
     pub(crate) fn connection(&self) -> u64 {
         self.connection.get()
     }
-
-    /// Takes the stream out of the tick's triggers (waiting out a tick that may hold it).
-    pub(crate) fn retract(&mut self) {
-        if self.published
-            && let Some(role) = self.spec.role()
-        {
-            self.shared.triggers.retract(role);
-        }
-        self.published = false;
-    }
 }
 
 impl Drop for Live {
     fn drop(&mut self) {
-        self.retract();
         let _ = self.stream.disconnect();
     }
 }
@@ -384,9 +339,9 @@ mod tests {
         assert_eq!(props.get("node.latency"), Some("256/48000"));
         assert_eq!(props.get("session.suspend-timeout-seconds"), Some("0"));
         assert_eq!(props.get("target.object"), None);
-        assert!(!spec.flags(false).contains(StreamFlags::AUTOCONNECT));
+        assert!(!spec.flags().contains(StreamFlags::AUTOCONNECT));
         assert!(
-            spec.flags(false)
+            spec.flags()
                 .contains(StreamFlags::RT_PROCESS | StreamFlags::MAP_BUFFERS)
         );
     }
@@ -409,13 +364,13 @@ mod tests {
             assert_eq!(props.get("node.dont-reconnect"), Some("true"));
             assert_eq!(props.get("node.dont-fallback"), Some("true"));
             assert_eq!(props.get("media.class"), None, "pw_stream sets Stream/*");
-            assert!(spec.flags(false).contains(StreamFlags::AUTOCONNECT));
+            assert!(spec.flags().contains(StreamFlags::AUTOCONNECT));
         }
         let master = Spec::Output {
             role: Role::MasterOut,
             target: "speakers".into(),
         };
-        assert!(master.flags(true).contains(StreamFlags::TRIGGER));
+        assert!(!master.flags().contains(StreamFlags::TRIGGER));
         assert_eq!(
             master.properties(&config()).get("node.name"),
             Some("vix-mix.master-out")
@@ -430,7 +385,7 @@ mod tests {
         assert_eq!(props.get("node.description"), Some("Vix Mix Master"));
         assert!(
             !Spec::MasterSource
-                .flags(true)
+                .flags()
                 .contains(StreamFlags::AUTOCONNECT)
         );
     }

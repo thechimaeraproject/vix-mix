@@ -339,6 +339,12 @@ impl Backend {
     }
 }
 
+// The host may keep the backend on any thread and share it.
+const _: () = {
+    const fn send_sync<T: Send + Sync>() {}
+    send_sync::<Backend>();
+};
+
 impl Drop for Backend {
     fn drop(&mut self) {
         self.stop();
