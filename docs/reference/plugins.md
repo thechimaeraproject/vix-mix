@@ -140,7 +140,12 @@ processor that is home, for the UI thread to drop before its controller (a rack 
 fills is reaped through `Instances::reap`); `touch()` moves the generation (a plugin that
 changed its buses); `holds` answers whether an instance is in the rack and not retired,
 `is_lent` whether it is out in a chain, `len` how many entries (retired ones included) it has.
-Every change moves the generation.
+Every change moves the generation. What a move means to the engine is change request 5 in
+[the build map](../build-map.md): the engine lends each instance once and shares it between
+its graphs, so on a move it asks again for every insert, keeps an instance it already holds
+(`Busy` means still the engine's), takes a new instance under a retired id, and sets a held
+instance up again only through `Engine::set_up_again`, which the host calls on
+`InstanceEvent::IoChanged`.
 
 `impl Lender for Rack`: `lend` takes the processor and its ring out and returns a forwarding
 handle whose `Drop` deactivates the processor and puts both back — `Ok(None)` for an instance it

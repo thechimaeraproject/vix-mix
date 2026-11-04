@@ -10,7 +10,10 @@
 //!
 //! **Generations.** Every change to what the rack holds (an instance added or retired, a
 //! plugin that changed its buses) moves [`Lender::generation`], so the engine prepares again
-//! and lends afresh even when the setup did not change.
+//! even when the setup did not change. The engine lends each instance once and shares it
+//! between its graphs (change request 5): on a move it asks again for every insert, keeps an
+//! instance it already holds (`Busy` means still the engine's), takes a new instance under a
+//! retired id, and sets a held instance up again only through `Engine::set_up_again`.
 //!
 //! **Edits travel with the processor.** Each entry keeps the consumer end of its instance's
 //! edit ring (`crate::edits`) beside the processor; the handle takes both, merges what the ring
@@ -162,8 +165,10 @@ impl Rack {
         out
     }
 
-    /// Asks the engine to lend again: what a plugin that changed its buses needs, since a
-    /// chain sets a processor's layout only when it inserts it.
+    /// Moves the generation, so the engine prepares again. A plugin that changed its buses
+    /// also needs `Engine::set_up_again` (the host calls it on `InstanceEvent::IoChanged`,
+    /// change request 5): the engine keeps a held instance across generations and sets it
+    /// up again only when asked.
     pub fn touch(&self) {
         self.bump();
     }
