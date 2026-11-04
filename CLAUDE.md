@@ -79,8 +79,10 @@ on the host and the model.
   happens on the host thread and is handed over.
 - **No thread, device handle, plugin instance or window type in `vixmix-model`.** The model is
   data; live things are referenced by id.
-- **Every channel is bounded.** A queue between threads has a fixed capacity
-  (`sync_channel`, an `rtrb` ring, an atomic slot); "latest wins" is a slot, not a queue.
+- **Every list and channel is bounded.** A list has its limit (8 channels, 8 recent plugins,
+  the graphs the engine keeps until the tick acknowledges them); a queue between threads has a
+  fixed capacity (`sync_channel`, an `rtrb` ring, an atomic slot); "latest wins" is a slot, not
+  a queue.
 - **The shared contracts change only through a change request** in
   [docs/build-map.md](docs/build-map.md) § Change requests, agreed in the main session, because
   every other lane compiles against them.

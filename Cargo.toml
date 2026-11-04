@@ -17,13 +17,16 @@ repository = "https://github.com/thechimaeraproject/vix-mix"
 
 [workspace.dependencies]
 # Rendering and UI: the majors Vix pins. egui-wgpu decides the wgpu major; bump them together
-# in one commit. Only app/ takes these (docs/charter.md: no window type below the app).
+# in one commit. Only app/ takes these: the window is the app's (docs/reference/app.md).
 wgpu = "30"
 egui = "0.36"
 egui-wgpu = "0.36"
 egui-winit = "0.36"
 winit = "0.30"
-# The window-handle types the VST3 host opens an editor into; winit re-exports the same 0.6.
+
+# The editor's parent window handle: the types the VST3 host opens a plugin editor into.
+# vixmix-plugins and vixmix-host take it, and the app gets the same types through winit's
+# re-export, so its major moves with winit's.
 raw-window-handle = "0.6"
 
 # Audio. The rings between PipeWire's input streams and the tick, and the prepared graph the

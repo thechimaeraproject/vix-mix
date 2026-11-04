@@ -42,6 +42,8 @@ Deviations from the steps below, all deliberate:
   are lanes 03's and 06's, so the index has no Cookbook section yet.
 - **Step 7** (the repository, the first push, `kit protect`) is the main session's: an agent's
   push is refused by the hooks. The GitHub repository already existed with a generated README.
+  `kit doctor`: every row ok but `protect.ruleset`, which `kit protect --apply` fixes after the
+  merge (`ci.required-known` is skipped until the first push records a run).
 
 **Needs:** nothing. **Runs alongside:** nothing (serial, first). **Size:** S.
 

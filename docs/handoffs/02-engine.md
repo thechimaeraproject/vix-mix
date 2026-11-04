@@ -55,7 +55,8 @@ plugins crate owns the rack that lends (04); the host calls `prepare` and `reap`
    previous `Prepared` until the acknowledgement passes it, then drops it on the host thread
    (no graveyard ring). The first tick warms `load` / `load_full` once (the thread-local slot
    registration can allocate on first touch). Decide what happens to kept graphs when no tick
-   runs at all.
+   runs at all: today they accumulate one per `prepare`, and `CLAUDE.md` § Rules wants every
+   list bounded.
 4. **`Send + Sync`.** `Prepared` is shared with the tick, so it must be `Send + Sync`, and the
    tick needs `&mut` on its chains and buffers: interior mutability touched by the tick alone,
    and the VST3 processor wrappers carry an `unsafe impl` justified by the kit's thread table
