@@ -85,8 +85,13 @@ if [ -z "$answered" ]; then
 fi
 echo "headless-pipewire: the daemon answers at $XDG_RUNTIME_DIR/pipewire-0 with the null sink, the null source and the default metadata"
 
+# The backend's integration tests (crates/vixmix-pipewire/tests/headless.rs) run only where this
+# marker says the daemon is this script's, never against a desktop session they could disturb.
+export VIXMIX_HEADLESS_PIPEWIRE=1
+
 if [ -n "${GITHUB_ENV:-}" ]; then
   echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >>"$GITHUB_ENV"
+  echo "VIXMIX_HEADLESS_PIPEWIRE=1" >>"$GITHUB_ENV"
   if [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
     echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >>"$GITHUB_ENV"
   fi
