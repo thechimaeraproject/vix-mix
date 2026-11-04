@@ -19,6 +19,7 @@ completes it when it ships ([build map](../build-map.md)).
 - [model.md](model.md) — the setup as data: types, commands, the taper, `setup.ron`, the
   snapshot.
 - [pipewire.md](pipewire.md) — the Linux backend's contract and the design handoff 03 builds.
-- [plugins.md](plugins.md) — catalog, rack, instances, editor sessions.
+- [plugins.md](plugins.md) — catalog and cached scan, instances, the rack, the edit path,
+  editor sessions.
 
 [Back to the docs index](../README.md)

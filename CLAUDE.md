@@ -41,6 +41,19 @@ not decide when to save, prepare, route or retire (the host), nor hold anything 
 [docs/reference/model.md](docs/reference/model.md) and
 [handoff 01](docs/handoffs/01-model.md).
 
+**Plugins are implemented (2026-11-04):** `vixmix-plugins` owns the scan (the SDK's places plus
+the preferences' extras, a per-bundle cache in `plugins.ron` so an unchanged bundle is not
+described again), the catalog's search, favourites and recent, the instances on the UI thread
+(`sync` to a setup's inserts, a missing plugin reported once and passed through, state, `reap`
+in the kit's order), the `Rack` that lends processors to chains, the edit path of change
+request 1 (a bounded ring per instance, merged into each block by the lent handle with nothing
+allocated), and editor sessions; it is tested with a real VST3 plugin, its own copy of the
+kit's test plugin, on Windows and Linux. It does not own when instances are synced or retired,
+calling `Instances::tick`, or the shutdown order (the host's, 06), the chains themselves (the
+engine's, 02), or the editor's window (the app's, 05). See
+[docs/reference/plugins.md](docs/reference/plugins.md) and
+[handoff 04](docs/handoffs/04-plugins.md).
+
 ## Git workflow (read first)
 
 **Work on a branch, never on `master`/`main`.** Every change is a PR: `kit push --yes` runs

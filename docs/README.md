@@ -40,8 +40,9 @@ on every push and in CI.
   their validation, the fader taper, `setup.ron`, the engine snapshot.
 - [reference/pipewire.md](reference/pipewire.md) — the Linux backend's contract: the config,
   the events, the graph, `Backend`'s signatures, the node names; built by handoff 03.
-- [reference/plugins.md](reference/plugins.md) — the catalog and its search, the rack that
-  lends instances to chains, instances on the UI thread, editor sessions.
+- [reference/plugins.md](reference/plugins.md) — the catalog, its search and the cached scan,
+  instances on the UI thread, the rack that lends them to chains, the edit path from a
+  plugin's editor to its lent processor, editor sessions.
 
 ## Record
 
@@ -55,7 +56,7 @@ on every push and in CI.
 - [kit-fs.md](kit-fs.md) — the kit's `chimaeraproject-fs`: atomic writes, tolerant loads and
   the per-user directory with its profiles, under `setup.ron` and `plugins.ron`.
 - [kit-vst3.md](kit-vst3.md) — the kit's `chimaeraproject-vst3-host`: scanning, instances,
-  the lending pattern and editors; pending handoff 04.
+  the lending pattern, the edit path and editors; adopted by handoff 04.
 
 ### Design
 
