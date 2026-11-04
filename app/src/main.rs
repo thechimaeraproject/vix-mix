@@ -55,7 +55,11 @@ impl Startup {
                     }
                     startup.quit_after_frames = Some(frames);
                 }
-                other => return Err(format!("`{other}` is not something vix-mix takes")),
+                other => {
+                    return Err(format!(
+                        "`{other}` is not something vix-mix takes; it takes --fake and --quit-after-frames <n>"
+                    ));
+                }
             }
         }
         Ok(startup)
@@ -119,7 +123,7 @@ mod tests {
             (vec!["--quit-after-frames"], "--quit-after-frames 3"),
             (vec!["--quit-after-frames", "soon"], "whole number"),
             (vec!["--quit-after-frames", "0"], "1 or more"),
-            (vec!["--fullscreen"], "--fullscreen"),
+            (vec!["--fullscreen"], "--fake and --quit-after-frames"),
         ] {
             let error = Startup::parse(&args(&words)).expect_err("refused");
             assert!(error.contains(expected), "{words:?} said `{error}`");

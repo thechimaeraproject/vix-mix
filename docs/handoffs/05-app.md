@@ -98,7 +98,7 @@ the root `Cargo.toml`.
   pattern) for: a fader drag with and without Shift and link, double-click to unity, the
   keyboard, mute, MON/MST, bypass, a drag within and between strips with and without Ctrl,
   browser search + Enter, an app tick that moves an app between channels, remove + undo.
-- `cargo run -p vix-mix` on Windows runs against `FakeHost` with simulated meters at 60 fps
+- `cargo run -p vix-mix -- --fake` on Windows runs against `FakeHost` with simulated meters at 60 fps
   under 5 % CPU.
 - `reference/app.md` complete; `dev check` green.
 

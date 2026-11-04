@@ -98,17 +98,18 @@ its lane (01–06), which replaces it behind the same signatures. Nothing is inh
    `.gitignore` (`/target`, `/node_modules`, `.kit/`, `.idea/`); `.gitattributes`
    (`* text=auto eol=lf`, `*.bat text eol=crlf`). The root `Cargo.toml` becomes a virtual
    workspace (`crates/*`, `app`; `[workspace.package]` version, edition 2024, `rust-version`
-   1.95, MIT); `[profile.dev.package."*"] opt-level = 3`; `rust-toolchain.toml` 1.95.0 with
-   rustfmt and clippy; `.cargo/config.toml` with `[net] git-fetch-with-cli = true`;
+   at the toolchain the kit pins, MIT); `[profile.dev.package."*"] opt-level = 3`;
+   `rust-toolchain.toml` at that same toolchain with rustfmt and clippy; `.cargo/config.toml` with `[net] git-fetch-with-cli = true`;
    `Cargo.lock` committed.
 2. **Crates.** `vixmix-model`, `-engine`, `-plugins`, `-pipewire` (Linux only; empty
    elsewhere), `-host`, and `app/` (package and binary `vix-mix`), with the contract types,
    each with a `lib.rs` doc comment naming its reference doc and tests that pin real
    behaviour.
-3. **Kit dependencies** at kit-v0.23.0 under `[workspace.dependencies]`, all four at one tag (or
-   the param types arrive twice); the first adoption by hand, per the kit's issue #188:
-   the tag rows, `kit-source.json` with the tag's commit (`git ls-remote --tags` the kit),
-   `CARGO_NET_GIT_FETCH_WITH_CLI=true cargo fetch`; never `kit bump` for this one.
+3. **Kit dependencies** at the kit release tag `kit-source.json` pins, under
+   `[workspace.dependencies]`, all four at one tag (or the param types arrive twice); the
+   first adoption by hand, per the kit's issue #188: the tag rows, `kit-source.json` with the
+   tag's commit (`git ls-remote --tags` the kit), `CARGO_NET_GIT_FETCH_WITH_CLI=true cargo
+   fetch`; never `kit bump` for this one.
 4. **The kit CLI.** `kit.repo.json` (name `vix-mix`, role consumer, `dev` node, `kit.npm`,
    `kit.cargo { manifests: ["Cargo.toml"], lock: "Cargo.lock" }`, release none,
    `ci.required ["check (linux)", "check (windows)"]`, `protect.merges` admins); `package.json`
