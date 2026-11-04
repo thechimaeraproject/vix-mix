@@ -3349,6 +3349,7 @@ dependencies = [
 name = "vixmix-plugins"
 version = "0.1.0"
 dependencies = [
+ "assert_no_alloc",
  "chimaeraproject-audio-processor",
  "chimaeraproject-fs",
  "chimaeraproject-param",
@@ -3356,10 +3357,12 @@ dependencies = [
  "log",
  "raw-window-handle",
  "ron",
+ "rtrb",
  "serde",
  "thiserror 2.0.21",
  "vixmix-engine",
  "vixmix-model",
+ "vst3",
 ]
 
 [[package]]

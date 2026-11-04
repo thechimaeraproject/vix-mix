@@ -18,7 +18,23 @@ chimaeraproject-audio-processor.workspace = true
 chimaeraproject-param.workspace = true
 chimaeraproject-fs.workspace = true
 raw-window-handle.workspace = true
+rtrb.workspace = true # the edit ring from an instance's controller to its lent processor
 serde.workspace = true
 ron.workspace = true
 thiserror.workspace = true
 log.workspace = true
+
+[dev-dependencies]
+assert_no_alloc.workspace = true # tests/no_alloc.rs: the lent handle must never touch the allocator
+# The test plugin's COM bindings (examples/test_gain.rs). The same major the kit's VST3 host
+# builds on, so Cargo.lock gains nothing.
+vst3 = "0.3"
+
+# The test plugin the integration tests load: a copy of the kit's, derived from the `vst3`
+# crate's gain example. `cargo test` builds examples, so the gates build it with no extra step;
+# a dependency's own example is built only when asked for by name.
+[[example]]
+name = "test_gain"
+crate-type = ["cdylib"]
+test = false
+doc = false
