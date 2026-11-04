@@ -10,6 +10,9 @@ beside [screenshot.png](screenshot.png) for the user to judge before any interac
   `:root` colours, sizes and fonts are handoff 05's theme; its example data and `target(style)`
   meters are what `FakeHost` serves.
 - [screenshot.png](screenshot.png) — a static capture of v5.
+- [egui-look-gate.png](egui-look-gate.png) — handoff 05's look gate: the egui console drawn
+  from `FakeHost`'s example data by `cargo run -p vix-mix -- --dump-png`, for the user to judge
+  beside screenshot.png.
 - [history/](history/README.md) — the earlier versions, for reference.
 
 [Back to the design pack](../README.md)

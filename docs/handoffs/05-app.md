@@ -32,6 +32,7 @@ the strips show. Deviations, each with its reason:
   in-app window buttons (step 6: the desktop's decorations), and the display is the
   prototype's cells (`48 kHz`, `256 samples`, `5.3 ms`, `DSP` with its bar) instead of lane
   00's one line; its test changed with it. The window has no 1-point border of its own.
+
 **Needs:** 00. **Runs alongside:** 01, 02, 03, 04. **Size:** XL. Starts on Windows against
 `FakeHost`.
 
