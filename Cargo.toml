@@ -1,0 +1,71 @@
+[workspace]
+members = ["crates/*", "app"]
+resolver = "3"
+
+# A dev build optimises its dependencies: unoptimised wgpu, egui and the VST3 adapter make the
+# window and the audio path crawl, and the window is run from `cargo run` far more than from a
+# release build. The workspace's own crates stay unoptimised, comfortable to debug (Vix's rule).
+[profile.dev.package."*"]
+opt-level = 3
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT"
+repository = "https://github.com/thechimaeraproject/vix-mix"
+
+[workspace.dependencies]
+# Rendering and UI: the majors Vix pins. egui-wgpu decides the wgpu major; bump them together
+# in one commit. Only app/ takes these (docs/charter.md: no window type below the app).
+wgpu = "30"
+egui = "0.36"
+egui-wgpu = "0.36"
+egui-winit = "0.36"
+winit = "0.30"
+# The window-handle types the VST3 host opens an editor into; winit re-exports the same 0.6.
+raw-window-handle = "0.6"
+
+# Audio. The rings between PipeWire's input streams and the tick, and the prepared graph the
+# host swaps under the tick (docs/reference/engine.md).
+rtrb = "0.4"
+arc-swap = "1"
+# PipeWire's native API. Only vixmix-pipewire takes it, under a Linux-only target table, so
+# Windows never builds pipewire-sys (which needs libpipewire-0.3 and libclang). `v1_0_0` turns
+# on StreamFlags::TRIGGER and Stream::trigger_process, which the tick election needs
+# (docs/handoffs/03-pipewire-backend.md).
+pipewire = { version = "0.10", features = ["v1_0_0"] }
+
+# Model and persistence.
+serde = { version = "1", features = ["derive"] }
+ron = "0.12"
+
+# The kit crates: git dependencies on the kit's release tag (the kit's handbook/reference/rust.md).
+# `kit bump` moves the tag, kit-source.json and Cargo.lock together; `kit link` patches them
+# to a kit checkout for a fix loop; `kit doctor`'s cargo rows hold the three in agreement.
+# Atomic writes, tolerant loads and the per-user configuration directory (docs/kit-fs.md).
+chimaeraproject-fs = { git = "https://github.com/thechimaeraproject/chimaeraproject-kit", tag = "kit-v0.23.0" }
+# The parameter model (ids, normalized values, mappings, declarations, sparse changes) and the
+# audio processor contract with its chain, bus buffers and strip maths (docs/kit-audio.md).
+chimaeraproject-param = { git = "https://github.com/thechimaeraproject/chimaeraproject-kit", tag = "kit-v0.23.0" }
+chimaeraproject-audio-processor = { git = "https://github.com/thechimaeraproject/chimaeraproject-kit", tag = "kit-v0.23.0" }
+# The VST3 host: scanning, loading, the plugin adapted to the processor contract, state, and
+# its editor in a window the app owns (docs/kit-vst3.md). All four at one tag, or the param
+# types arrive twice.
+chimaeraproject-vst3-host = { git = "https://github.com/thechimaeraproject/chimaeraproject-kit", tag = "kit-v0.23.0" }
+
+# Errors, logging, tooling.
+thiserror = "2"
+log = "0.4"
+env_logger = "0.11"
+pollster = "1"
+assert_no_alloc = "1"
+proptest = "1"
+
+# Workspace crates. A lane adds a dependency under its own crate's header in its crate's
+# Cargo.toml; a new shared one goes above, in its group (docs/build-map.md § Conflict rules).
+vixmix-model = { path = "crates/vixmix-model" }
+vixmix-engine = { path = "crates/vixmix-engine" }
+vixmix-plugins = { path = "crates/vixmix-plugins" }
+vixmix-pipewire = { path = "crates/vixmix-pipewire" }
+vixmix-host = { path = "crates/vixmix-host" }

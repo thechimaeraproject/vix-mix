@@ -1,0 +1,20 @@
+[package]
+name = "vixmix-engine"
+description = "The realtime graph: the prepared graph swapped under the tick, the allocation-free process, meters, stats and the null backend"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "vixmix_engine"
+
+[dependencies]
+vixmix-model.workspace = true
+chimaeraproject-audio-processor.workspace = true
+arc-swap.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+assert_no_alloc.workspace = true # tests/no_alloc.rs: the tick must never touch the allocator once warm

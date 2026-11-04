@@ -1,0 +1,5 @@
+# The toolchain every gate runs on, here and in CI (actions-rust-lang/setup-rust-toolchain reads
+# this file). It is the kit's pin; it moves together with `rust-version` in Cargo.toml.
+[toolchain]
+channel = "1.95.0"
+components = ["rustfmt", "clippy"]
