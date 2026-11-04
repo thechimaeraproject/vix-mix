@@ -54,6 +54,16 @@ engine's, 02), or the editor's window (the app's, 05). See
 [docs/reference/plugins.md](docs/reference/plugins.md) and
 [handoff 04](docs/handoffs/04-plugins.md).
 
+**The engine is implemented (2026-11-04):** `vixmix-engine` owns the realtime graph: each
+channel through its chain, MON/MST choosing processed or dry per send, both mixes through their
+chains before level and mute, preview, meters and DSP load, nothing allocated on the tick from
+its second block. It lends each plugin instance once and shares it between graphs, so `prepare`
+never sets a running plugin up again; it drops replaced graphs on the host thread, and sets
+instances up again for a new rate (`set_rate`) or new buses (`set_up_again`). It does not own
+the data thread or the rings (03), the instances (04) or when to prepare (06). See
+[docs/reference/engine.md](docs/reference/engine.md) and
+[handoff 02](docs/handoffs/02-engine.md).
+
 ## Git workflow (read first)
 
 **Work on a branch, never on `master`/`main`.** Every change is a PR: `kit push --yes` runs

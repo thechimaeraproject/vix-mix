@@ -48,8 +48,8 @@ on every push and in CI.
 ### Adoption
 
 - [kit-audio.md](kit-audio.md) — the kit's `chimaeraproject-param` and
-  `chimaeraproject-audio-processor`: taken at the bootstrap for the processor contract and the
-  strip maths; the chain arrives with handoff 02.
+  `chimaeraproject-audio-processor`: the processor contract and the strip maths since the
+  bootstrap, the chain since handoff 02, and why instances are shared between graphs.
 - [kit-cli.md](kit-cli.md) — the kit CLI: what `kit.repo.json` declares, the `dev` registry of
   cargo gates, the hooks and the Claude Code guard, the PR-only CI on two legs, the ruleset.
 - [kit-fs.md](kit-fs.md) — the kit's `chimaeraproject-fs`: atomic writes, tolerant loads and
