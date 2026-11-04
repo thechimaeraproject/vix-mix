@@ -114,9 +114,9 @@ impl Catalog {
 
     /// Scans `dirs` again on the UI thread, describing only the bundles that are new or whose
     /// modification time moved since `cache` was made; an unchanged bundle gives what it gave
-    /// last time, a failure included (see [`ScanCache::forget_failures`]). Audio classes whose sub-categories say `Fx` are kept,
-    /// one entry per class (the first bundle in path order), sorted by name. Favourites and
-    /// recent are carried over from `self`.
+    /// last time, a failure included (see [`ScanCache::forget_failures`]). Audio classes whose
+    /// sub-categories say `Fx` are kept, one entry per class (the first bundle in path order),
+    /// sorted by name. Favourites and recent are carried over from `self`.
     pub fn rescan(&self, dirs: &[PathBuf], host: &HostContext, cache: &ScanCache) -> ScanOutcome {
         let mut outcome = ScanOutcome::default();
         for path in find_bundles(dirs) {

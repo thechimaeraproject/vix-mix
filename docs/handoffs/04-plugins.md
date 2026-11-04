@@ -21,8 +21,9 @@ sources. The contract as built is [reference/plugins.md](../reference/plugins.md
   its binary and its `moduleinfo.json`, since a directory's own time does not move when an
   update rewrites the binary inside it. An unchanged failing bundle is reported again without
   being loaded, until `ScanCache::forget_failures()`, which the menu's Rescan plugins calls
-  first, since a failure can have a cause outside the bundle that its time does not show. The walk is the kit's `scan`'s, rewritten here (its `collect` is private) so a
-  bundle can be skipped before `scan_bundle` runs. One entry per class id.
+  first, since a failure can have a cause outside the bundle that its time does not show. The
+  walk is the kit's `scan`'s, rewritten here (its `collect` is private) so a bundle can be
+  skipped before `scan_bundle` runs. One entry per class id.
 - **Step 2** was already the prototype's list (lane 00); `Catalog::vendors()` was added for the
   browser's Maker list.
 - **Step 4 added `sync`, notices, `set_param`, and `reap` by serial.** Step 7's "reported once"
@@ -51,7 +52,7 @@ sources. The contract as built is [reference/plugins.md](../reference/plugins.md
 - **Not done:** resolving a stored id through a bundle's `Compatibility` list (the catalog
   resolves by id), and replacing an instance whose plugin adds or removes a bus (the kit reads
   the buses once at `create`; the host would save, retire and create on `IoChanged`).
-- **The contract changes are change request 2** in [the build map](../build-map.md), proposed
+- **The contract changes are change request 4** in [the build map](../build-map.md), proposed
   by this lane and applied on its branch: the signatures above that changed (`Rack::add`,
   `Instances::reap`, `Instances::create` on a bad state, `ScanOutcome`) and every addition.
 
