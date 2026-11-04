@@ -1,6 +1,55 @@
 # 04 — Plugins
 
-**Record — not yet built.**
+**Record — shipped 2026-11-04.** The catalog with a per-bundle scan cache, instances with
+`sync` and the missing-plugin rule, the rack with the edit path of change request 1, state, and
+editor sessions, tested with a real VST3 plugin: `dev check` green on Windows, and
+`cargo test -p vixmix-plugins` green on Linux in an `ubuntu:24.04` container with vendored
+sources. The contract as built is [reference/plugins.md](../reference/plugins.md);
+[kit-vst3.md](../kit-vst3.md) is adopted. Deviations from the steps below, all deliberate:
+
+- **The test plugin is this crate's example** (`examples/test_gain.rs`), the fallback the
+  acceptance allows. Cargo builds a git dependency's example when asked for it by name, but
+  `cargo test --workspace` (`dev check`, CI) builds only the workspace's own examples, so tests
+  on the kit's would need a step no gate runs. The copy keeps the attribution and has fresh
+  class ids, the name "Vix Mix Test Gain" and the sub-categories `Fx|Tools`, so the scan test
+  checks a real classification (Utility) rather than the fallback.
+- **Step 1 caches the whole per-bundle result, in a record beside the catalog.** `plugins.ron`
+  gains `bundles` (path, time, effects, failure) next to the catalog's three lists, held in
+  memory as `ScanCache`, because `Catalog` and `PluginEntry` are built as struct literals by
+  `FakeHost` (not this lane's file) and could not gain a field without a change request;
+  `Catalog::save` keeps the record already in the file. The time is the newest of the bundle,
+  its binary and its `moduleinfo.json`, since a directory's own time does not move when an
+  update rewrites the binary inside it. An unchanged failing bundle is reported again without
+  being loaded. The walk is the kit's `scan`'s, rewritten here (its `collect` is private) so a
+  bundle can be skipped before `scan_bundle` runs. One entry per class id.
+- **Step 2** was already the prototype's list (lane 00); `Catalog::vendors()` was added for the
+  browser's Maker list.
+- **Step 4 added `sync`, notices, `set_param`, and `reap` by serial.** Step 7's "reported once"
+  needs memory across calls, so it lives in `Instances::sync(inserts, catalog)`, with
+  `retry_failed()` after a rescan; `take_notices()` carries what no return value does, as
+  Vix's host does. A state that does not load is a notice, not a failure: the plugin runs from
+  its defaults (Vix's rule). `reap` matches each processor to its controller by the rack
+  entry's serial, because an instance id can be re-created before its old processor is home,
+  and returns the ids it dropped; `create` retires a live instance of the same id (lane 00's
+  kept both controllers). `tick` also drains the meters (`poll_output_changes`), whose ring is
+  bounded. `set_param` is the mixer's own move of a parameter through the same edit ring, and
+  how the edit path is tested end to end, since the test plugin never calls `performEdit`.
+- **Step 5:** `Rack::add` keeps its arguments and now returns the instance's `EditSender`;
+  entries carry a serial and the ring's consumer; `is_lent`, `len` and `is_empty` were added.
+- **Step 6:** `EditorSession::tick` serves the Linux run loop and polls the events;
+  `can_resize`, `check_size`, `size` and `set_scale_factor` were added. No test opens an
+  editor: the test plugin has none.
+- **Step 8 is change request 1 as the main session decided it:** a bounded ring per instance,
+  its consumer travelling with the rack's forwarding handle, which merges the edits into the
+  chain's changes and rebuilds the block's bus slices on the stack; the engine and `Lender` are
+  untouched, and lane 06 wires `Instances::tick`. The reference also says what a VST3 insert's
+  `ProcessorParams` should carry (no values), the question handoff 02's step 8 asks.
+- **"Through an engine chain"** is the kit's `ProcessorChain::fill_with` lending from the rack
+  exactly as the engine will, because the engine's chains are lane 02's, built alongside;
+  handoff 06's integration test runs the test plugin through the engine itself.
+- **Not done:** resolving a stored id through a bundle's `Compatibility` list (the catalog
+  resolves by id), and replacing an instance whose plugin adds or removes a bus (the kit reads
+  the buses once at `create`; the host would save, retire and create on `IoChanged`).
 **Needs:** 00. **Runs alongside:** 01, 02, 03, 05. **Size:** M.
 
 ## Goal
