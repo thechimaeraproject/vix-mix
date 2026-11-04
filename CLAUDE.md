@@ -79,8 +79,10 @@ mix), the registry with app identity, routing by sink serial through the `defaul
 and reconnect with backoff; it does not decide routing (the host does, on each app's
 appearance) or compute the mix (the engine does). See `docs/reference/pipewire.md`, the
 cookbook `docs/cookbook/run-headless-pipewire.md` and
-[handoff 03](docs/handoffs/03-pipewire-backend.md), whose record lists the deviations; change
-requests 6 and 7 in the build map wait for the main session.
+[handoff 03](docs/handoffs/03-pipewire-backend.md), whose record lists the deviations and
+keeps the two-minute acceptance open until a shell with realtime scheduling. Change request 6
+is applied in its branch and waits to be agreed; change request 7 (the host's Linux boot test,
+red in `check (linux)` until it is applied) waits for the main session.
 
 ## Git workflow (read first)
 

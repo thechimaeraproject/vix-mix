@@ -289,7 +289,8 @@ On Linux, `cargo test -p vixmix-pipewire` (on Windows the crate compiles to noth
   `two_minutes_at_256_without_an_xrun` — two minutes with null devices at 256, zero xruns, every
   ring check on target, every output every cycle, and no ERR added on any node of ours over the
   window (`pw-top` sampled before and after it: its ERR counts from a node's making) — and
-  `the_backend_reconnects_after_the_daemon_restarts`. The two-minute run wants a quiet machine:
-  with no realtime priority (a container has no rtkit) a stall of the whole host shows as
-  xruns on every node of the graph, the test's `pw-play` and `pw-record` included, which the
-  backend then counts too.
+  `the_backend_reconnects_after_the_daemon_restarts`. The two-minute run wants realtime
+  scheduling: without it (a container gets no realtime budget) a stall of the whole host shows
+  as ERR on every node of the graph, the test's `pw-play` and `pw-record` included, which the
+  backend counts too as far as it sees them (§ The rings). The test prints every node's ERR
+  over the window; [handoff 03](../handoffs/03-pipewire-backend.md) records the runs.
