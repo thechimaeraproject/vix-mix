@@ -1,13 +1,18 @@
 //! Every change to a [`Setup`] is a [`Command`] passed to [`apply`], which validates it,
-//! applies it whole or not at all, and says in [`Applied`] what it changed, so the host knows
-//! whether to prepare the engine again, apply the backend's graph, route apps, create or retire
-//! plugin instances, or only save.
+//! applies it whole or not at all, and says in [`Applied`] exactly what it changed, so the host
+//! knows whether to prepare the engine again, apply the backend's graph, route apps, create or
+//! retire plugin instances, or only save. Each part of `Applied` is set exactly when its part
+//! of the setup changed: a command that changes nothing (a drag dropped where it started, a
+//! mute set to what it already was) answers [`Applied::default`].
+
+use std::mem::replace;
 
 use crate::ids::{ChannelId, InstanceId, MixId};
 use crate::setup::{
     AppRef, Channel, ChannelKind, DeviceRef, Insert, MAX_CHANNELS, PluginRef, Prefs, Send, Setup,
     Source,
 };
+use crate::snapshot;
 
 /// A strip that holds a chain: a channel, or one of the mixes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -89,22 +94,25 @@ pub enum Command {
     SetPrefs(Prefs),
 }
 
-/// What a command changed. Every field false and both lists empty means nothing changed (a
-/// drag dropped where it started) and there is nothing to save.
+/// What a command changed, each part set exactly when its part of the setup changed. Every
+/// field false and both lists empty means nothing changed and there is nothing to save.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[must_use = "Applied says what the host must do next: prepare, apply the graph, route, create, retire or save"]
 pub struct Applied {
-    /// The setup on disk is stale: save (debounced).
+    /// The setup changed at all: the file on disk is stale, save it (debounced).
     pub save: bool,
-    /// The engine's snapshot changed: derive it again and prepare.
+    /// The engine's [`snapshot`](crate::snapshot()) changed: derive it again and prepare. A
+    /// fader moved within silence changes its position (a save) but not its gain (no prepare).
     pub engine: bool,
-    /// The backend's graph changed: a channel or its source kind, a device, a name.
+    /// The backend's graph changed: the channels in order with their names and inputs (an
+    /// app sink, or a capture on a device), a mix's device, or the quantum asked for.
     pub graph: bool,
     /// Which apps go to which channel changed: route them again.
     pub routing: bool,
-    /// Instances the host must create (with their state, for a copy) before the engine lends.
+    /// Instances the host must create (with their state, for a copy) before the engine lends,
+    /// in chain order: inserts that entered the setup.
     pub created: Vec<InstanceId>,
-    /// Instances the host must retire: their inserts left the setup.
+    /// Instances the host must retire, in chain order: their inserts left the setup.
     pub removed: Vec<InstanceId>,
     /// The channel an `AddChannel` made.
     pub channel: Option<ChannelId>,
@@ -119,6 +127,37 @@ impl Applied {
     fn saved() -> Applied {
         Applied {
             save: true,
+            ..Applied::default()
+        }
+    }
+
+    /// A save when `changed`, else nothing.
+    fn save_if(changed: bool) -> Applied {
+        Applied {
+            save: changed,
+            ..Applied::default()
+        }
+    }
+
+    /// A save and a prepare when `changed`, else nothing: for a change the snapshot carries
+    /// as it is (a mute, a routing toggle, a bypass, the ear button).
+    fn engine_if(changed: bool) -> Applied {
+        Applied {
+            save: changed,
+            engine: changed,
+            ..Applied::default()
+        }
+    }
+
+    /// What moving faders from `before` to `after` changed: a save when a position or a mute
+    /// moved, and a prepare too when what the engine applies (the linear gain) moved with it.
+    fn faders(before: &[Send], after: &[Send]) -> Applied {
+        Applied {
+            save: before != after,
+            engine: before
+                .iter()
+                .zip(after)
+                .any(|(b, a)| snapshot::send(b) != snapshot::send(a)),
             ..Applied::default()
         }
     }
@@ -167,101 +206,37 @@ pub enum Refused {
     BundleIsAPath { bundle: String },
     #[error("{quantum} is not a quantum the preferences offer: ask for 128, 256 or 512 frames")]
     NotAQuantum { quantum: u32 },
+    #[error(
+        "this setup has handed out every {what} id there is: move setup.ron aside and start from a new setup"
+    )]
+    OutOfIds { what: &'static str },
 }
 
 /// Applies `cmd` to `setup` whole, or refuses it and leaves `setup` as it was.
 pub fn apply(setup: &mut Setup, cmd: Command) -> Result<Applied, Refused> {
     match cmd {
         Command::AddChannel { kind } => add_channel(setup, kind),
-        Command::RemoveChannel(ch) => {
-            let at = setup
-                .channels
-                .iter()
-                .position(|c| c.id == ch)
-                .ok_or(Refused::NoChannel(ch))?;
-            let gone = setup.channels.remove(at);
-            Ok(Applied {
-                engine: true,
-                graph: true,
-                routing: matches!(gone.source, Source::Apps(ref apps) if !apps.is_empty()),
-                removed: gone.chain.iter().map(|i| i.instance).collect(),
-                ..Applied::saved()
-            })
-        }
-        Command::Rename { ch, name } => {
-            let name = name.trim().to_string();
-            if name.is_empty() {
-                return Err(Refused::EmptyName);
-            }
-            let channel = channel_mut(setup, ch)?;
-            if channel.name == name {
-                return Ok(Applied::default());
-            }
-            channel.name = name;
-            // The channel's PipeWire node describes itself by this name.
-            Ok(Applied {
-                graph: true,
-                ..Applied::saved()
-            })
-        }
+        Command::RemoveChannel(ch) => remove_channel(setup, ch),
+        Command::Rename { ch, name } => rename(setup, ch, &name),
         Command::SetSource { ch, source } => set_source(setup, ch, source),
-        Command::SetSend { ch, mix, position } => {
-            let position = check_position(position)?;
-            let channel = channel_mut(setup, ch)?;
-            let before = channel.send(mix).position;
-            channel.send_mut(mix).position = position;
-            if channel.link {
-                let other = match mix {
-                    MixId::Monitor => MixId::Master,
-                    MixId::Master => MixId::Monitor,
-                };
-                let send = channel.send_mut(other);
-                send.position = (send.position + (position - before)).clamp(0.0, 1.0);
-            }
-            Ok(engine_change())
-        }
+        Command::SetSend { ch, mix, position } => set_send(setup, ch, mix, position),
         Command::SetMute { ch, mix, mute } => {
-            channel_mut(setup, ch)?.send_mut(mix).mute = mute;
-            Ok(engine_change())
+            let send = channel_mut(setup, ch)?.send_mut(mix);
+            Ok(Applied::engine_if(replace(&mut send.mute, mute) != mute))
         }
         Command::SetLink { ch, link } => {
-            channel_mut(setup, ch)?.link = link;
-            Ok(Applied::saved())
+            let channel = channel_mut(setup, ch)?;
+            Ok(Applied::save_if(replace(&mut channel.link, link) != link))
         }
         Command::SetChainRouting { ch, mix, on } => {
             let channel = channel_mut(setup, ch)?;
-            match mix {
-                MixId::Monitor => channel.chain_to_monitor = on,
-                MixId::Master => channel.chain_to_master = on,
-            }
-            Ok(engine_change())
+            let flag = match mix {
+                MixId::Monitor => &mut channel.chain_to_monitor,
+                MixId::Master => &mut channel.chain_to_master,
+            };
+            Ok(Applied::engine_if(replace(flag, on) != on))
         }
-        Command::AddInsert { strip, plugin, at } => {
-            check_plugin(&plugin)?;
-            let instance = next_instance(setup);
-            let chain = chain_mut(setup, strip)?;
-            if at > chain.len() {
-                return Err(Refused::NoSlot {
-                    strip,
-                    index: at,
-                    len: chain.len(),
-                });
-            }
-            chain.insert(
-                at,
-                Insert {
-                    instance,
-                    plugin,
-                    enabled: true,
-                    state: None,
-                },
-            );
-            Ok(Applied {
-                engine: true,
-                created: vec![instance],
-                ..Applied::saved()
-            })
-        }
+        Command::AddInsert { strip, plugin, at } => add_insert(setup, strip, plugin, at),
         Command::RemoveInsert { instance } => {
             let (strip, index) = find_insert(setup, instance)?;
             chain_mut(setup, strip)?.remove(index);
@@ -273,55 +248,62 @@ pub fn apply(setup: &mut Setup, cmd: Command) -> Result<Applied, Refused> {
         }
         Command::MoveInsert { from, to, copy } => move_insert(setup, from, to, copy),
         Command::SetInsertEnabled { instance, enabled } => {
-            insert_mut(setup, instance)?.enabled = enabled;
-            Ok(engine_change())
+            let insert = insert_mut(setup, instance)?;
+            Ok(Applied::engine_if(
+                replace(&mut insert.enabled, enabled) != enabled,
+            ))
         }
         Command::SetInsertState { instance, state } => {
-            insert_mut(setup, instance)?.state = state;
-            Ok(Applied::saved())
+            let insert = insert_mut(setup, instance)?;
+            // Saved, never processed: the live instance already holds this state.
+            let changed = insert.state != state;
+            insert.state = state;
+            Ok(Applied::save_if(changed))
         }
         Command::SetMixDevice { mix, device } => {
             if mix == MixId::Monitor && device.is_none() {
                 return Err(Refused::MonitorNeedsDevice);
             }
-            setup.mix_mut(mix).device = device;
+            let slot = &mut setup.mix_mut(mix).device;
+            if *slot == device {
+                return Ok(Applied::default());
+            }
+            *slot = device;
             Ok(Applied {
                 graph: true,
                 ..Applied::saved()
             })
         }
         Command::SetMixLevel { mix, position } => {
-            setup.mix_mut(mix).level.position = check_position(position)?;
-            Ok(engine_change())
+            let position = check_position(position)?;
+            let level = &mut setup.mix_mut(mix).level;
+            let before = *level;
+            level.position = position;
+            Ok(Applied::faders(&[before], &[*level]))
         }
         Command::SetMixMute { mix, mute } => {
-            setup.mix_mut(mix).level.mute = mute;
-            Ok(engine_change())
+            let level = &mut setup.mix_mut(mix).level;
+            Ok(Applied::engine_if(replace(&mut level.mute, mute) != mute))
         }
-        Command::SetPreview(on) => {
-            setup.preview_master = on;
-            Ok(engine_change())
-        }
+        Command::SetPreview(on) => Ok(Applied::engine_if(
+            replace(&mut setup.preview_master, on) != on,
+        )),
         Command::SetPrefs(prefs) => {
             if !Prefs::QUANTA.contains(&prefs.quantum) {
                 return Err(Refused::NotAQuantum {
                     quantum: prefs.quantum,
                 });
             }
-            let graph = prefs.quantum != setup.prefs.quantum;
-            setup.prefs = prefs;
+            if setup.prefs == prefs {
+                return Ok(Applied::default());
+            }
+            let before = replace(&mut setup.prefs, prefs);
             Ok(Applied {
-                graph,
+                // The quantum is asked of PipeWire through every node's `node.latency`.
+                graph: before.quantum != setup.prefs.quantum,
                 ..Applied::saved()
             })
         }
-    }
-}
-
-fn engine_change() -> Applied {
-    Applied {
-        engine: true,
-        ..Applied::saved()
     }
 }
 
@@ -329,7 +311,7 @@ fn add_channel(setup: &mut Setup, kind: ChannelKind) -> Result<Applied, Refused>
     if setup.channels.len() >= MAX_CHANNELS {
         return Err(Refused::TooManyChannels { max: MAX_CHANNELS });
     }
-    let id = ChannelId(setup.channels.iter().map(|c| c.id.0).max().unwrap_or(0) + 1);
+    let id = ChannelId(take_id(&mut setup.next_channel.0, "channel")?);
     let (name, source) = match kind {
         ChannelKind::Hardware => ("Input", Source::Hardware(None)),
         ChannelKind::Apps => ("Apps", Source::Apps(Vec::new())),
@@ -353,37 +335,135 @@ fn add_channel(setup: &mut Setup, kind: ChannelKind) -> Result<Applied, Refused>
     })
 }
 
+fn remove_channel(setup: &mut Setup, ch: ChannelId) -> Result<Applied, Refused> {
+    let at = channel_index(setup, ch)?;
+    let gone = setup.channels.remove(at);
+    Ok(Applied {
+        engine: true,
+        graph: true,
+        // Its apps go back to the default output.
+        routing: !apps_of(&gone.source).is_empty(),
+        removed: gone.chain.iter().map(|i| i.instance).collect(),
+        ..Applied::saved()
+    })
+}
+
+fn rename(setup: &mut Setup, ch: ChannelId, name: &str) -> Result<Applied, Refused> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(Refused::EmptyName);
+    }
+    let channel = channel_mut(setup, ch)?;
+    if channel.name == name {
+        return Ok(Applied::default());
+    }
+    channel.name = name.to_string();
+    // The channel's PipeWire node describes itself by this name.
+    Ok(Applied {
+        graph: true,
+        ..Applied::saved()
+    })
+}
+
 fn set_source(setup: &mut Setup, ch: ChannelId, source: Source) -> Result<Applied, Refused> {
-    let before = channel_mut(setup, ch)?.source.clone();
+    let at = channel_index(setup, ch)?;
     let source = match source {
         Source::Apps(apps) => {
-            // Ticking an app here takes it out of every other channel: an app plays into one
-            // channel only (the prototype's checklist does the same).
             let mut unique: Vec<AppRef> = Vec::with_capacity(apps.len());
             for app in apps {
                 if !unique.iter().any(|a| a.matches(&app)) {
                     unique.push(app);
                 }
             }
-            for other in setup.channels.iter_mut().filter(|c| c.id != ch) {
-                if let Source::Apps(theirs) = &mut other.source {
-                    theirs.retain(|a| !unique.iter().any(|mine| mine.matches(a)));
-                }
-            }
             Source::Apps(unique)
         }
         hardware => hardware,
     };
-    if before == source {
+    // Ticking an app here takes it out of every other channel: an app plays into one
+    // channel only (the prototype's checklist does the same).
+    let mut others_changed = false;
+    if let Source::Apps(mine) = &source {
+        for (index, other) in setup.channels.iter_mut().enumerate() {
+            if index == at {
+                continue;
+            }
+            if let Source::Apps(theirs) = &mut other.source {
+                let before = theirs.len();
+                theirs.retain(|a| !mine.iter().any(|m| m.matches(a)));
+                others_changed |= theirs.len() != before;
+            }
+        }
+    }
+    let channel = &mut setup.channels[at];
+    let before = replace(&mut channel.source, source);
+    let after = &channel.source;
+    if !others_changed && before == *after {
         return Ok(Applied::default());
     }
-    let kind_changed = std::mem::discriminant(&before) != std::mem::discriminant(&source);
-    let routing = matches!(before, Source::Apps(_)) || matches!(source, Source::Apps(_));
-    let graph = kind_changed || matches!(source, Source::Hardware(_));
-    channel_mut(setup, ch)?.source = source;
+    let graph = match (&before, after) {
+        (Source::Apps(_), Source::Apps(_)) => false,
+        (Source::Hardware(a), Source::Hardware(b)) => a != b,
+        _ => true,
+    };
+    let routing = others_changed || !same_apps(apps_of(&before), apps_of(after));
     Ok(Applied {
         graph,
         routing,
+        ..Applied::saved()
+    })
+}
+
+fn set_send(
+    setup: &mut Setup,
+    ch: ChannelId,
+    mix: MixId,
+    position: f32,
+) -> Result<Applied, Refused> {
+    let position = check_position(position)?;
+    let channel = channel_mut(setup, ch)?;
+    let before = [channel.monitor, channel.master];
+    let was = channel.send(mix).position;
+    channel.send_mut(mix).position = position;
+    if channel.link {
+        // The prototype's `setFader`: the partner moves by the same amount, clamped.
+        let other = match mix {
+            MixId::Monitor => MixId::Master,
+            MixId::Master => MixId::Monitor,
+        };
+        let send = channel.send_mut(other);
+        send.position = unsigned((send.position + (position - was)).clamp(0.0, 1.0));
+    }
+    Ok(Applied::faders(&before, &[channel.monitor, channel.master]))
+}
+
+fn add_insert(
+    setup: &mut Setup,
+    strip: Strip,
+    plugin: PluginRef,
+    at: usize,
+) -> Result<Applied, Refused> {
+    check_plugin(&plugin)?;
+    let len = chain_mut(setup, strip)?.len();
+    if at > len {
+        return Err(Refused::NoSlot {
+            strip,
+            index: at,
+            len,
+        });
+    }
+    let instance = InstanceId(take_id(&mut setup.next_instance.0, "plugin instance")?);
+    chain_mut(setup, strip)?.insert(
+        at,
+        Insert {
+            instance,
+            plugin,
+            enabled: true,
+            state: None,
+        },
+    );
+    Ok(Applied {
+        engine: true,
+        created: vec![instance],
         ..Applied::saved()
     })
 }
@@ -412,8 +492,9 @@ fn move_insert(
     }
     let same = from.strip == to.strip;
     if copy {
+        // A second instance with the same plugin, bypass and state; the original stays.
         let mut item = chain_mut(setup, from.strip)?[from.index].clone();
-        item.instance = next_instance(setup);
+        item.instance = InstanceId(take_id(&mut setup.next_instance.0, "plugin instance")?);
         let created = item.instance;
         chain_mut(setup, to.strip)?.insert(to.index, item);
         return Ok(Applied {
@@ -434,18 +515,37 @@ fn move_insert(
     };
     // The same instance moves: no instance is created or retired.
     chain_mut(setup, to.strip)?.insert(at, item);
-    Ok(engine_change())
+    Ok(Applied {
+        engine: true,
+        ..Applied::saved()
+    })
 }
 
+/// Hands out `*next` and moves it on, or refuses when the id space is spent. `u32::MAX` is
+/// never handed out, so a counter that reached it stays there and refuses.
+fn take_id(next: &mut u32, what: &'static str) -> Result<u32, Refused> {
+    let id = *next;
+    *next = id.checked_add(1).ok_or(Refused::OutOfIds { what })?;
+    Ok(id)
+}
+
+/// `position` when it is a fader position, with -0 read as 0 so a setup never stores both.
 fn check_position(position: f32) -> Result<f32, Refused> {
     if (0.0..=1.0).contains(&position) {
-        Ok(position)
+        Ok(unsigned(position))
     } else {
         Err(Refused::NotAPosition(position))
     }
 }
 
-fn check_plugin(plugin: &PluginRef) -> Result<(), Refused> {
+/// -0 as 0; every other value as it is.
+fn unsigned(position: f32) -> f32 {
+    position + 0.0
+}
+
+/// Whether `plugin` is stored as a setup stores a plugin: `vst3:` and 32 hexadecimal digits,
+/// and the bundle by its file name.
+pub(crate) fn check_plugin(plugin: &PluginRef) -> Result<(), Refused> {
     let hex = plugin.id.strip_prefix("vst3:").unwrap_or("");
     if hex.len() != 32 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(Refused::NotAPluginId {
@@ -460,10 +560,24 @@ fn check_plugin(plugin: &PluginRef) -> Result<(), Refused> {
     Ok(())
 }
 
-/// One more than the largest instance id in use. Lane 01 decides whether ids may be reused:
-/// the host keeps a removed instance alive while its undo toast shows.
-fn next_instance(setup: &Setup) -> InstanceId {
-    InstanceId(setup.inserts().map(|i| i.instance.0).max().unwrap_or(0) + 1)
+fn apps_of(source: &Source) -> &[AppRef] {
+    match source {
+        Source::Apps(apps) => apps,
+        Source::Hardware(_) => &[],
+    }
+}
+
+/// Whether two app lists hold the same apps in any order. Neither lists an app twice.
+fn same_apps(a: &[AppRef], b: &[AppRef]) -> bool {
+    a.len() == b.len() && a.iter().all(|app| b.contains(app))
+}
+
+fn channel_index(setup: &Setup, ch: ChannelId) -> Result<usize, Refused> {
+    setup
+        .channels
+        .iter()
+        .position(|c| c.id == ch)
+        .ok_or(Refused::NoChannel(ch))
 }
 
 fn channel_mut(setup: &mut Setup, ch: ChannelId) -> Result<&mut Channel, Refused> {
@@ -520,8 +634,22 @@ mod tests {
         }
     }
 
+    fn device(name: &str) -> DeviceRef {
+        DeviceRef {
+            name: name.to_string(),
+            description: name.to_string(),
+        }
+    }
+
     fn names(chain: &[Insert]) -> Vec<&str> {
         chain.iter().map(|i| i.plugin.name.as_str()).collect()
+    }
+
+    fn add(setup: &mut Setup, kind: ChannelKind) -> ChannelId {
+        apply(setup, Command::AddChannel { kind })
+            .unwrap()
+            .channel
+            .unwrap()
     }
 
     #[test]
@@ -546,32 +674,18 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(refused, Refused::TooManyChannels { max: 8 });
-        assert!(refused.to_string().contains("remove a channel"));
+        let message = refused.to_string();
+        assert!(message.contains("at most 8 channels"), "{message}");
+        assert!(message.contains("remove a channel"), "{message}");
         assert_eq!(setup, before, "a refused command changes nothing");
     }
 
     #[test]
     fn an_app_ticked_in_channel_b_leaves_channel_a() {
         let mut setup = Setup::default();
-        let a = apply(
-            &mut setup,
-            Command::AddChannel {
-                kind: ChannelKind::Apps,
-            },
-        )
-        .unwrap()
-        .channel
-        .unwrap();
-        let b = apply(
-            &mut setup,
-            Command::AddChannel {
-                kind: ChannelKind::Apps,
-            },
-        )
-        .unwrap()
-        .channel
-        .unwrap();
-        let _ = apply(
+        let a = add(&mut setup, ChannelKind::Apps);
+        let b = add(&mut setup, ChannelKind::Apps);
+        let ticked = apply(
             &mut setup,
             Command::SetSource {
                 ch: a,
@@ -579,6 +693,7 @@ mod tests {
             },
         )
         .unwrap();
+        assert!(ticked.routing && !ticked.graph && !ticked.engine);
         let applied = apply(
             &mut setup,
             Command::SetSource {
@@ -587,16 +702,36 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(applied.routing);
+        assert!(applied.routing && applied.save);
+        assert!(!applied.graph, "an app sink stays an app sink");
         assert_eq!(
             setup.channel(a).unwrap().source,
             Source::Apps(vec![app("firefox")])
         );
         assert_eq!(
             setup.channel(b).unwrap().source,
-            Source::Apps(vec![app("spotify")])
+            Source::Apps(vec![app("spotify")]),
+            "ticked twice, listed once"
         );
         assert_eq!(setup.channel_of_app(&app("spotify")), Some(b));
+        // The same apps in another order route nothing anew; the file still changes.
+        let _ = apply(
+            &mut setup,
+            Command::SetSource {
+                ch: a,
+                source: Source::Apps(vec![app("firefox"), app("mpv")]),
+            },
+        )
+        .unwrap();
+        let reordered = apply(
+            &mut setup,
+            Command::SetSource {
+                ch: a,
+                source: Source::Apps(vec![app("mpv"), app("firefox")]),
+            },
+        )
+        .unwrap();
+        assert!(reordered.save && !reordered.routing);
     }
 
     #[test]
@@ -610,6 +745,10 @@ mod tests {
                 ch: missing,
                 mix: MixId::Master,
                 mute: true,
+            },
+            Command::SetSource {
+                ch: missing,
+                source: Source::Apps(vec![app("firefox")]),
             },
             Command::AddInsert {
                 strip: Strip::Channel(missing),
@@ -628,7 +767,234 @@ mod tests {
             ),
             Err(Refused::NoInstance(InstanceId(7)))
         );
+        let refused = apply(
+            &mut setup,
+            Command::AddInsert {
+                strip: Strip::Mix(MixId::Master),
+                plugin: plugin("EQ"),
+                at: 1,
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            refused,
+            Refused::NoSlot {
+                index: 1,
+                len: 0,
+                ..
+            }
+        ));
+        assert_eq!(setup, before, "not even an id was spent");
+    }
+
+    #[test]
+    fn a_removed_id_never_comes_back() {
+        let mut setup = Setup::default();
+        let strip = Strip::Channel(setup.channels[0].id);
+        let first = apply(
+            &mut setup,
+            Command::AddInsert {
+                strip,
+                plugin: plugin("EQ"),
+                at: 0,
+            },
+        )
+        .unwrap()
+        .created[0];
+        let removed = apply(&mut setup, Command::RemoveInsert { instance: first }).unwrap();
+        assert_eq!(removed.removed, [first]);
+        // The host still holds `first` while the undo toast shows: the next insert must not
+        // take its id, although no insert in the setup uses it any more.
+        let second = apply(
+            &mut setup,
+            Command::AddInsert {
+                strip,
+                plugin: plugin("EQ"),
+                at: 0,
+            },
+        )
+        .unwrap()
+        .created[0];
+        assert_ne!(second, first);
+        let copy = apply(
+            &mut setup,
+            Command::MoveInsert {
+                from: SlotRef { strip, index: 0 },
+                to: SlotRef { strip, index: 1 },
+                copy: true,
+            },
+        )
+        .unwrap()
+        .created[0];
+        assert!(copy != first && copy != second);
+
+        let mic = setup.channels[0].id;
+        let input = add(&mut setup, ChannelKind::Hardware);
+        let _ = apply(&mut setup, Command::RemoveChannel(input)).unwrap();
+        let again = add(&mut setup, ChannelKind::Hardware);
+        assert!(again != input && again != mic);
+    }
+
+    #[test]
+    fn a_spent_id_space_is_refused_and_changes_nothing() {
+        let mut setup = Setup {
+            next_instance: InstanceId(u32::MAX),
+            next_channel: ChannelId(u32::MAX),
+            ..Setup::default()
+        };
+        let before = setup.clone();
+        let refused = apply(
+            &mut setup,
+            Command::AddInsert {
+                strip: Strip::Mix(MixId::Monitor),
+                plugin: plugin("EQ"),
+                at: 0,
+            },
+        )
+        .unwrap_err();
+        assert!(refused.to_string().contains("start from a new setup"));
+        assert!(matches!(
+            apply(
+                &mut setup,
+                Command::AddChannel {
+                    kind: ChannelKind::Apps
+                }
+            ),
+            Err(Refused::OutOfIds { .. })
+        ));
         assert_eq!(setup, before);
+    }
+
+    #[test]
+    fn a_command_that_changes_nothing_says_so() {
+        let mut setup = Setup::default();
+        let ch = setup.channels[0].id;
+        let strip = Strip::Channel(ch);
+        let instance = apply(
+            &mut setup,
+            Command::AddInsert {
+                strip,
+                plugin: plugin("EQ"),
+                at: 0,
+            },
+        )
+        .unwrap()
+        .created[0];
+        let _ = apply(
+            &mut setup,
+            Command::SetMixDevice {
+                mix: MixId::Monitor,
+                device: Some(device("phones")),
+            },
+        )
+        .unwrap();
+        let before = setup.clone();
+        for cmd in [
+            Command::Rename {
+                ch,
+                name: " Mic ".to_string(),
+            },
+            Command::SetSource {
+                ch,
+                source: Source::Hardware(None),
+            },
+            Command::SetSend {
+                ch,
+                mix: MixId::Monitor,
+                position: UNITY,
+            },
+            Command::SetMute {
+                ch,
+                mix: MixId::Master,
+                mute: false,
+            },
+            Command::SetLink { ch, link: true },
+            Command::SetChainRouting {
+                ch,
+                mix: MixId::Monitor,
+                on: true,
+            },
+            Command::MoveInsert {
+                from: SlotRef { strip, index: 0 },
+                to: SlotRef { strip, index: 1 },
+                copy: false,
+            },
+            Command::SetInsertEnabled {
+                instance,
+                enabled: true,
+            },
+            Command::SetInsertState {
+                instance,
+                state: None,
+            },
+            Command::SetMixDevice {
+                mix: MixId::Monitor,
+                device: Some(device("phones")),
+            },
+            Command::SetMixLevel {
+                mix: MixId::Master,
+                position: UNITY,
+            },
+            Command::SetMixMute {
+                mix: MixId::Master,
+                mute: false,
+            },
+            Command::SetPreview(false),
+            Command::SetPrefs(Prefs::default()),
+        ] {
+            let applied = apply(&mut setup, cmd.clone()).unwrap();
+            assert_eq!(applied, Applied::default(), "{cmd:?}");
+            assert!(!applied.changed());
+        }
+        assert_eq!(setup, before);
+    }
+
+    #[test]
+    fn a_fader_moved_within_silence_is_saved_but_not_prepared() {
+        let mut setup = Setup::default();
+        let ch = setup.channels[0].id;
+        let _ = apply(&mut setup, Command::SetLink { ch, link: false }).unwrap();
+        let down = apply(
+            &mut setup,
+            Command::SetSend {
+                ch,
+                mix: MixId::Master,
+                position: 0.0,
+            },
+        )
+        .unwrap();
+        assert!(down.save && down.engine);
+        // 0.001 is still at or below 0.002: silent, so the gain the engine applies is 0.
+        let nudged = apply(
+            &mut setup,
+            Command::SetSend {
+                ch,
+                mix: MixId::Master,
+                position: 0.001,
+            },
+        )
+        .unwrap();
+        assert!(nudged.save && !nudged.engine, "{nudged:?}");
+        // A muted send's level still reaches the engine: unmuting must play it at that gain.
+        let _ = apply(
+            &mut setup,
+            Command::SetMute {
+                ch,
+                mix: MixId::Monitor,
+                mute: true,
+            },
+        )
+        .unwrap();
+        let muted_move = apply(
+            &mut setup,
+            Command::SetSend {
+                ch,
+                mix: MixId::Monitor,
+                position: 0.5,
+            },
+        )
+        .unwrap();
+        assert!(muted_move.save && muted_move.engine);
     }
 
     #[test]
@@ -657,17 +1023,44 @@ mod tests {
         .unwrap();
         let channel = setup.channel(ch).unwrap();
         assert!((channel.monitor.position - 1.0).abs() < 1e-6);
-        assert!(matches!(
-            apply(
-                &mut setup,
-                Command::SetSend {
-                    ch,
-                    mix: MixId::Master,
-                    position: f32::NAN,
-                }
-            ),
-            Err(Refused::NotAPosition(_))
-        ));
+        // Down to the bottom: both clamp at 0, never below.
+        let _ = apply(
+            &mut setup,
+            Command::SetSend {
+                ch,
+                mix: MixId::Master,
+                position: 0.0,
+            },
+        )
+        .unwrap();
+        let channel = setup.channel(ch).unwrap();
+        assert_eq!(channel.monitor.position, 0.0);
+        assert!(channel.monitor.position.is_sign_positive());
+        for position in [f32::NAN, -0.1, 1.5] {
+            assert!(matches!(
+                apply(
+                    &mut setup,
+                    Command::SetSend {
+                        ch,
+                        mix: MixId::Master,
+                        position,
+                    }
+                ),
+                Err(Refused::NotAPosition(_))
+            ));
+        }
+        // An unlinked channel moves one fader only.
+        let _ = apply(&mut setup, Command::SetLink { ch, link: false }).unwrap();
+        let _ = apply(
+            &mut setup,
+            Command::SetSend {
+                ch,
+                mix: MixId::Monitor,
+                position: 0.5,
+            },
+        )
+        .unwrap();
+        assert_eq!(setup.channel(ch).unwrap().master.position, 0.0);
     }
 
     #[test]
@@ -712,6 +1105,27 @@ mod tests {
         )
         .unwrap();
         assert_eq!(names(&setup.channels[0].chain), ["B", "C", "A"]);
+        // A back above B: an upward move takes the index as it is.
+        let _ = apply(
+            &mut setup,
+            Command::MoveInsert {
+                from: slot(ch, 2),
+                to: slot(ch, 0),
+                copy: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(names(&setup.channels[0].chain), ["A", "B", "C"]);
+        let _ = apply(
+            &mut setup,
+            Command::MoveInsert {
+                from: slot(ch, 0),
+                to: slot(ch, 3),
+                copy: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(names(&setup.channels[0].chain), ["B", "C", "A"]);
         // C onto Master keeps its instance; a copy gets a new one and keeps the state.
         let c = setup.channels[0].chain[1].instance;
         let _ = apply(
@@ -719,6 +1133,14 @@ mod tests {
             Command::SetInsertState {
                 instance: c,
                 state: Some(vec![1, 2, 3]),
+            },
+        )
+        .unwrap();
+        let _ = apply(
+            &mut setup,
+            Command::SetInsertEnabled {
+                instance: c,
+                enabled: false,
             },
         )
         .unwrap();
@@ -744,9 +1166,47 @@ mod tests {
         .unwrap();
         assert_eq!(copied.created.len(), 1);
         assert_ne!(copied.created[0], c);
-        assert_eq!(setup.channels[0].chain[0].state, Some(vec![1, 2, 3]));
+        let copy = &setup.channels[0].chain[0];
+        assert_eq!(copy.state, Some(vec![1, 2, 3]));
+        assert!(!copy.enabled, "a copy keeps the bypass");
         assert_eq!(names(&setup.channels[0].chain), ["C", "B", "A"]);
         assert_eq!(names(&setup.master.chain), ["C"]);
+    }
+
+    #[test]
+    fn removing_a_channel_retires_its_instances_and_returns_its_apps() {
+        let mut setup = Setup::default();
+        let ch = add(&mut setup, ChannelKind::Apps);
+        let mut made = Vec::new();
+        for name in ["A", "B"] {
+            made.extend(
+                apply(
+                    &mut setup,
+                    Command::AddInsert {
+                        strip: Strip::Channel(ch),
+                        plugin: plugin(name),
+                        at: made.len(),
+                    },
+                )
+                .unwrap()
+                .created,
+            );
+        }
+        let _ = apply(
+            &mut setup,
+            Command::SetSource {
+                ch,
+                source: Source::Apps(vec![app("spotify")]),
+            },
+        )
+        .unwrap();
+        let applied = apply(&mut setup, Command::RemoveChannel(ch)).unwrap();
+        assert_eq!(applied.removed, made);
+        assert!(applied.routing && applied.graph && applied.engine);
+        // An empty app channel routed nothing, so removing it routes nothing.
+        let empty = add(&mut setup, ChannelKind::Apps);
+        let applied = apply(&mut setup, Command::RemoveChannel(empty)).unwrap();
+        assert!(!applied.routing && applied.removed.is_empty());
     }
 
     #[test]
@@ -778,6 +1238,20 @@ mod tests {
         )
         .unwrap_err();
         assert!(refused.to_string().contains("file name"));
+        let mut lower = plugin("EQ");
+        lower.id = lower.id.to_lowercase();
+        assert!(
+            apply(
+                &mut setup,
+                Command::AddInsert {
+                    strip,
+                    plugin: lower,
+                    at: 0,
+                }
+            )
+            .is_ok(),
+            "hex digits in either case"
+        );
     }
 
     #[test]
@@ -797,10 +1271,52 @@ mod tests {
             &mut setup,
             Command::SetMixDevice {
                 mix: MixId::Master,
+                device: Some(device("out")),
+            },
+        )
+        .unwrap();
+        assert!(applied.graph && !applied.engine);
+        let applied = apply(
+            &mut setup,
+            Command::SetMixDevice {
+                mix: MixId::Master,
                 device: None,
             },
         )
         .unwrap();
         assert!(applied.graph);
+        assert_eq!(setup.master.device, None);
+    }
+
+    #[test]
+    fn the_quantum_is_one_the_preferences_offer_and_changing_it_changes_the_graph() {
+        let mut setup = Setup::default();
+        let refused = apply(
+            &mut setup,
+            Command::SetPrefs(Prefs {
+                quantum: 300,
+                ..Prefs::default()
+            }),
+        )
+        .unwrap_err();
+        assert!(refused.to_string().contains("128, 256 or 512"));
+        let applied = apply(
+            &mut setup,
+            Command::SetPrefs(Prefs {
+                quantum: 128,
+                ..Prefs::default()
+            }),
+        )
+        .unwrap();
+        assert!(applied.graph && applied.save && !applied.engine);
+        let applied = apply(
+            &mut setup,
+            Command::SetPrefs(Prefs {
+                quantum: 128,
+                plugin_dirs: vec!["/opt/vst3".into()],
+            }),
+        )
+        .unwrap();
+        assert!(applied.save && !applied.graph);
     }
 }

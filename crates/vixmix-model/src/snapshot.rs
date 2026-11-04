@@ -86,7 +86,7 @@ pub fn snapshot(setup: &Setup) -> EngineSnapshot {
     }
 }
 
-fn send(send: &Send) -> SendSnap {
+pub(crate) fn send(send: &Send) -> SendSnap {
     SendSnap {
         gain: position_to_gain(send.position),
         mute: send.mute,
@@ -142,5 +142,30 @@ mod tests {
         // Synth sends to Monitor at 0.64, which the taper reads as −8.57 dB.
         let gain = snap.channels[5].monitor.gain;
         assert!((gain - 10f32.powf(-8.571_428 / 20.0)).abs() < 1e-5);
+    }
+    #[test]
+    fn every_part_the_engine_runs_reaches_the_snapshot() {
+        let mut setup = example::setup();
+        setup.preview_master = true;
+        setup.master.level.mute = true;
+        let snap = snapshot(&setup);
+        let ids: Vec<u32> = snap.channels.iter().map(|c| c.id.0).collect();
+        assert_eq!(ids, [1, 2, 3, 4, 5, 6], "the console's order");
+        assert!(snap.preview_master);
+        assert_eq!(snap.monitor.id, MixId::Monitor);
+        assert!(snap.master.level.mute && !snap.master.level.audible());
+        assert_eq!(snap.monitor.level.gain, 1.0);
+        // Music's OTT: its instance, its plugin id and its bypass.
+        assert_eq!(
+            snap.channels[2].chain,
+            [InsertSnap {
+                instance: InstanceId(4),
+                plugin_id: example::plugin("OTT").id,
+                enabled: false,
+            }]
+        );
+        let master: Vec<u32> = snap.master.chain.iter().map(|i| i.instance.0).collect();
+        assert_eq!(master, [8, 9]);
+        assert!(snap.channels[0].chain_to_master && !snap.channels[4].chain_to_monitor);
     }
 }
