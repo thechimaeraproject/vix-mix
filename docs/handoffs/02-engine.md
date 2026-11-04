@@ -1,6 +1,59 @@
 # 02 — Engine
 
-**Record — not yet built.**
+**Record — shipped 2026-11-04.** The real graph: every channel through its chain, MON and MST
+choosing processed or dry per send, both mixes through their chains before level and mute,
+preview, meters and DSP load, with every hosted plugin lent through `Lender` and every replaced
+graph dropped on the host thread; the acceptance below is green, the contract is
+[reference/engine.md](../reference/engine.md), and `dev check` passes. Deviations from the steps
+below, each with its reason:
+
+- **Step 1: an instance is lent once and shared between graphs**, not lent afresh into each
+  graph's chains. `prepare` runs on the host thread while the tick runs the current graph,
+  whose chains hold every lent instance, so lending again finds each one `Busy`, and nothing on
+  the host thread may take one out of a running chain. The engine keeps each lent instance in
+  a cell, set up by the engine on the host thread, and fills every chain with `fill_with` and a
+  forwarding processor onto the cell; one graph runs per tick, so a fader move, a new insert or
+  a move between strips swaps in with every plugin untouched. The lender is asked again only
+  for a new instance or when its generation moves (`Busy` then means still ours).
+- **Step 1: one working bus, not dry and processed buffers per channel.** The dry signal is the
+  channel's input itself and strips run one after another, so a single `BusBuffer` of
+  `MAX_QUANTUM` frames serves every channel and both mixes.
+- **Step 1: bypass leaves the insert out of its chain but keeps its instance lent**, rather than
+  sending it home or keeping it in the chain. Sent home, a quick toggle would lend an instance
+  the replaced graph still holds; kept in the chain, it would cost the tick a check per insert.
+- **Step 1: a failed insert is left out of its chain**, not kept as the kit's failed slot, and
+  reported through a new `Engine::problems()` (`InsertProblem`), because the engine rebuilds
+  every chain on every `prepare` and needs the strip and instance of each failure, which
+  `ProcessorChain::errors` does not carry.
+- **Step 3: replaced graphs also drop when no tick is running**, not only behind the
+  acknowledgement: a `SeqCst` fence pair between the swap and the tick's flag proves no tick
+  holds one. So the list of kept graphs is bounded (empty after any `prepare` or `reap` with no
+  tick mid-cycle) and a stopped engine releases them at once. `prepare` may drop graphs itself.
+  Lane 00's test that two unticked graphs survive a `reap` became two stronger ones (dropped at
+  once with nothing ticking; kept while a tick is mid-cycle until its acknowledgement passes).
+- **Step 4: one tick at a time** is enforced (a `ticking` flag; a concurrent call plays
+  silence) because a chain needs `&mut` and `process` takes `&self`. The `unsafe impl Sync` is
+  one type, `TickOnly<T>`, holding the working bus, each graph's chains and each lent
+  processor.
+- **Step 7: the rate arrives through a new `Engine::set_rate`**, and an instance that asks for
+  new buses through a new `Engine::set_up_again`: setting a VST3 plugin up again needs it out
+  of every running graph, which only the engine knows, so it marks the instance, plays its
+  insert as a pass-through, and sets it up in place once `Arc::get_mut` shows no graph holds
+  it (inside the call when nothing ticks, else at the next `reap`). The plugins crate's
+  `Rack::touch` alone no longer sets an instance up again. `Engine::new` replaces the given
+  block and channels with `MAX_QUANTUM` and 2. These additions are change request 2 in the
+  [build map](../build-map.md), proposed for lanes 04 and 06.
+- **Step 8: change request 1 was decided for this lane**: the engine does not change; the
+  plugins crate's handle drains editor edits. An insert's `ProcessorParams` carries no values,
+  so the chain's first-block send is empty and a plugin's loaded state stands.
+- **Acceptance, "a linked snapshot change arrives once"**, is read as: one command moving both
+  linked sends prepares one graph, the next tick plays both new gains together, later ticks the
+  same, and no plugin is set up again or told anything. **"Drops only after the
+  acknowledgement"** holds while a tick is mid-cycle, which the test stages with a gated probe;
+  with no tick running Step 3's decision applies.
+- **DSP load rounds up**, so any tick that took time reads at least 1 ‰; the tick's transport
+  is `TransportInfo::stopped()`, since a live mixer has no timeline.
+
 **Needs:** 00. **Runs alongside:** 01, 03, 04, 05. **Size:** L.
 
 ## Goal

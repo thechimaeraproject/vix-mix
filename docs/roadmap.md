@@ -15,6 +15,7 @@ the [build map](build-map.md) holds the order and the conflict rules.
 | CI: `check (linux)` with a headless PipeWire daemon, `check (windows)` | [kit-cli.md](kit-cli.md) | 2026-11-04 |
 | The model: every command's `Applied` exact and proven against the diff, ids that never come back, `setup.ron` format 2 with the migration from format 1 and the rules checked at load | [reference/model.md](reference/model.md) | 2026-11-04 |
 | The plugins: the scan with a per-bundle cache in `plugins.ron`, instances made to match a setup with the missing-plugin rule, the rack and the edit path from a plugin's editor to its lent processor, state, editor sessions; tested with a real VST3 plugin on Windows and Linux | [reference/plugins.md](reference/plugins.md) | 2026-11-04 |
+| The engine's graph: chains on every channel and both mixes with each plugin lent once and shared between graphs, the MON/MST split, mix chains, replaced graphs dropped on the host thread (behind the acknowledgement, or at once when nothing ticks), setting instances up again for a new rate or new buses, pass-through problems, no allocation on the tick | [reference/engine.md](reference/engine.md) | 2026-11-04 |
 
 ## Next
 
@@ -23,7 +24,7 @@ Wave 2, in parallel, each in its own worktree ([build map](build-map.md) § Wave
 | Lane | What it delivers | Status |
 |---|---|---|
 | [01 — Model](handoffs/01-model.md) | the whole setup as data, `Applied` proven against the diff, the taper, persistence with a migration seam | shipped 2026-11-04 |
-| [02 — Engine](handoffs/02-engine.md) | chains lent through `Lender`, the dry/processed split, mix chains, the no-alloc proof with chains on | not yet built |
+| [02 — Engine](handoffs/02-engine.md) | chains lent through `Lender`, the dry/processed split, mix chains, the no-alloc proof with chains on | shipped 2026-11-04 |
 | [03 — PipeWire backend](handoffs/03-pipewire-backend.md) | the streams, rings, tick election, registry, routing and reconnect, tested against a headless daemon | not yet built |
 | [04 — Plugins](handoffs/04-plugins.md) | scan and cache, instances, the rack, state, editor sessions, tested with the kit's test plugin | shipped 2026-11-04 (see Built) |
 | [05 — App](handoffs/05-app.md) | the look gate, then the console exactly as prototype v5 against `FakeHost` | not yet built |
