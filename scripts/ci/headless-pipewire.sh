@@ -7,7 +7,11 @@
 # Needs the packages CI installs: pipewire, wireplumber, pipewire-audio-client-libraries
 # (pw-cli). The daemons are left running in the background; their logs are in $LOGS (default
 # the runner's temp directory, else /tmp). In GitHub Actions the variables later steps need
-# are appended to $GITHUB_ENV; in a shell, `source` this script to keep them.
+# are appended to $GITHUB_ENV; in a shell, `source` this script to keep them. Sourced, it
+# restores your shell's options at the end and returns on failure instead of closing the shell.
+_vixmix_pw_sourced=0
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then _vixmix_pw_sourced=1; fi
+_vixmix_pw_options="$(set +o)"
 set -euo pipefail
 
 LOGS="${LOGS:-${RUNNER_TEMP:-/tmp}}"
@@ -47,8 +51,9 @@ CONF
 
 # WirePlumber talks D-Bus; a runner has no session bus, so start one.
 if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && command -v dbus-daemon >/dev/null 2>&1; then
-  DBUS_SESSION_BUS_ADDRESS="$(dbus-daemon --session --fork --print-address)"
-  export DBUS_SESSION_BUS_ADDRESS
+  if _vixmix_pw_bus="$(dbus-daemon --session --fork --print-address)"; then
+    export DBUS_SESSION_BUS_ADDRESS="$_vixmix_pw_bus"
+  fi
 fi
 
 pipewire >"$LOGS/pipewire.log" 2>&1 &
@@ -74,6 +79,8 @@ if [ -z "$answered" ]; then
   echo "headless-pipewire: the daemon did not list vixmix-ci-null-sink and the default metadata within 15 s" >&2
   echo "--- pipewire.log" >&2; cat "$LOGS/pipewire.log" >&2 || true
   echo "--- wireplumber.log" >&2; cat "$LOGS/wireplumber.log" >&2 || true
+  eval "$_vixmix_pw_options"
+  if [ "$_vixmix_pw_sourced" = 1 ]; then return 1; fi
   exit 1
 fi
 echo "headless-pipewire: the daemon answers at $XDG_RUNTIME_DIR/pipewire-0 with the null sink, the null source and the default metadata"
@@ -84,3 +91,5 @@ if [ -n "${GITHUB_ENV:-}" ]; then
     echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >>"$GITHUB_ENV"
   fi
 fi
+
+eval "$_vixmix_pw_options"
