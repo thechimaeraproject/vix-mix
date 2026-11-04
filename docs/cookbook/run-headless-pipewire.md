@@ -98,6 +98,12 @@ without touching anything; under `CI` they fail instead. The two on-request runs
 minutes) or disturb the daemon the others share (it is killed and started again), so they are
 `#[ignore]`d; the second leaves the restarted daemon running.
 
+The two-minute run wants realtime scheduling. Without it (a container, where Docker gives no
+realtime budget), a stall of the whole machine now and then makes every node of the graph late
+at once, the test's own `pw-play` and `pw-record` included, and fails the run. The test prints
+each node's `pw-top` ERR over its window (`--nocapture`): an ERR on `pw-play` or `pw-record` as
+well as on ours is the machine, not the backend.
+
 ## 7. Stop it
 
 ```bash

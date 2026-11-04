@@ -75,7 +75,9 @@ pub enum BackendEvent {
     /// An app's playback stream went away, by node id.
     AppStreamRemoved(u32),
     /// A cycle came late or short (one event per housekeeping pass that saw any; the count is
-    /// [`BackendStats::xruns`] and the engine's `Stats::xruns`).
+    /// [`BackendStats::xruns`] and the engine's `Stats::xruns`). The backend's own detection,
+    /// not PipeWire's count: a cycle our nodes finished late while the driver's clock went on
+    /// as usual shows in `pw-top`'s ERR column and never here.
     Xrun,
     /// The graph's quantum changed (another client asked for less, or the default moved).
     QuantumChanged(u32),
@@ -157,7 +159,10 @@ pub struct BackendStats {
     pub rate: u32,
     pub quantum: u32,
     /// Cycles that came late or short: a running input that delivered less than a quantum by
-    /// its tick, or a tick more than one and a half periods after the one before.
+    /// its tick, or a tick more than one and a half periods after the one before. This is what
+    /// the data thread can see for itself; it misses a cycle our nodes finished after the
+    /// driver's next one began while the clock advanced normally, which PipeWire counts (the
+    /// ERR column of `pw-top`), so it may read lower than what was heard.
     pub xruns: u64,
     /// The part of `xruns` that were inputs short at their tick.
     pub underruns: u64,

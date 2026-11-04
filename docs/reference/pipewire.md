@@ -174,6 +174,16 @@ running, primed inputs. A ring full when its input delivers (nothing ticked) cou
 sixteen, which is a graph that stopped) counts as an xrun too. Every xrun also counts in the
 engine's `Stats::xruns`.
 
+These counts are the backend's own detection, which is all the data thread can see, and they
+miss one kind of xrun PipeWire counts: a cycle one of our nodes had not finished when the driver
+began the next, while the driver's clock went on as usual. The driver counts that against the
+late node (`check_states` in
+[`impl-node.c`](https://gitlab.freedesktop.org/pipewire/pipewire/-/blob/1.0.5/src/pipewire/impl-node.c),
+"client too slow"), in the node's activation, which the stream API does not expose; it is the ERR
+column of `pw-top`. So `xruns` may read lower than what was heard: in a two-minute run with no
+realtime priority, `pw-top` showed ERR 2 on each of our nodes where the backend counted 1. Reading
+PipeWire's own count is a follow-up.
+
 The tick's inputs change by plan: the control thread builds a boxed plan (which of the eight
 slots gets which ring's consumer, and the engine order), sends it through an `rtrb` ring, and
 the tick takes it at the start of a cycle and sends it back holding the taps it replaced, so
@@ -209,7 +219,11 @@ control thread, at most sixteen in flight each way.
   `restore-stream` forgets a target whose metadata is cleared while the node is still known),
   which is why the host's rule, not the session manager, is the routing of record.
 - **A renamed app sink** keeps its apps: every subject the metadata sent to the old sink (by our
-  serial or by WirePlumber's restored id) is routed to the new one once it is announced.
+  serial or by WirePlumber's restored id) is routed to the new one once it is announced. The
+  backend finds them in its mirror of the two keys for every subject. A metadata event with no
+  key clears one subject's keys (WirePlumber's, when an app it routed goes away; `pw-metadata
+  -d <id>`), so it drops that subject from the mirror alone; only a subject of `PW_ID_ANY`
+  would empty it.
 - `Disconnected` is preceded by a `DeviceRemoved` and an `AppStreamRemoved` for everything that
   was reported, so the host's lists empty.
 
@@ -267,12 +281,14 @@ On Linux, `cargo test -p vixmix-pipewire` (on Windows the crate compiles to noth
   mix of its own cycle, no break in the sine; Monitor out linked to and heard on the null sink;
   a capture channel linked to the null source; an app un-assigned while absent going back to
   the default when it appears, whether the session manager's restore lands before or after the
-  host's routing; a renamed channel keeping its app; a quantum forced to 512 reported and
-  followed, and back; Monitor's device removed mid-run with Master out ticking on, no silent
-  frame and no break on Master, every cycle ticked.
+  host's routing; a renamed channel keeping its app after another app routed to it quit and an
+  unrelated subject's keys were cleared; a quantum forced to 512 reported and followed, and
+  back; Monitor's device removed mid-run with Master out ticking on, at most one quantum of
+  silence and at most two breaks on Master (measured: none), every cycle ticked.
 - On request (`-- --ignored`, [the cookbook](../cookbook/run-headless-pipewire.md) step 6):
   `two_minutes_at_256_without_an_xrun` — two minutes with null devices at 256, zero xruns, every
-  ring check on target, every output every cycle, `pw-top`'s ERR 0 on every node of ours — and
+  ring check on target, every output every cycle, and no ERR added on any node of ours over the
+  window (`pw-top` sampled before and after it: its ERR counts from a node's making) — and
   `the_backend_reconnects_after_the_daemon_restarts`. The two-minute run wants a quiet machine:
   with no realtime priority (a container has no rtkit) a stall of the whole host shows as
   xruns on every node of the graph, the test's `pw-play` and `pw-record` included, which the
