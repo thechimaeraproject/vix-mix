@@ -92,6 +92,8 @@ pub fn parse(bytes: &[u8]) -> Result<Setup, PersistError> {
         version: u32,
     }
     let text = std::str::from_utf8(bytes)?;
+    // An editor that writes a byte order mark still wrote valid UTF-8; RON would refuse it.
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let header: Header = ron::from_str(text)?;
     let mut setup = match header.version {
         VERSION => ron::from_str::<Setup>(text)?,
@@ -244,6 +246,13 @@ mod tests {
         setup.next_channel = ChannelId(40);
         let read = parse(to_ron(&setup).as_bytes()).unwrap();
         assert_eq!(read.next_channel, ChannelId(40));
+    }
+
+    #[test]
+    fn a_byte_order_mark_from_an_editor_is_not_a_refusal() {
+        let mut bytes = "\u{feff}".as_bytes().to_vec();
+        bytes.extend_from_slice(to_ron(&with_state()).as_bytes());
+        assert_eq!(parse(&bytes).expect("a BOM is valid UTF-8"), with_state());
     }
 
     #[test]
