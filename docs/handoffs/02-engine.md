@@ -43,7 +43,7 @@ below, each with its reason:
   insert as a pass-through, and sets it up in place once `Arc::get_mut` shows no graph holds
   it (inside the call when nothing ticks, else at the next `reap`). The plugins crate's
   `Rack::touch` alone no longer sets an instance up again. `Engine::new` replaces the given
-  block and channels with `MAX_QUANTUM` and 2. These additions are change request 2 in the
+  block and channels with `MAX_QUANTUM` and 2. These additions are change request 5 in the
   [build map](../build-map.md), proposed for lanes 04 and 06.
 - **Step 8: change request 1 was decided for this lane**: the engine does not change; the
   plugins crate's handle drains editor edits. An insert's `ProcessorParams` carries no values,
