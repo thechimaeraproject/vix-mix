@@ -40,9 +40,8 @@ on every push and in CI.
   their validation, the fader taper, `setup.ron`, the engine snapshot.
 - [reference/pipewire.md](reference/pipewire.md) — the Linux backend's contract: the config,
   the events, the graph, `Backend`'s signatures, the node names; built by handoff 03.
-- [reference/plugins.md](reference/plugins.md) — the catalog, its search and the cached scan,
-  instances on the UI thread, the rack that lends them to chains, the edit path from a
-  plugin's editor to its lent processor, editor sessions.
+- [reference/plugins.md](reference/plugins.md) — the catalog and its search, the rack that
+  lends instances to chains, instances on the UI thread, editor sessions.
 
 ## Record
 
