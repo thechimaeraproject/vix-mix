@@ -22,8 +22,9 @@ enumeration, reconnect — and the engine tick driven from the data thread.
   requests.
 - The kit's [rust.md](https://github.com/thechimaeraproject/chimaeraproject-kit/blob/master/handbook/reference/rust.md)
   (platform-only code behind `cfg`; nothing allocates on an audio thread).
-- pipewire-rs 0.10 (`pipewire` on crates.io; its source is in Cargo's registry once the
-  workspace is fetched): `examples/audio-capture.rs` (the format pod), `src/stream/mod.rs`
+- pipewire-rs at the version the workspace `Cargo.toml` pins, feature `v1_0_0` (`pipewire` on
+  crates.io; its source is in Cargo's registry once the workspace is fetched):
+  `examples/audio-capture.rs` (the format pod), `src/stream/mod.rs`
   (`StreamFlags::TRIGGER`, `Stream::trigger_process`), `src/thread_loop`, `src/channel.rs`,
   `src/metadata.rs`.
 - PipeWire itself: `module-loopback` (the pattern: a sink/source pair with `node.group` and
@@ -32,10 +33,24 @@ enumeration, reconnect — and the engine tick driven from the data thread.
 - CI's Linux leg in `.github/workflows/ci.yml` and `scripts/ci/headless-pipewire.sh`: the
   packages, and a headless PipeWire and WirePlumber with a null sink (`vixmix-ci-null-sink`,
   `Audio/Sink`) and a null source (`vixmix-ci-null-source`, `Audio/Source/Virtual`), proven to
-  answer before the gates run. `source scripts/ci/headless-pipewire.sh` starts the same in a
-  WSL2 or VM shell (it needs `pipewire`, `wireplumber`, `pipewire-audio-client-libraries` and
+  answer before the gates run. `source scripts/ci/headless-pipewire.sh` starts the same in your
+  Linux shell (below; it needs `pipewire`, `wireplumber`, `pipewire-audio-client-libraries` and
   `dbus`); your integration tests run against it. Note the source's class when you write the
   device filter: `Audio/Source/Virtual`, not `Audio/Source`.
+- **A Linux box.** The development machine is Windows, and its WSL2 Ubuntu has nothing this
+  lane needs yet: no Rust, no C compiler, no `pkg-config`, no PipeWire packages. Its user has no
+  passwordless `sudo`, so an agent cannot install them; the user does it once, in a WSL2 shell:
+  `sudo apt-get install libpipewire-0.3-dev pipewire wireplumber pipewire-audio-client-libraries
+  libclang-dev dbus pkg-config build-essential`, then rustup (<https://rustup.rs>) with the
+  toolchain `rust-toolchain.toml` pins. Until then, take lane 00's route: an `ubuntu:24.04`
+  container under the running Docker Desktop, with the worktree mounted
+  (`docker run --rm -it -v <worktree>:/src -w /src -e CARGO_TARGET_DIR=/root/target
+  ubuntu:24.04 bash`, so Linux build output stays off the Windows `target/`), the same packages
+  plus `curl`, `ca-certificates` and `git`, and rustup inside it. The container holds no
+  credential for the kit's private repository, so vendor the crates on the Windows side
+  (`cargo vendor` into a directory outside the worktree, mounted too) and give the container the
+  `[source]` table it prints, its `directory` pointed at the mount. The Fedora VM is the other
+  Linux shell once it is set up.
 
 ## What this lane owns, what others keep
 
@@ -67,8 +82,8 @@ WirePlumber settings; the review's evidence links go into `reference/pipewire.md
   `target.object`, `AUTOCONNECT | RT_PROCESS | MAP_BUFFERS`: **the tick**. Master out and
   Master source (`media.class = Audio/Source`, `node.name = <app>.master`) = OUTPUT streams
   connected with `TRIGGER`, driven by `trigger_process()` from the tick every cycle (silence
-  when needed), so they run in the same cycle after the tick with no second ring. Both flags
-  exist in pipewire-rs 0.10 (`StreamFlags::TRIGGER`, `Stream::trigger_process`, feature
+  when needed), so they run in the same cycle after the tick with no second ring. Both exist
+  in the pinned pipewire-rs (`StreamFlags::TRIGGER`, `Stream::trigger_process`, feature
   `v1_0_0`).
 - **Two PipeWire facts the design is built on.** (1) An unlinked stream's `process` never runs
   (no `SPA_IO_Buffers`): an app sink with no app linked pushes nothing and is silence, not an
@@ -151,7 +166,8 @@ only, noted in this handoff's status line.
 
 ## Acceptance
 
-- The integration tests run in CI's Linux leg and in WSL2.
+- The integration tests run in CI's Linux leg and in WSL2 (in the `ubuntu:24.04` container
+  until the user has installed WSL2's packages; the status line says which).
 - `cargo clippy` clean on Linux, and the crate compiles to nothing elsewhere.
 - A two-minute run with null devices at 256 shows zero xruns and every ring holding exactly one
   quantum at each tick.

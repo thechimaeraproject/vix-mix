@@ -27,8 +27,12 @@ commit that changes any of it.
   are the main session's (the hooks refuse a push from an agent).
 - **Wave 2: 01, 02, 03, 04 and 05 in parallel.** Each lane is one agent in its own git
   worktree on branch `lane/NN-slug` (below), committing locally; the main session runs
-  `kit push` and `kit merge` for each. 03 needs a Linux shell (WSL2 or the Fedora VM) for its
-  integration tests; 05 runs on Windows against `FakeHost`.
+  `kit push` and `kit merge` for each. 03 needs a Linux shell for its integration tests: WSL2
+  or the Fedora VM once they have the packages and rustup, and until then an `ubuntu:24.04`
+  container under Docker Desktop, as lane 00 used; 05 runs on Windows against `FakeHost`.
+- **Only the user** can ready WSL2 for 03: its `sudo` asks for a password, so no agent can
+  install the packages and rustup that [handoff 03](handoffs/03-pipewire-backend.md) § Read
+  first lists. Until the user has, 03 runs its tests in the container.
 - **Wave 3: 06** once 01–04 have merged (05 may still be landing polish); then **07 and 08** in
   parallel.
 

@@ -53,9 +53,22 @@ behaviour; the window keeps drawing (05).
 7. **`FakeHost`** stays for the window's tests.
 8. **A headless integration test:** the null backend plus the kit's test plugin through a
    channel chain with MON on; meters move; save → reload → the same setup.
-9. **`cookbook/by-hand-pass.md`** for the first real test on Fedora: the user's Wave Link scene
-   (Main Mic, Index Mic, Music, Web, System, Voice chat), with native Linux VST3s and
-   yabridge-bridged Windows VST3s both appearing as bundles — with its index entry.
+9. **`cookbook/by-hand-pass.md`** for the first real test on Fedora, with its index entry. It
+   builds the user's Wave Link scene (Main Mic, Index Mic, Music, Web, System, Voice chat) and
+   then checks, each as a step that says what to see:
+   - a mic through a plugin to the headphones;
+   - an app's routing persists across the app's restarts (quit and relaunch Spotify: it comes
+     back in Music);
+   - "Vix Mix Master" is recordable by Discord and by OBS;
+   - Master previewed through Monitor (the ear button);
+   - save and restore, plugin state included (quit and relaunch Vix Mix);
+   - `pw-top` shows no xruns at 256;
+   - the latency figure, measured and recorded in
+     [reference/pipewire.md](../reference/pipewire.md).
+
+   The plugins: FabFilter, iZotope and Kilohearts have no Linux builds, so the pass uses native
+   Linux VST3s (TDR, u-he, werman, Airwindows, Surge XT, Dragonfly, LSP, ZL) and yabridge-bridged
+   Windows VST3s, both appearing as bundles.
 10. **Docs:** complete [reference/host.md](../reference/host.md); `CLAUDE.md` § Status;
     roadmap rows flipped.
 
