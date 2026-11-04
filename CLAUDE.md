@@ -72,6 +72,16 @@ embedded Plex fonts into the window, which now draws the console static from the
 browser or editor window yet: steps 2–9 wait on the verdict (keep going in egui, or Slint). See
 `docs/reference/app.md`.
 
+**The PipeWire backend is implemented (2026-11-04):** `vixmix-pipewire` owns the control thread,
+every stream and proxy, the input rings and their latency governor (exactly one quantum), the
+tick on the data thread (whichever output runs first in a cycle; the others copy that cycle's
+mix), the registry with app identity, routing by sink serial through the `default` metadata
+and reconnect with backoff; it does not decide routing (the host does, on each app's
+appearance) or compute the mix (the engine does). See `docs/reference/pipewire.md`, the
+cookbook `docs/cookbook/run-headless-pipewire.md` and
+[handoff 03](docs/handoffs/03-pipewire-backend.md), whose record lists the deviations; change
+requests 6 and 7 in the build map wait for the main session.
+
 ## Git workflow (read first)
 
 **Work on a branch, never on `master`/`main`.** Every change is a PR: `kit push --yes` runs

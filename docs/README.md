@@ -6,7 +6,7 @@ Every doc belongs to one class, and the class says how much to trust it:
 |---|---|---|---|
 | **Start here** | `charter.md`, `build-map.md`, `roadmap.md` | The premise and the settled decisions, the plan of record for the lanes, and the status. | The charter is a decision, not an edit; the build map and the roadmap are true as of their date and are updated in the commit that changes them. |
 | **Reference** | `reference/` | What one crate (or the app) does and requires today. Each owns the source files it explains, on an `Owns:` line, and the references together partition `crates/*` and `app`. | Code depends on it; keep it exact. |
-| **Cookbook** | `cookbook/` | A numbered procedure for one task, ending in *How you know it worked*. None is written yet; lanes 03 and 06 write the first two. | Follow it literally; if a step is wrong, fix the doc in the same commit. |
+| **Cookbook** | `cookbook/` | A numbered procedure for one task, ending in *How you know it worked*. Lane 03 wrote the first; lane 06 writes the next. | Follow it literally; if a step is wrong, fix the doc in the same commit. |
 | **Record** | `design/`, `handoffs/`, the `kit-*.md` adoption records | What was decided and why — the product design, one lane of work, what was taken from the kit — and its acceptance evidence once shipped. | History once shipped, intention before; the first paragraph says which. Never an API reference; the reference it produced is. |
 | **Postmortem** | `postmortem/` (none yet) | A shipped bug or a retired idea, kept for the lesson. Numbered, immutable. | History, not guidance. |
 
@@ -38,10 +38,17 @@ on every push and in CI.
   drives, `RealHost`'s boot and save, `FakeHost`'s example console and simulated meters.
 - [reference/model.md](reference/model.md) — the setup as data: the types, the commands and
   their validation, the fader taper, `setup.ron`, the engine snapshot.
-- [reference/pipewire.md](reference/pipewire.md) — the Linux backend's contract: the config,
-  the events, the graph, `Backend`'s signatures, the node names; built by handoff 03.
+- [reference/pipewire.md](reference/pipewire.md) — the Linux backend: the contract, the
+  threads, the nodes and their properties, the first-output tick, the rings' governor, routing
+  by serial, reconnect, the latency figures.
 - [reference/plugins.md](reference/plugins.md) — the catalog and its search, the rack that
   lends instances to chains, instances on the UI thread, editor sessions.
+
+## Cookbook
+
+- [cookbook/run-headless-pipewire.md](cookbook/run-headless-pipewire.md) — a PipeWire and
+  WirePlumber daemon with a null sink and a null source in CI, WSL2, a VM or a container, and
+  the backend's tests against it.
 
 ## Record
 

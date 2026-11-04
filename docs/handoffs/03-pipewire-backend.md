@@ -1,6 +1,85 @@
 # 03 — PipeWire backend
 
-**Record — not yet built.**
+**Record — shipped 2026-11-04.** The backend runs against a real daemon: streams, rings and
+the latency governor, the tick on the data thread, the registry with app identity, routing
+through the `default` metadata, `apply` diffing, reconnect with backoff, the cookbook, and the
+reference complete ([reference/pipewire.md](../reference/pipewire.md)). The integration tests
+ran in an `ubuntu:24.04` container (PipeWire and WirePlumber as Ubuntu 24.04 ships them, no
+rtkit) because WSL2's packages are not installed yet, and run in CI's Linux leg inside
+`dev check`; no change to `ci.yml` was needed (the daemon script, which this lane owns, now
+also exports the marker the tests require). Deviations from the design and steps below, each
+forced by what the daemon did:
+
+- **The tick is whichever output runs first in a cycle, not Monitor triggering Master out and
+  the Master source (step 4).** Built as designed first (the lane's first commit) and measured
+  at 256: steady state was clean, but removing Monitor's device left Master out silent for
+  1280 frames (five quanta) — a TRIGGER stream runs only when triggered, so Master stopped with
+  Monitor's link until the control thread heard of the removal (11 ms) and reconnected Master
+  out without the flag. No control-thread reaction is faster than the registry's news, so the
+  acceptance's one quantum was out of reach. Now every output is driven by the graph, the first
+  to run in a cycle ticks and stages the mix stamped with the cycle, and the others copy it:
+  the same latency (no ring on the outputs), no trigger pointers shared with the data thread,
+  and the same removal measures 0 silent frames. Also found: `pw_stream_connect` with `TRIGGER`
+  leaves `node.trigger = true` in the stream's properties for good, and a TRIGGER node in a
+  running group must be triggered every cycle or no cycle completes. The election survives as
+  what the host is told: `BackendEvent::TickSource`.
+- **The governor holds the ring one quantum ahead of the tick, not "discard down to n at 2n"
+  (step 3).** Read literally, that rule gives a lag of zero or one quantum depending on which
+  runs first, with a lost or repeated quantum at each order flip. Each input stamps the cycle
+  it delivered in (the driver's `clock.nsec`), so the tick knows whether to expect two quanta
+  or one: the lag is exactly one quantum whatever the order, which is what the design asks for.
+  A shortfall counts as an underrun only when the input delivers again within eight ticks; an
+  app that quits is no xrun.
+- **Routing writes the sink's `object.serial` as `Spa:Id`, not its `node.name` as
+  `Spa:String`, and clears `target.node` (step 6).** WirePlumber's `restore-stream.lua` looks a
+  `target.object` value up as a serial to persist it, so a name is routed but never remembered,
+  and it restores through `target.node`. WirePlumber's memory also proved unreliable: it forgets
+  a routing when the metadata is cleared while the app's node is still known, which happens
+  when an app quits. So the host's apply-on-appear rule is the routing of record, and the
+  backend helps it win: for three seconds after an app appears, a routing someone else sets
+  over the host's is put back. The un-assignment test writes the restore itself (what
+  WirePlumber writes) before and after the host's routing, rather than relying on that memory.
+- **App identity comes from the node and its client.** `application.process.binary` and the
+  portal app id live on the client for a native PipeWire app (`pw-play`'s node carries
+  neither), so the backend binds clients too; a stream pipewire-pulse made keeps the identity
+  pipewire-pulse copied onto it.
+- **Node names are `<app>.ch<id>.<slug>`**, the second point the contract left open: the id
+  keeps alike-slugged channels apart, and a rename makes the sink again under the new name and
+  moves the apps the metadata sent to the old one. Monitor out and Master out are
+  `<app>.monitor-out` and `<app>.master-out`; descriptions read "Vix Mix <name>".
+- **Streams that name a device carry `node.dont-reconnect` and `node.dont-fallback`**, so an
+  unplugged device's stream waits for it (WirePlumber's policy destroys its node; the backend
+  connects the same stream again when the device returns) instead of following the default.
+- **The control thread runs a `MainLoop`, not a `ThreadLoop` (step 1).** Every proxy and stream
+  is made and dropped on that thread, so `Backend` holds only `Send` things and the host may
+  keep it anywhere; a `ThreadLoop`'s objects would be made from the caller's thread under its
+  lock. PipeWire's callbacks only queue notes, handled at loop-source safe points, because
+  objects may not be destroyed from inside their own callbacks.
+- **Additive contract changes**, change request 6 in the [build map](../build-map.md):
+  `BackendEvent::TickSource` and `TickSource`, `Backend::stats` and `BackendStats`,
+  `channel_node_name` taking the channel's id, `monitor_out_node_name`,
+  `master_out_node_name`, `DISPLAY_NAME`, `Backend: Send + Sync`; `BackendError::NotBuilt` is
+  gone.
+- **`vixmix-host`'s Linux test `it_boots_on_the_null_backend_and_says_so_first` now fails**: it
+  asserts the "not built yet" banner, and `connect` succeeds against CI's daemon. This lane may
+  not edit lane 06's crate, so change request 7 carries the one-test fix; until it is applied,
+  `check (linux)` fails on that test alone.
+- **The integration tests** need the marker the daemon script exports: without it they say how
+  to start the daemon and pass without touching anything (a desktop session must never get
+  their routings), and under `CI` they fail. The two-minute run and a daemon restart are
+  `#[ignore]`d and run on request (the cookbook, step 6).
+- No `kit-*.md` record names this handoff, so none was flipped.
+
+**Acceptance, as run on 2026-11-04 in the container:** `tests/headless.rs` 9 passed (2 on
+request); clippy clean on Linux with `-D warnings`, and on Windows the crate compiles to nothing
+inside a green `dev check`. The two-minute run at 256 (`two_minutes_at_256_without_an_xrun`):
+22 501 cycles, 0 xruns, 0 ring checks off one quantum out of 22 501, Monitor out, Master out and
+the Master source each wrote all 22 501 cycles' own mix, 0 stale, and `pw-top` showed ERR 0 on
+all four nodes of ours. A second run while other lanes were building showed 26 xruns on every
+node of the graph, `pw-play`'s included — a stall of the whole host with no realtime priority —
+of which the backend counted 5; the run wants a quiet machine. The daemon-restart run passed:
+`Disconnected`, then `Connected` and Monitor out linked again after the daemon came back.
+
 **Needs:** 00. **Runs alongside:** 01, 02, 04, 05. **Size:** L. **Linux only.**
 
 ## Goal

@@ -9,8 +9,11 @@ numbered steps (`## 1. …`) in the order you do them, each naming what it chang
 step is always *How you know it worked*, with the command to run and the output that means it
 did. If a step turns out to be wrong, fix the doc in the same commit.
 
-None is written yet. The first two are named in the [roadmap](../roadmap.md):
-`run-headless-pipewire.md` (handoff 03) and `by-hand-pass.md` (handoff 06, run by 08). A lane
-that adds one lists it here and in the index's Cookbook section.
+- [run-headless-pipewire.md](run-headless-pipewire.md) — a headless PipeWire and WirePlumber
+  with null devices in CI, WSL2, a VM or a container, and the backend's tests against it
+  (handoff 03).
+
+The next is named in the [roadmap](../roadmap.md): `by-hand-pass.md` (handoff 06, run by 08). A
+lane that adds one lists it here and in the index's Cookbook section.
 
 [Back to the docs index](../README.md)
