@@ -19,3 +19,9 @@ thiserror.workspace = true
 # a build, so the workspace still builds and tests there (docs/charter.md, Windows).
 [target.'cfg(target_os = "linux")'.dependencies]
 pipewire.workspace = true
+# The frame rings between each input's `process` and the tick.
+rtrb.workspace = true
+# Every realtime callback runs inside `assert_no_alloc`: a no-op in a release build, an abort
+# under the test binary's allocator (tests/headless.rs).
+assert_no_alloc.workspace = true
+log.workspace = true

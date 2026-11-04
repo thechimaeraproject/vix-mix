@@ -3340,7 +3340,10 @@ dependencies = [
 name = "vixmix-pipewire"
 version = "0.1.0"
 dependencies = [
+ "assert_no_alloc",
+ "log",
  "pipewire",
+ "rtrb",
  "thiserror 2.0.21",
  "vixmix-engine",
  "vixmix-model",
