@@ -1,0 +1,123 @@
+# Build map
+
+**As of 2026-11-04: wave 1 (lane 00) is done; wave 2 is next.** The plan of record for building
+Vix Mix: nine lanes, the order they run in, how several agents work at once without stepping on
+each other, and how the contracts they share change. Each lane's full brief is its
+[handoff](handoffs/README.md); this page is what they have in common, and it is updated in the
+commit that changes any of it.
+
+## The lanes
+
+| Lane | Owns | Needs | Size |
+|---|---|---|---|
+| [00 — Bootstrap](handoffs/00-bootstrap.md) | the root, the crate and app skeletons with the shared contracts, the docs, CI | — | S |
+| [01 — Model](handoffs/01-model.md) | `crates/vixmix-model/` | 00 | M |
+| [02 — Engine](handoffs/02-engine.md) | `crates/vixmix-engine/` | 00 | L |
+| [03 — PipeWire backend](handoffs/03-pipewire-backend.md) | `crates/vixmix-pipewire/` (Linux only) | 00 | L |
+| [04 — Plugins](handoffs/04-plugins.md) | `crates/vixmix-plugins/` | 00 | M |
+| [05 — App](handoffs/05-app.md) | `app/` | 00 | XL |
+| [06 — Host and integration](handoffs/06-host-and-integration.md) | `crates/vixmix-host/`, `app/src/main.rs` wiring | 01, 02, 03, 04 | L |
+| [07 — Kit lifts](handoffs/07-kit-lifts.md) | `audio-io` and `egui-audio` in the kit repository | 06 | M |
+| [08 — Packaging and the first real test](handoffs/08-packaging-and-first-real-test.md) | the desktop entry, metainfo, install path, the first by-hand pass | 06 | S |
+
+## Waves
+
+- **Wave 1: 00**, one session, serial. Ends with the repository on GitHub, CI green on both
+  legs, the handoffs in the index. The repository creation, the first push and `kit protect`
+  are the main session's (the hooks refuse a push from an agent).
+- **Wave 2: 01, 02, 03, 04 and 05 in parallel.** Each lane is one agent in its own git
+  worktree on branch `lane/NN-slug` (below), committing locally; the main session runs
+  `kit push` and `kit merge` for each. 03 needs a Linux shell (WSL2 or the Fedora VM) for its
+  integration tests; 05 runs on Windows against `FakeHost`.
+- **Wave 3: 06** once 01–04 have merged (05 may still be landing polish); then **07 and 08** in
+  parallel.
+
+## A worktree per lane
+
+| Lane | Branch | Worktree (beside this checkout) |
+|---|---|---|
+| 01 | `lane/01-model` | `../vix-mix-01` |
+| 02 | `lane/02-engine` | `../vix-mix-02` |
+| 03 | `lane/03-pipewire-backend` | `../vix-mix-03` (or a Linux checkout) |
+| 04 | `lane/04-plugins` | `../vix-mix-04` |
+| 05 | `lane/05-app` | `../vix-mix-05` |
+| 06 | `lane/06-host-and-integration` | `../vix-mix-06` |
+| 08 | `lane/08-packaging-and-first-real-test` | `../vix-mix-08` |
+
+07 works in the kit's repository, co-developed with `kit link` from a Vix Mix worktree.
+
+## How to run a lane
+
+1. **The main session makes the worktree** from the default branch as origin has it:
+   `git fetch origin`, then Claude Code's `EnterWorktree` or
+   `git worktree add ../vix-mix-NN -b lane/NN-slug origin/master`. In the worktree, `kit sync`
+   installs the tooling and fetches the locked crates, and `kit hooks install` is not needed
+   (`core.hooksPath` is the relative `.githooks`, shared by every worktree; `kit push` resets an
+   absolute one).
+2. **The lane agent is given its handoff and nothing else**: `docs/handoffs/NN-slug.md` is
+   self-contained. It reads the files under *Read first*, works its *Steps*, and commits on its
+   branch with `git commit -F <file>`, subjects that say what and why. It never pushes, tags,
+   merges or opens a PR; the Claude Code guard refuses those.
+3. **It proves its acceptance locally**: `dev check` green (fmt, clippy, test, check-docs), and
+   whatever its *Acceptance* adds. Lane 03 runs its integration tests on Linux against a
+   headless daemon; on Windows its crate compiles to nothing.
+4. **It finishes its docs in the same branch**: its reference doc complete (the contract as
+   built, `## Verification` naming the tests), its handoff's first line flipped to
+   `**Record — shipped <date>.**` with every deviation and why, its rows in
+   [roadmap.md](roadmap.md), one dated paragraph in `CLAUDE.md` § Status, and any `kit-*.md`
+   record it was named in flipped to adopted.
+5. **The main session pushes and merges**: `kit push lane/NN-slug --yes` (runs the push gate,
+   opens the PR, CI runs both legs), then `kit merge lane/NN-slug` (waits for
+   `check (linux)` and `check (windows)`, rebases when behind, merges, removes the worktree).
+   Whichever lane is green first merges first; the rest rebase, and `kit push` says when.
+
+## Conflict rules
+
+- **A lane edits only its own files**: its crate directory (or `app/`), its reference doc, its
+  handoff, and the `kit-*.md` record its handoff names.
+- **Shared files are append-only**, one place each:
+  - root `Cargo.toml`: a new workspace dependency is one line in its group, never moving
+    another; a crate's own dependencies go in its own `Cargo.toml`.
+  - `Cargo.lock`: on a conflict, take the default branch's lock and run `cargo build` (which
+    adds only what is missing); never `cargo update`, which would move every other lane's
+    dependencies too. `kit bump` alone moves the kit crates.
+  - `docs/README.md`: one index line, in alphabetical place, for a doc the lane adds.
+  - `CLAUDE.md` § Status: one dated paragraph per lane.
+  - `docs/roadmap.md`: the lane's own rows.
+- **`FakeHost` is the window's fixture.** While lane 06 has not started, lane 05 may edit
+  `crates/vixmix-host/src/fake.rs` (and nothing else in that crate) to give the window the
+  example data it needs; the change is noted in its handoff's status line.
+- **The shared contracts change only through a change request** (below), because every other
+  lane compiles against them.
+- **Every PR passes `dev check` locally** (`kit push` runs it) **and `check (linux)` and
+  `check (windows)` in CI.**
+
+## The shared contracts
+
+Lane 00 wrote them as compiling skeletons with real minimal behaviour (no `todo!()`); each
+lane replaces its skeleton with the real thing behind the same signatures. The ownership and
+the direction are fixed; exact shapes are each lane's to refine through a change request.
+
+| Contract | Owner | Read by | Reference |
+|---|---|---|---|
+| `Setup` and its types, `Command`, `apply` → `Applied` / `Refused`, `taper`, `persist`, `EngineSnapshot` / `snapshot`, `DeviceInfo` | 01 | everyone | [model.md](reference/model.md) |
+| `Engine` (`new`, `prepare`, `reap`, `process`, `meters`, `stats`), `Tick`, `ChannelInput`, `Lender` / `LendError`, `MeterBank`, `Stats`, `NullBackend` | 02 | 03, 04, 06 | [engine.md](reference/engine.md) |
+| `BackendConfig`, `BackendEvent`, `BackendGraph`, `Backend` (`connect`, `apply`, `route`, `disconnect`) | 03 | 06 | [pipewire.md](reference/pipewire.md) |
+| `Catalog`, `PluginKind`, `Rack` (implements `Lender`), `Instances`, `EditorSession` | 04 | 05, 06 | [plugins.md](reference/plugins.md) |
+| `Host`, `HostEvent`, `BackendState`, `MeterFrame`, `StatsFrame`, `RealHost`, `FakeHost` | 06 | 05 | [host.md](reference/host.md) |
+
+The dependency direction: `vixmix-model` depends on no other workspace crate; `vixmix-engine`
+on the model; `vixmix-plugins` on the model and the engine (for `Lender`); `vixmix-pipewire` on
+the model and the engine; `vixmix-host` on all four; `app/` on the host and the model only.
+
+## Change requests
+
+A lane that needs a contract to change writes the request here — what, why, which lanes
+compile against it — in its branch, and stops on that point until the main session agrees it
+with the lanes it touches. An agreed request is applied by the owning lane (or by the main
+session across lanes) in one commit that updates the reference docs it changes.
+
+| # | Contract | Request | Status |
+|---|---|---|---|
+| 0 | all | Lane 00's refinements of the plan's sketch, each forced by Rust or by a rule the plan states, recorded in the reference doc it changed: `Command`'s variants carry named fields; `DeviceInfo` moved into the model (the Linux-only backend and the host both name it); `Backend::connect` takes a bounded `SyncSender` (every channel is bounded); `Host::tick_editors` returns each event with its instance (the window must know which editor asked); `Rack` lends through a weak reference to itself so `impl Lender for Rack` holds; `Instances::create` takes the `Catalog` (the bundle's path is the scan cache's) | applied 2026-11-04 |
+| 1 | `Lender`, `Instances` | A plugin's own editor reports `InstanceEvent::Edit`, and the kit never short-cuts an edit to the processor: lanes 02 and 04 agree how an edit reaches the lent processor's `ParamChanges` (a bounded ring from the UI thread that the tick drains into the chain's `ProcessorParams` is the likely shape), and 06 wires it | open |
