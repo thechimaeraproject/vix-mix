@@ -61,9 +61,17 @@ forced by what the daemon did:
   `master_out_node_name`, `DISPLAY_NAME`, `Backend: Send + Sync`; `BackendError::NotBuilt` is
   gone.
 - **`vixmix-host`'s Linux test `it_boots_on_the_null_backend_and_says_so_first` now fails**: it
-  asserts the "not built yet" banner, and `connect` succeeds against CI's daemon. This lane may
-  not edit lane 06's crate, so change request 7 carries the one-test fix; until it is applied,
-  `check (linux)` fails on that test alone.
+  asserts the "not built yet" banner, and `connect` succeeds against CI's daemon, which
+  `start_backend` turns into `Connecting`: no banner, and the null backend no longer pumped.
+  This lane may not edit lane 06's crate, so change request 7 carries the fix, proven on this
+  branch in the container (the whole Linux gate green with it): until 06 keeps the backend,
+  the host reports `Absent` with a banner saying PipeWire answers but is not played through
+  yet, and the null backend keeps the meters live. Until it is applied, `check (linux)` fails on
+  that test alone.
+- **Shared docs beyond the conflict rules' list:** the trust table's Cookbook row in
+  `docs/README.md` said no cookbook was written; it now says lane 03 wrote the first, so the
+  index stays true once this lane's cookbook is in. The index lines and
+  `docs/reference/README.md` otherwise keep their wording.
 - **The integration tests** need the marker the daemon script exports: without it they say how
   to start the daemon and pass without touching anything (a desktop session must never get
   their routings), and under `CI` they fail. The two-minute run and a daemon restart are
@@ -72,13 +80,23 @@ forced by what the daemon did:
 
 **Acceptance, as run on 2026-11-04 in the container:** `tests/headless.rs` 9 passed (2 on
 request); clippy clean on Linux with `-D warnings`, and on Windows the crate compiles to nothing
-inside a green `dev check`. The two-minute run at 256 (`two_minutes_at_256_without_an_xrun`):
-22 501 cycles, 0 xruns, 0 ring checks off one quantum out of 22 501, Monitor out, Master out and
-the Master source each wrote all 22 501 cycles' own mix, 0 stale, and `pw-top` showed ERR 0 on
-all four nodes of ours. A second run while other lanes were building showed 26 xruns on every
-node of the graph, `pw-play`'s included — a stall of the whole host with no realtime priority —
-of which the backend counted 5; the run wants a quiet machine. The daemon-restart run passed:
-`Disconnected`, then `Connected` and Monitor out linked again after the daemon came back.
+inside a green `dev check`. The daemon-restart run passed: `Disconnected`, then `Connected` and
+Monitor out linked again after the daemon came back.
+
+**The two-minute bullet stays open:** it is not yet met reproducibly, and it is to be run on a
+Linux shell with realtime scheduling (WSL2 with its packages and rtkit, or the Fedora box)
+before it is called met. The container has none: Docker gives it no realtime budget, so `chrt
+-f` is refused even with `SYS_NICE` added, and the data threads run at ordinary priority. There
+`two_minutes_at_256_without_an_xrun` passed 6 times out of 9. Each pass: about 22 500 cycles,
+0 xruns, every ring check exactly one quantum ahead, Monitor out, Master out and the Master
+source each writing every cycle's own mix, 0 stale. The last four passes were after the
+verifier's round, with `pw-top`'s ERR compared over the window: no ERR added on any node,
+`pw-play`'s and `pw-record`'s included. Two of the failures were stalls of the whole machine,
+`pw-play` late in the same cycles as our nodes. In one, while other lanes were building on the
+machine, every node of the graph showed 26 ERR and the backend counted 5 xruns (it misses a
+late finish, [reference/pipewire.md](../reference/pipewire.md) § The rings). In the other, our
+outputs showed 1 ERR and the backend counted the same cycle. The third failed on `pw-top` alone:
+2 ERR on our nodes, counted then from their making, while the backend's window was clean.
 
 **Needs:** 00. **Runs alongside:** 01, 02, 04, 05. **Size:** L. **Linux only.**
 

@@ -38,9 +38,8 @@ on every push and in CI.
   drives, `RealHost`'s boot and save, `FakeHost`'s example console and simulated meters.
 - [reference/model.md](reference/model.md) — the setup as data: the types, the commands and
   their validation, the fader taper, `setup.ron`, the engine snapshot.
-- [reference/pipewire.md](reference/pipewire.md) — the Linux backend: the contract, the
-  threads, the nodes and their properties, the first-output tick, the rings' governor, routing
-  by serial, reconnect, the latency figures.
+- [reference/pipewire.md](reference/pipewire.md) — the Linux backend's contract: the config,
+  the events, the graph, `Backend`'s signatures, the node names; built by handoff 03.
 - [reference/plugins.md](reference/plugins.md) — the catalog and its search, the rack that
   lends instances to chains, instances on the UI thread, editor sessions.
 
