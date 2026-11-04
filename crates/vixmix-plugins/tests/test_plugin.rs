@@ -5,7 +5,7 @@
 mod common;
 
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use chimaeraproject_vst3_host::{Arch, Os, binary_path};
 use common::*;
@@ -48,6 +48,13 @@ fn the_scan_finds_the_test_plugin_classifies_it_and_skips_it_while_unchanged() {
     assert_eq!((again.described, again.reused), (0, 1));
     assert_eq!(again.catalog, first.catalog);
 
+    // Forgetting failures keeps a bundle that worked: the menu's rescan still reuses it.
+    let mut retry = cache.clone();
+    retry.forget_failures();
+    let retried = loaded.rescan(std::slice::from_ref(&dir), &host, &retry);
+    assert_eq!((retried.described, retried.reused), (0, 1));
+    assert_eq!(retried.catalog, first.catalog);
+
     // An update rewrites the binary inside the bundle: described again.
     let binary = binary_path(&dir.join(BUNDLE_NAME), Os::current(), Arch::current());
     std::fs::File::options()
@@ -61,6 +68,54 @@ fn the_scan_finds_the_test_plugin_classifies_it_and_skips_it_while_unchanged() {
         .rescan(std::slice::from_ref(&dir), &host, &again.cache);
     assert_eq!((updated.described, updated.reused), (1, 0));
     assert_eq!(updated.catalog, first.catalog);
+}
+
+#[test]
+fn rescan_plugins_retries_a_failure_whose_cause_the_bundle_time_does_not_show() {
+    // A bundle that fails: its binary is not there.
+    let dir = scratch("retry-plugins");
+    let bundle = dir.join(BUNDLE_NAME);
+    let binary = binary_path(&bundle, Os::current(), Arch::current());
+    std::fs::create_dir_all(binary.parent().unwrap()).unwrap();
+    let host = host();
+    let first = Catalog::scan(std::slice::from_ref(&dir), &host);
+    assert_eq!(first.failures.len(), 1, "{:?}", first.failures);
+    assert!(
+        first.failures[0].contains(BUNDLE_NAME),
+        "{:?}",
+        first.failures
+    );
+    assert!(first.catalog.plugins.is_empty());
+
+    // Its cause is mended without the bundle's time moving, as when a runtime library it
+    // needs is installed: here the binary arrives dated long before the scan.
+    install_binary(&bundle);
+    std::fs::File::options()
+        .write(true)
+        .open(&binary)
+        .unwrap()
+        .set_modified(UNIX_EPOCH + Duration::from_secs(1))
+        .unwrap();
+    let mut catalog = first.catalog.clone();
+    catalog.set_favorite("vst3:kept", true);
+
+    // A start's rescan keeps the failure, so a broken plugin is not loaded at every start.
+    let start = catalog.rescan(std::slice::from_ref(&dir), &host, &first.cache);
+    assert_eq!((start.described, start.reused), (0, 1));
+    assert_eq!(start.failures, first.failures);
+
+    // The menu's Rescan plugins forgets failures first: described again, found, and the
+    // favourites carried over.
+    let mut cache = start.cache.clone();
+    cache.forget_failures();
+    assert!(cache.is_empty());
+    let retried = start
+        .catalog
+        .rescan(std::slice::from_ref(&dir), &host, &cache);
+    assert_eq!((retried.described, retried.reused), (1, 0));
+    assert!(retried.failures.is_empty(), "{:?}", retried.failures);
+    assert!(retried.catalog.get(&AUDIO_CLASS.processor_id()).is_some());
+    assert!(retried.catalog.favorites.contains("vst3:kept"));
 }
 
 #[test]

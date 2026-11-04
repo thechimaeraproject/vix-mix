@@ -70,6 +70,16 @@ impl ScanCache {
         self.bundles.is_empty()
     }
 
+    /// Forgets every bundle that failed, so the next [`rescan`](Catalog::rescan) describes
+    /// them again and reuses only the bundles that worked. The menu's Rescan plugins calls it
+    /// first: a bundle can fail for a reason outside it that its time does not show (a
+    /// runtime library installed later, a file locked during the scan), and a failure kept
+    /// would repeat a fix the user has already made. A start does not, so a broken plugin is
+    /// not loaded at every start.
+    pub fn forget_failures(&mut self) {
+        self.bundles.retain(|bundle| bundle.failure.is_none());
+    }
+
     fn get(&self, path: &Path) -> Option<&CachedBundle> {
         self.bundles.iter().find(|b| b.path == path)
     }
@@ -104,7 +114,7 @@ impl Catalog {
 
     /// Scans `dirs` again on the UI thread, describing only the bundles that are new or whose
     /// modification time moved since `cache` was made; an unchanged bundle gives what it gave
-    /// last time, a failure included. Audio classes whose sub-categories say `Fx` are kept,
+    /// last time, a failure included (see [`ScanCache::forget_failures`]). Audio classes whose sub-categories say `Fx` are kept,
     /// one entry per class (the first bundle in path order), sorted by name. Favourites and
     /// recent are carried over from `self`.
     pub fn rescan(&self, dirs: &[PathBuf], host: &HostContext, cache: &ScanCache) -> ScanOutcome {

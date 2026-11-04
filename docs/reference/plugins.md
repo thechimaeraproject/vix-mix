@@ -39,6 +39,20 @@ gives what it gave last time without the kit's `scan_bundle` running (which read
 `moduleinfo.json` or loads the plugin): its effects, or its failure, which is reported again.
 A changed one is described through the kit; its warnings are logged.
 
+A failure can have a cause outside the bundle that its time does not show (a runtime library
+installed later, a file locked during the scan), so `cache.forget_failures()` drops every
+failed bundle from the record and the next rescan describes those again, reusing only the
+bundles that worked. Which call when, for the host (06) and the menu (05):
+
+- **At start:** `Catalog::load(dir)` and `ScanCache::load(dir)`, then
+  `catalog.rescan(dirs, host, &cache)` and `outcome.save(dir)`. A failure stays cached, so a
+  broken plugin is not loaded at every start.
+- **The menu's Rescan plugins:** the last outcome's `cache.forget_failures()`, then
+  `catalog.rescan(dirs, host, &cache)`, `outcome.save(dir)` and `Instances::retry_failed()`
+  (then `sync`), so an insert whose plugin was missing is tried again.
+- **`Catalog::scan(dirs, host)`** describes everything and starts favourites and recent empty:
+  for a first run without `plugins.ron`, or a test, never for a rescan.
+
 Only audio classes whose sub-categories say `Fx` are kept (`ClassInfo::is_effect`), one entry
 per class id (the first bundle in path order wins), sorted by name. The result is a
 `ScanOutcome { catalog, failures, cache, described, reused }`: each failure is the bundle's
@@ -214,14 +228,16 @@ is racked; a missing plugin is reported once until a retry and lends nothing.
 
 `tests/test_plugin.rs`, with the real test plugin: the scan finds it and files it under
 Utility, `plugins.ron` round-trips it, an unchanged bundle is reused and one whose binary was
-rewritten is described again; create, lend to a chain filled as the engine fills one, process,
-move the gain through `set_param` and hear it in the next block, save, and a second instance
-loaded from that state sounds the same from its first block (and its controller shows it),
-while bytes that are not a state start the plugin from its defaults with a notice; a retired
-instance lent on another thread is not reaped until that thread clears its chain, then drops on
-the UI thread; `sync` makes the setup's instances and retires what it no longer names; the
-plugin has no editor and `tick` drains it quietly. `tests/no_alloc.rs`: blocks through the lent
-handle with one edit, several and none waiting allocate nothing.
+rewritten is described again, and forgetting failures keeps it reused; a bundle that failed and
+was mended without its time moving keeps its cached failure at a start and is described again,
+and found, after `forget_failures`, with the favourites kept; create, lend to a chain filled as
+the engine fills one, process, move the gain through `set_param` and hear it in the next block,
+save, and a second instance loaded from that state sounds the same from its first block (and
+its controller shows it), while bytes that are not a state start the plugin from its defaults
+with a notice; a retired instance lent on another thread is not reaped until that thread clears
+its chain, then drops on the UI thread; `sync` makes the setup's instances and retires what it
+no longer names; the plugin has no editor and `tick` drains it quietly. `tests/no_alloc.rs`:
+blocks through the lent handle with one edit, several and none waiting allocate nothing.
 
 What is not tested here: an editor in a real window (the test plugin has none; lane 05 opens
 one), a plugin whose buses change, and the engine's own chains, which lane 02 builds; the lent
