@@ -162,7 +162,9 @@ pub struct Insert {
     /// The bypass square: a disabled insert passes its input through.
     pub enabled: bool,
     /// The plugin's state as `PluginState::encode` bytes, captured before every save; `None`
-    /// until the first capture (a fresh insert starts from the plugin's defaults).
+    /// until the first capture (a fresh insert starts from the plugin's defaults). Written to
+    /// `setup.ron` as one base64 string.
+    #[serde(with = "crate::base64::option")]
     pub state: Option<Vec<u8>>,
 }
 
@@ -236,8 +238,16 @@ pub struct Prefs {
     /// The quantum asked of PipeWire through `node.latency` at 48 kHz: 128, 256 or 512. A
     /// request, never forced; the graph decides.
     pub quantum: u32,
-    /// Directories scanned for VST3 bundles besides the SDK's standard places.
+    /// Directories scanned for VST3 bundles besides the SDK's standard places. Written as
+    /// text; a path that is not UTF-8 is written with its unreadable part replaced.
+    #[serde(serialize_with = "lossy_paths")]
     pub plugin_dirs: Vec<PathBuf>,
+}
+
+/// Paths as text, lossily: serde's own `Path` serializer refuses one that is not UTF-8, and a
+/// refusal would leave `persist::to_ron` nothing to write.
+fn lossy_paths<S: serde::Serializer>(paths: &[PathBuf], serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.collect_seq(paths.iter().map(|path| path.to_string_lossy()))
 }
 
 impl Prefs {
@@ -296,6 +306,20 @@ impl Setup {
             Source::Apps(apps) if apps.iter().any(|a| a.matches(app)) => Some(c.id),
             _ => None,
         })
+    }
+
+    /// Raises [`next_channel`](Setup::next_channel) and
+    /// [`next_instance`](Setup::next_instance) above every id in use, where a hand edit or
+    /// an older format left them at or below one. Never lowers them.
+    pub(crate) fn raise_counters(&mut self) {
+        let channels = self.channels.iter().map(|c| c.id.0).max();
+        let instances = self.inserts().map(|i| i.instance.0).max();
+        if let Some(top) = channels {
+            self.next_channel.0 = self.next_channel.0.max(top.saturating_add(1));
+        }
+        if let Some(top) = instances {
+            self.next_instance.0 = self.next_instance.0.max(top.saturating_add(1));
+        }
     }
 }
 

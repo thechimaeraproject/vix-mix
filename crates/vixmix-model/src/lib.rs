@@ -15,9 +15,12 @@
 //!
 //! See `docs/reference/model.md`.
 
+mod base64;
+mod check;
 mod command;
 pub mod example;
 mod ids;
+mod migrate;
 pub mod persist;
 mod setup;
 mod snapshot;
