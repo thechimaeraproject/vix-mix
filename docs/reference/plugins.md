@@ -50,7 +50,9 @@ record (`bundles`: path, time, effects, failure). `Catalog::load(dir)` reads the
 catalog and an empty record; every field defaults, so a file without the record loads).
 `ScanOutcome::save(dir)` writes both; `Catalog::save(dir)` writes the catalog and keeps the
 record already in the file, so a star or a recent pick saved later never costs the next rescan.
-Both write atomically.
+Both write atomically, and refuse (`FsError::Write`) rather than write an empty file if the
+catalog does not serialize; a bundle whose path is not UTF-8 is therefore reported as a failure
+and never cached. Times are kept as seconds and nanoseconds since the Unix epoch.
 
 ## The catalog
 

@@ -273,7 +273,8 @@ pub(crate) fn read_file(dir: &Path) -> CacheFile {
     load_file(dir).into_parts().0
 }
 
-/// Writes `dir/plugins.ron` atomically.
+/// Writes `dir/plugins.ron` atomically. A catalog that does not serialize (a path that is not
+/// UTF-8 in an entry the scan did not make) is refused rather than written as an empty file.
 pub(crate) fn write_file(
     dir: &Path,
     catalog: &Catalog,
@@ -285,10 +286,15 @@ pub(crate) fn write_file(
         recent: &catalog.recent,
         bundles,
     };
-    let text = ron::ser::to_string_pretty(&file, ron::ser::PrettyConfig::default())
-        // Plain data with string keys; serializing cannot fail.
-        .unwrap_or_default();
-    atomic_write(dir.join(FILE_NAME), text.as_bytes())
+    let path = dir.join(FILE_NAME);
+    let text =
+        ron::ser::to_string_pretty(&file, ron::ser::PrettyConfig::default()).map_err(|error| {
+            FsError::Write {
+                path: path.clone(),
+                source: std::io::Error::new(std::io::ErrorKind::InvalidData, error),
+            }
+        })?;
+    atomic_write(path, text.as_bytes())
 }
 
 #[cfg(test)]
@@ -431,7 +437,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let bundles = vec![CachedBundle {
             path: PathBuf::from("OTT.vst3"),
-            modified: Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000)),
+            modified: Some((1_700_000_000, 250)),
             entries: vec![entry("OTT", "Xfer Records", PluginKind::Dynamics)],
             failure: None,
         }];

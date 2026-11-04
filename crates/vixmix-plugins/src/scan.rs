@@ -9,7 +9,7 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 use chimaeraproject_fs::FsError;
 use chimaeraproject_vst3_host::{
@@ -36,8 +36,9 @@ pub fn search_dirs(extras: &[PathBuf]) -> Vec<PathBuf> {
 pub(crate) struct CachedBundle {
     pub(crate) path: PathBuf,
     /// The newest modification time of the bundle, its binary for this platform and its
-    /// `moduleinfo.json`; `None` when none could be read, which is never reused.
-    pub(crate) modified: Option<SystemTime>,
+    /// `moduleinfo.json`, as seconds and nanoseconds since the Unix epoch; `None` when none
+    /// could be read (or it is before the epoch), which is never reused.
+    pub(crate) modified: Option<(u64, u32)>,
     /// The effects it exported.
     pub(crate) entries: Vec<PluginEntry>,
     /// Why it could not be described, said again while it is unchanged.
@@ -109,6 +110,15 @@ impl Catalog {
     pub fn rescan(&self, dirs: &[PathBuf], host: &HostContext, cache: &ScanCache) -> ScanOutcome {
         let mut outcome = ScanOutcome::default();
         for path in find_bundles(dirs) {
+            // Everything cached is written to plugins.ron as text: a path that is not UTF-8
+            // cannot be, so it is reported and never cached.
+            if path.to_str().is_none() {
+                outcome.failures.push(format!(
+                    "{}: its path is not valid UTF-8, so it cannot be cached; rename the bundle or the folder it is in, then rescan",
+                    path.display()
+                ));
+                continue;
+            }
             let modified = modified(&path);
             let unchanged = cache
                 .get(&path)
@@ -147,7 +157,7 @@ impl Catalog {
 
 /// Describes one bundle through the kit: its effects, or why it could not be read. Warnings
 /// that did not stop it are logged here, on the UI thread.
-fn describe(path: PathBuf, modified: Option<SystemTime>, host: &HostContext) -> CachedBundle {
+fn describe(path: PathBuf, modified: Option<(u64, u32)>, host: &HostContext) -> CachedBundle {
     match scan_bundle(&path, host, &ScanOptions::default()) {
         Ok(bundle) => {
             for warning in &bundle.warnings {
@@ -186,8 +196,9 @@ fn effects_of(bundle: &ScannedBundle) -> Vec<PluginEntry> {
 }
 
 /// The newest modification time among the bundle, its binary for this platform and its
-/// `moduleinfo.json`: an update that rewrites only the binary inside the bundle still moves it.
-fn modified(bundle: &Path) -> Option<SystemTime> {
+/// `moduleinfo.json`, since the Unix epoch: an update that rewrites only the binary inside the
+/// bundle still moves it.
+fn modified(bundle: &Path) -> Option<(u64, u32)> {
     let moduleinfo = bundle
         .join("Contents")
         .join("Resources")
@@ -201,6 +212,8 @@ fn modified(bundle: &Path) -> Option<SystemTime> {
     .flatten()
     .filter_map(|path| std::fs::metadata(path).and_then(|m| m.modified()).ok())
     .max()
+    .and_then(|newest| newest.duration_since(UNIX_EPOCH).ok())
+    .map(|since| (since.as_secs(), since.subsec_nanos()))
 }
 
 fn is_bundle_name(path: &Path) -> bool {
@@ -242,7 +255,7 @@ fn find_bundles(dirs: &[PathBuf]) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
+    use std::time::{Duration, SystemTime};
 
     fn scratch(name: &str) -> PathBuf {
         let dir =
