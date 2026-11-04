@@ -3291,6 +3291,7 @@ dependencies = [
  "egui-winit",
  "env_logger",
  "log",
+ "png",
  "pollster",
  "vixmix-host",
  "vixmix-model",

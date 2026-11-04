@@ -17,6 +17,7 @@ use winit::window::{Window, WindowId};
 
 use crate::Startup;
 use crate::gpu::Gpu;
+use crate::meters::Meters;
 use crate::ui;
 
 /// The shortest time between two frames: 60 Hz.
@@ -52,6 +53,10 @@ struct Running {
     egui_state: egui_winit::State,
     host: Box<dyn Host>,
     backend: BackendState,
+    /// The meters' levels and peak-hold lines, carried from frame to frame.
+    meters: Meters,
+    /// When the window opened: the peak-hold clock.
+    opened: Instant,
     first_frame: bool,
     frames: u64,
     quit_after_frames: Option<u64>,
@@ -161,6 +166,8 @@ impl Running {
             egui_state,
             host,
             backend: BackendState::Connecting,
+            meters: Meters::default(),
+            opened: Instant::now(),
             first_frame: true,
             frames: 0,
             quit_after_frames: startup.quit_after_frames,
@@ -176,10 +183,14 @@ impl Running {
                 _ => {}
             }
         }
+        let now_ms = self.opened.elapsed().as_secs_f64() * 1000.0;
+        self.meters.update(&self.host.meters(), now_ms);
         let view = ui::View {
             backend: &self.backend,
             stats: self.host.stats(),
-            channels: self.host.setup().channels.len(),
+            setup: self.host.setup(),
+            meters: &self.meters,
+            apps: self.host.apps(),
         };
 
         let mut raw_input = self.egui_state.take_egui_input(&self.window);
