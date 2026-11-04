@@ -38,7 +38,8 @@ behaviour; the window keeps drawing (05).
 
 1. **`RealHost` boot:** load `setup.ron` and `plugins.ron`; create the instances with their
    state; `Engine::prepare`; `Backend::connect` on Linux, or the `NullBackend` elsewhere (with
-   the banner); apply the `BackendGraph` derived from the setup.
+   the banner); apply the `BackendGraph` derived from the setup; on
+   `BackendEvent::Connected { rate, .. }` call `Engine::set_rate(rate)` (change request 5).
 2. **Routing:** on `AppStreamAdded`, match the app against the channels (`AppRef::matches`) and
    `route` it; an app no channel claims is returned to the default when it appears (the
    apply-on-appear rule, because WirePlumber restores what was written).
@@ -46,8 +47,13 @@ behaviour; the window keeps drawing (05).
    `Applied`; the save debounced 500 ms, atomic.
 4. **Instance lifecycle** on insert add, remove and move (a move is the same instance, never a
    re-create); `SetInsertState` before every save and on removal, so an undo brings an insert
-   back as it was; the host keeps a removed channel or insert until its undo toast dies.
-5. **Every tick:** `Engine::reap` and `Instances::reap`; editors polled.
+   back as it was; the host keeps a removed channel or insert until its undo toast dies. On
+   `InstanceEvent::IoChanged(instance)` call `Engine::set_up_again(instance)`: the engine
+   keeps a held instance across the rack's generations and sets it up again only when asked
+   (change request 5).
+5. **Every tick:** `Engine::reap` and `Instances::reap`; editors polled; `Engine::problems()`
+   (inserts playing as pass-throughs, with why) and `Instances::take_notices()` surfaced in
+   the window.
 6. **Shutdown:** clear routings, `Backend::disconnect`, drop the graphs, retire the instances
    (processor before controller, on the UI thread), the final save.
 7. **`FakeHost`** stays for the window's tests.
