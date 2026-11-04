@@ -407,6 +407,26 @@ fn node_id(name: &str) -> Option<u32> {
     None
 }
 
+/// `pw-top`'s ERR column — PipeWire's own count of the cycles a node had not finished when the
+/// next began, since the node was made — for every node, by name, from the second of two
+/// samples (`pw-top -b -n 2`).
+fn pw_top_errors() -> Vec<(String, u64)> {
+    let top = run("pw-top", &["-b", "-n", "2"]);
+    let last = top.rsplit("S   ID").next().unwrap_or_default();
+    last.lines()
+        .filter_map(|line| {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            fields.get(1)?.parse::<u32>().ok()?;
+            let name = *fields.last()?;
+            let err = fields
+                .get(8)
+                .and_then(|e| e.parse().ok())
+                .unwrap_or(u64::MAX);
+            Some((name.to_string(), err))
+        })
+        .collect()
+}
+
 /// A null sink made for one test, destroyed when it ends or earlier by `remove`.
 struct NullSink {
     name: String,
@@ -688,27 +708,70 @@ fn an_app_unassigned_while_absent_goes_back_to_the_default_when_it_appears() {
     assert!(rig.channel_hears(false, Duration::from_secs(1)));
 }
 
+/// Whether the `default` metadata holds any key for `subject`.
+fn routed_in_metadata(subject: u32) -> bool {
+    let prefix = format!("id:{subject} ");
+    run("pw-metadata", &["-n", "default"])
+        .lines()
+        .any(|line| line.trim_start_matches("update: ").starts_with(&prefix))
+}
+
 #[test]
-fn a_renamed_channel_keeps_its_apps() {
+fn a_renamed_channel_keeps_its_apps_after_another_has_quit() {
     let Some(_daemon) = headless() else {
         return;
     };
     let dir = scratch("rename");
-    let name = "vixmix-rename-app";
+    let wav = sine_wav(&dir, 10.0);
+    let (stays, quits) = ("vixmix-rename-app", "vixmix-rename-quitter");
     let mut rig = Rig::new("vixmix-rename");
     rig.start(&rig.graph("Test", Some(NULL_SINK), None, false));
-    let _app = play(&sine_wav(&dir, 8.0), name);
-    let node = rig.app_stream(name);
-    rig.backend().route(node, Some(&rig.sink("Test")));
+    let sink = rig.sink("Test");
+    let _app = play(&wav, stays);
+    let node = rig.app_stream(stays);
+    rig.backend().route(node, Some(&sink));
+    let quitter = play(&wav, quits);
+    let other = rig.app_stream(quits);
+    rig.backend().route(other, Some(&sink));
+    assert!(
+        eventually(Duration::from_secs(3), || linked(stays, &sink)
+            && linked(quits, &sink)),
+        "the two apps did not reach {sink}:\n{}",
+        run("pw-link", &["-l"])
+    );
+
+    // One app quits, and the session manager clears every key of its subject; another client
+    // clears a subject that has nothing to do with us. Neither may cost the other app its
+    // routing.
+    drop(quitter);
+    assert!(
+        eventually(Duration::from_secs(3), || !routed_in_metadata(other)),
+        "the quitter's routing stayed:\n{}",
+        run("pw-metadata", &["-n", "default"])
+    );
+    let unrelated = node_id(NULL_SOURCE).expect("the null source is a node");
+    let unrelated = unrelated.to_string();
+    run(
+        "pw-metadata",
+        &["-n", "default", &unrelated, "vixmix.test", "1"],
+    );
+    run("pw-metadata", &["-n", "default", "-d", &unrelated]);
+    assert!(eventually(Duration::from_secs(3), || !routed_in_metadata(
+        unrelated.parse().unwrap()
+    )));
+    std::thread::sleep(Duration::from_millis(200));
     assert!(rig.channel_hears(true, Duration::from_secs(3)));
+
     rig.backend()
         .apply(&rig.graph("Renamed", Some(NULL_SINK), None, false));
     let renamed = rig.sink("Renamed");
     assert!(
-        eventually(Duration::from_secs(3), || linked(name, &renamed)),
-        "the app did not follow the rename to {renamed}:\n{}",
-        run("pw-link", &["-l"])
+        eventually(Duration::from_secs(3), || linked(stays, &renamed)),
+        "the app did not follow the rename to {renamed}:\n{}\n{}",
+        run("pw-link", &["-l"]),
+        run("pw-metadata", &["-n", "default"])
     );
+    assert!(!linked(stays, NULL_SINK));
     assert!(rig.channel_hears(true, Duration::from_secs(3)));
 }
 
@@ -840,12 +903,24 @@ fn two_minutes_at_256_without_an_xrun() {
     assert!(rig.channel_hears(true, Duration::from_secs(3)));
     let recorder = record(&master_node_name(rig.app), false, &dir.join("master.wav"));
     std::thread::sleep(Duration::from_secs(1));
+    // PipeWire's own count is cumulative from each node's making, setup included: the window's
+    // is the difference of two samples taken around the backend's own.
+    let top_before = pw_top_errors();
     let before = rig.stats();
     std::thread::sleep(Duration::from_secs(120));
     let after = rig.stats();
-    let top = run("pw-top", &["-b", "-n", "2"]);
+    let top_after = pw_top_errors();
     recorder.interrupt();
-    eprintln!("before {before:?}\nafter  {after:?}\n{top}");
+    // Every node's ERR over the window, ours and the test's own pw-play and pw-record: an ERR
+    // on theirs as well is a stall of the whole machine rather than of the backend.
+    let window: Vec<(String, Option<u64>)> = top_after
+        .iter()
+        .map(|(node, err)| {
+            let was = top_before.iter().find(|(name, _)| name == node);
+            (node.clone(), was.and_then(|(_, was)| err.checked_sub(*was)))
+        })
+        .collect();
+    eprintln!("before {before:?}\nafter  {after:?}\npw-top ERR over the window {window:?}");
     let ticks = after.ticks - before.ticks;
     assert!(
         ticks >= 120 * RATE as u64 / QUANTUM as u64 - 100,
@@ -863,21 +938,15 @@ fn two_minutes_at_256_without_an_xrun() {
     ] {
         assert_eq!(counted, ticks);
     }
-    // PipeWire's own count: the ERR column of every node of ours is 0 (the app is pw-play,
-    // whose own start may cost it one).
-    let last = top.rsplit("S   ID").next().unwrap_or_default();
-    let ours: Vec<&str> = last
-        .lines()
-        .filter(|l| l.contains("vixmix-acceptance."))
+    // PipeWire's own count over the window: no ERR on any of our four nodes. (It also sees a
+    // late finish, which the backend's own count cannot.)
+    let ours: Vec<_> = window
+        .iter()
+        .filter(|(node, _)| node.starts_with(&format!("{}.", rig.app)))
         .collect();
-    assert_eq!(ours.len(), 4, "{last}");
-    for line in ours {
-        let err: u64 = line
-            .split_whitespace()
-            .nth(8)
-            .and_then(|e| e.parse().ok())
-            .unwrap_or(u64::MAX);
-        assert_eq!(err, 0, "pw-top: {line}");
+    assert_eq!(ours.len(), 4, "pw-top: {window:?}");
+    for (node, err) in ours {
+        assert_eq!(*err, Some(0), "pw-top's ERR of {node} over the window");
     }
 }
 

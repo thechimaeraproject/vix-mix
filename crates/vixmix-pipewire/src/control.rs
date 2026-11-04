@@ -569,7 +569,14 @@ impl Control {
             } => {
                 if let Some(conn) = &mut self.conn {
                     match key.as_deref() {
-                        None => conn.targets.clear(),
+                        // No key: every key of `subject` was removed (WirePlumber does so
+                        // when an app it routed goes away). Only `PW_ID_ANY` means every
+                        // subject: the mirror of the other apps must stand, or a rename
+                        // would no longer find them.
+                        None if subject == pipewire::sys::PW_ID_ANY => conn.targets.clear(),
+                        None => {
+                            conn.targets.remove(&subject);
+                        }
                         Some(key @ ("target.object" | "target.node")) => {
                             // Only a key set to something can be a routing not ours: our own
                             // writes remove `target.node` before they set `target.object`.
