@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mixer UI Prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  /* Layout: a desktop console. Header bar with engine status; channel strips left to right (inserts on top, two send faders below);
+     the two mixes as master strips pinned right. Grey hardware; color only for signal level and active state. */
+  --win:#101113; --strip:#1b1c20; --well:#121316; --ctl:#26282d; --ctl-hi:#30333a; --edge:#2a2c31; --edge-2:#3a3d44; --black:#0b0c0e;
+  --text:#d8dade; --dim:#8a8e97; --faint:#5d6169;
+  --accent:#e3a33b;
+  --mute:#d9434a;
+  --m-green:#4fb26f; --m-yellow:#d5b23c; --m-red:#e5484d;
+  --ui:"IBM Plex Sans Condensed", "Cantarell", "Noto Sans", sans-serif;
+  --mono:"IBM Plex Mono", ui-monospace, monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0}
+body{background:#08090a;color:var(--text);font:12px/1.3 var(--ui);padding:24px 16px}
+button,input,select{font:inherit;color:inherit}
+:focus-visible{outline:1px solid var(--accent);outline-offset:1px}
+svg{display:block}
+
+.app{position:relative;max-width:1360px;margin:0 auto;background:var(--win);border:1px solid #000;border-radius:10px;overflow:hidden;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.05),0 24px 70px rgba(0,0,0,.65);user-select:none}
+
+/* header bar */
+.hb{height:38px;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:0 8px;background:linear-gradient(#1e1f23,#18191c);border-bottom:1px solid #000}
+.hb-l{display:flex;align-items:center;gap:6px}
+.hb-l .ttl{font-weight:600;font-size:13px;margin-left:2px}
+.hb-r{display:flex;justify-content:flex-end;align-items:center;gap:8px}
+.ib{width:28px;height:26px;display:grid;place-items:center;border:1px solid transparent;border-radius:4px;background:transparent;color:var(--dim);cursor:pointer}
+.ib:hover{background:var(--ctl);color:var(--text)}
+.ib svg{width:15px;height:15px}
+.lcd{display:flex;align-items:center;gap:0;height:24px;background:var(--black);border:1px solid var(--edge);border-radius:4px;font:11px var(--mono);color:var(--faint)}
+.lcd > span{padding:0 10px;border-right:1px solid var(--edge);display:flex;align-items:center;gap:5px;height:100%}
+.lcd > span:last-child{border-right:0}
+.lcd b{font-weight:500;color:var(--text)}
+.dspbar{width:38px;height:4px;background:var(--ctl);border-radius:1px;overflow:hidden}
+.dspbar i{display:block;height:100%;background:var(--m-green)}
+.wc{display:flex;gap:6px;margin-left:6px}
+.wc button{width:20px;height:20px;border-radius:50%;border:0;background:var(--ctl);color:var(--dim);display:grid;place-items:center;cursor:pointer;padding:0}
+.wc button:hover{background:var(--ctl-hi);color:var(--text)}
+.wc svg{width:10px;height:10px}
+
+/* console */
+.console{display:flex;padding:10px 12px 12px}
+.bank-wrap{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
+.master-wrap{flex:none;display:flex;flex-direction:column;gap:6px;margin-left:12px;padding-left:12px;border-left:1px solid var(--edge)}
+.sec{height:20px;display:flex;align-items:center;gap:8px;font:600 10.5px var(--ui);letter-spacing:.08em;text-transform:uppercase;color:var(--faint)}
+.sec .n{font:500 10.5px var(--mono);letter-spacing:0;text-transform:none}
+.sec .grow{flex:1}
+.bank,.mbank{display:flex;gap:4px}
+.bank{overflow-x:auto;padding-bottom:2px}
+
+.strip,.mstrip{flex:0 0 118px;display:grid;grid-template-rows:20px 22px 164px 12px 188px 14px 22px;gap:6px;padding:8px 8px 10px;
+  background:var(--strip);border:1px solid var(--edge);border-radius:4px;box-shadow:inset 0 1px 0 rgba(255,255,255,.035)}
+.mstrip{flex-basis:160px;background:#1e1f24}
+.s-head{display:flex;align-items:center;gap:6px;min-width:0;color:var(--dim)}
+.s-head svg{width:12px;height:12px;flex:none}
+.s-name{flex:1;min-width:0;font-weight:600;font-size:12.5px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:text}
+.s-rename{width:100%;min-width:0;font:600 12.5px var(--ui);background:var(--black);border:1px solid var(--accent);border-radius:3px;padding:0 4px;height:20px;outline:none;user-select:text}
+.s-src{display:flex;align-items:center;gap:5px;width:100%;min-width:0;height:22px;padding:0 6px;background:var(--well);border:1px solid var(--edge);border-radius:3px;color:var(--dim);font-size:11.5px;text-align:left;cursor:pointer}
+.s-src:hover{border-color:var(--edge-2);color:var(--text)}
+.s-src .t{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.s-src svg{width:10px;height:10px;flex:none;color:var(--faint)}
+.dot{width:5px;height:5px;border-radius:50%;flex:none;background:var(--faint)}
+.dot.live{background:var(--m-green)}
+
+/* inserts */
+.fx{display:flex;flex-direction:column;min-height:0;background:var(--well);border:1px solid var(--edge);border-radius:3px}
+.fx-head{display:flex;align-items:center;justify-content:space-between;height:20px;flex:none;padding:0 3px 0 6px;border-bottom:1px solid var(--edge);font:600 10px var(--ui);letter-spacing:.08em;color:var(--faint)}
+.fx-mix{display:flex;gap:2px}
+.tg{height:15px;padding:0 4px;font:500 9px var(--mono);letter-spacing:.03em;background:var(--ctl);border:1px solid var(--edge-2);border-radius:2px;color:var(--faint);cursor:pointer}
+.tg[aria-pressed="true"]{background:color-mix(in srgb,var(--accent) 20%,var(--ctl));border-color:color-mix(in srgb,var(--accent) 55%,transparent);color:var(--accent)}
+.slots{list-style:none;margin:0;padding:2px;overflow-y:auto;flex:1;min-height:0}
+.slot{position:relative;display:flex;align-items:center;gap:5px;height:20px;padding:0 4px;border-radius:2px;cursor:grab;font-size:11.5px}
+.slot:hover,.slot:focus-visible{background:var(--ctl)}
+.slot .pn{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.slot.off .pn{color:var(--faint)}
+.pw{width:9px;height:9px;border-radius:50%;border:1px solid var(--edge-2);background:transparent;padding:0;cursor:pointer;flex:none}
+.pw[aria-pressed="true"]{background:var(--accent);border-color:var(--accent)}
+.hov{display:none;position:absolute;right:1px;top:2px;gap:1px;padding-left:4px;background:var(--ctl)}
+.slot:hover .hov,.slot:focus-within .hov{display:flex}
+.hov button{width:16px;height:16px;border:0;padding:0;background:transparent;color:var(--dim);display:grid;place-items:center;cursor:pointer;border-radius:2px}
+.hov button:hover{background:var(--ctl-hi);color:var(--text)}
+.hov svg{width:11px;height:11px}
+.slot.add{color:var(--faint);cursor:pointer;gap:6px}
+.slot.add svg{width:9px;height:9px}
+.slot.add:hover{color:var(--text)}
+.slot.dragging{opacity:.3}
+.slot.drop-before::before{content:"";position:absolute;left:2px;right:2px;top:-2px;height:2px;border-radius:1px;background:var(--accent)}
+.slots.drop-into{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 45%,transparent)}
+body.dragging,body.dragging *{cursor:grabbing!important}
+.ghost{position:fixed;left:0;top:0;z-index:100;pointer-events:none;padding:3px 8px;background:var(--ctl-hi);border:1px solid var(--accent);border-radius:3px;font:11.5px var(--ui);color:var(--text);box-shadow:0 8px 18px rgba(0,0,0,.55);white-space:nowrap}
+.ghost em{font-style:normal;color:var(--accent);margin-right:4px}
+
+/* faders */
+.flabels,.faders,.readouts,.mutes{display:grid;grid-template-columns:30px 1fr 30px;justify-items:center;align-items:center}
+.flabels{font:500 9.5px var(--mono);letter-spacing:.05em;color:var(--faint)}
+.faders{height:188px;align-items:stretch}
+.send{display:flex;gap:3px;height:100%}
+.send.str{flex-direction:row-reverse}
+.meter{position:relative;width:5px;height:100%}
+.meter b{position:absolute;left:0;right:0;top:12px;bottom:12px;border-radius:1px;overflow:hidden;
+  background:linear-gradient(to top,var(--m-green) 0 63%,var(--m-yellow) 63% 78%,var(--m-red) 78%)}
+.meter b i{position:absolute;left:0;right:0;top:0;height:100%;background:var(--black)}
+.meter b::after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(to top,transparent 0 2px,var(--black) 2px 3px)}
+.fader{position:relative;width:20px;height:100%;cursor:ns-resize;touch-action:none;outline:none}
+.rail{position:absolute;left:50%;top:12px;bottom:12px;width:3px;margin-left:-1.5px;background:var(--black);border-radius:2px;box-shadow:0 1px 0 rgba(255,255,255,.04)}
+.cap{position:absolute;left:0;width:20px;height:24px;bottom:calc(var(--p) * (100% - 24px));border-radius:2px;
+  background:linear-gradient(#5b5f67,#3c3f45 46%,#2b2d32 54%,#42454b);box-shadow:0 2px 4px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.16)}
+.cap::after{content:"";position:absolute;left:2px;right:2px;top:11px;height:2px;background:#e6e7ea}
+.fader:focus-visible .cap{outline:1px solid var(--accent);outline-offset:1px}
+.muted .cap::after{background:var(--mute)}
+.scale{position:relative;width:100%;height:100%}
+.scale span{position:absolute;left:0;right:0;text-align:center;font:9.5px var(--mono);color:var(--faint);bottom:calc(12px + var(--y) * (100% - 24px));transform:translateY(50%)}
+.scale span.u{color:var(--dim)}
+.readouts{font:500 10.5px var(--mono);color:var(--dim)}
+.readouts span{white-space:nowrap}
+.readouts .muted{color:var(--faint);text-decoration:line-through}
+.mute{width:30px;height:22px;border-radius:3px;background:linear-gradient(#2d2f34,#232529);border:1px solid var(--black);box-shadow:inset 0 1px 0 rgba(255,255,255,.07);color:var(--dim);display:grid;place-items:center;cursor:pointer;padding:0}
+.mute svg{grid-area:1/1;width:14px;height:14px}
+.mute .slash{display:none}
+.mute:hover{color:var(--text)}
+.mute[aria-pressed="true"]{background:linear-gradient(#cc4047,#a2323a);color:#fff;box-shadow:inset 0 1px 0 rgba(255,255,255,.2)}
+.mute[aria-pressed="true"] .slash{display:block}
+.link{width:22px;height:18px;border-radius:3px;border:1px solid var(--edge-2);background:transparent;color:var(--faint);display:grid;place-items:center;cursor:pointer;padding:0}
+.link svg{width:12px;height:12px}
+.link[aria-pressed="true"]{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 55%,transparent);background:color-mix(in srgb,var(--accent) 14%,transparent)}
+
+.addcol{flex:0 0 30px;display:flex}
+.addcol button{flex:1;border:1px dashed var(--edge-2);border-radius:4px;background:transparent;color:var(--faint);cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px}
+.addcol button:hover{color:var(--text);border-color:var(--dim)}
+.addcol svg{width:14px;height:14px}
+.addcol span{writing-mode:vertical-rl;font:600 10.5px var(--ui);letter-spacing:.08em;text-transform:uppercase}
+
+/* master */
+.dest{grid-row:2 / 4;display:flex;flex-direction:column;gap:5px;padding:6px;background:var(--well);border:1px solid var(--edge);border-radius:3px}
+.dl{font:600 10px var(--ui);letter-spacing:.08em;text-transform:uppercase;color:var(--faint);margin-top:2px}
+.dsel{width:100%;height:22px;background:var(--ctl);border:1px solid var(--edge-2);border-radius:3px;font-size:11.5px;padding:0 4px}
+.vmic{display:flex;align-items:center;gap:5px;height:22px;padding:0 6px;border-radius:3px;border:1px solid var(--edge-2);font-size:11.5px;color:var(--text)}
+.vmic svg{width:11px;height:11px;color:var(--dim)}
+.dnote{font-size:11px;color:var(--faint);line-height:1.35;margin-top:auto}
+.dnote.on{color:var(--accent)}
+.mfaders{display:flex;justify-content:center;gap:4px;height:188px}
+.mfaders .scale{width:26px}
+.mfaders .meters{display:flex;gap:3px;height:100%}
+.mstrip .readouts,.mstrip .mutes{grid-template-columns:1fr}
+.seg{display:flex;border:1px solid var(--edge-2);border-radius:3px;overflow:hidden}
+.seg button{height:18px;padding:0 8px;border:0;background:var(--ctl);color:var(--dim);font:500 11px var(--ui);cursor:pointer;letter-spacing:0;text-transform:none}
+.seg button + button{border-left:1px solid var(--edge-2)}
+.seg button[aria-pressed="true"]{background:color-mix(in srgb,var(--accent) 22%,var(--ctl));color:var(--accent)}
+
+/* popovers */
+.pop{position:absolute;z-index:50;background:#1d1f23;border:1px solid #000;border-radius:6px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.07),0 18px 44px rgba(0,0,0,.65);overflow:hidden;user-select:none}
+.search{display:flex;align-items:center;gap:8px;height:40px;padding:0 10px;border-bottom:1px solid var(--edge)}
+.search svg{width:14px;height:14px;color:var(--faint);flex:none}
+.search input{flex:1;min-width:0;height:26px;background:transparent;border:0;outline:none;font-size:13px;user-select:text}
+.kbd{font:10px var(--mono);color:var(--faint);white-space:nowrap}
+.br{width:620px;height:440px;display:grid;grid-template-rows:40px 1fr 34px}
+.br-body{display:grid;grid-template-columns:172px 1fr;min-height:0}
+.br-nav{overflow:auto;border-right:1px solid var(--edge);padding:6px}
+.nav-i{display:flex;justify-content:space-between;align-items:center;width:100%;height:22px;padding:0 8px;border:0;border-radius:3px;background:transparent;color:var(--dim);font-size:12px;cursor:pointer;text-align:left}
+.nav-i:hover{background:var(--ctl);color:var(--text)}
+.nav-i.on{background:var(--ctl-hi);color:var(--text)}
+.nav-i .c{font:10.5px var(--mono);color:var(--faint)}
+.nav-h{font:600 10px var(--ui);letter-spacing:.08em;text-transform:uppercase;color:var(--faint);padding:12px 8px 4px}
+.br-list{list-style:none;margin:0;padding:4px;overflow:auto}
+.br-row{display:grid;grid-template-columns:16px minmax(0,1fr) 128px 92px;align-items:center;gap:8px;height:24px;padding:0 8px;border-radius:3px;cursor:pointer}
+.br-row:hover{background:var(--ctl)}
+.br-row.act{background:color-mix(in srgb,var(--accent) 16%,transparent)}
+.br-row .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px}
+.br-row .nm mark{background:transparent;color:var(--accent)}
+.br-row .vn,.br-row .ct{font-size:11px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.star{border:0;background:transparent;padding:0;color:var(--faint);cursor:pointer;display:grid;place-items:center}
+.star svg{width:12px;height:12px}
+.star.on{color:var(--accent)}
+.star.on svg{fill:currentColor}
+.br-group{font:600 10px var(--ui);letter-spacing:.08em;text-transform:uppercase;color:var(--faint);padding:8px 8px 3px}
+.br-empty{padding:20px 12px;color:var(--dim);font-size:12px}
+.br-foot{display:flex;align-items:center;gap:6px;padding:0 8px 0 12px;border-top:1px solid var(--edge);color:var(--dim);font-size:11.5px}
+.br-foot b{color:var(--text);font-weight:600}
+.br-foot .grow{flex:1}
+.btn{height:22px;padding:0 9px;border-radius:3px;border:1px solid var(--edge-2);background:var(--ctl);font-size:11.5px;cursor:pointer;white-space:nowrap}
+.btn:hover{background:var(--ctl-hi)}
+.btn.danger{color:var(--mute);background:transparent}
+
+.ap{width:270px}
+.ap-list{max-height:300px;overflow:auto;padding:4px}
+.ap-row{display:grid;grid-template-columns:14px 18px minmax(0,1fr) auto;gap:8px;align-items:center;height:24px;padding:0 6px;border-radius:3px;cursor:pointer;font-size:12px}
+.ap-row:hover{background:var(--ctl)}
+.ap-row input{margin:0;accent-color:var(--accent)}
+.ap-row.off .an{color:var(--faint)}
+.ag{width:18px;height:18px;border-radius:4px;background:var(--ctl-hi);color:var(--dim);display:grid;place-items:center;font:600 10px var(--ui)}
+.ap-row .nt{font-size:10.5px;color:var(--faint)}
+.ap-h{font:600 10px var(--ui);letter-spacing:.08em;text-transform:uppercase;color:var(--faint);padding:8px 6px 3px}
+.ap-foot{display:flex;justify-content:space-between;padding:6px 8px;border-top:1px solid var(--edge)}
+.menu{padding:4px;width:190px}
+.menu button{display:flex;align-items:center;gap:8px;width:100%;height:26px;padding:0 8px;border:0;border-radius:3px;background:transparent;font-size:12px;cursor:pointer;text-align:left}
+.menu button:hover{background:var(--ctl)}
+.menu svg{width:13px;height:13px;color:var(--dim)}
+
+/* plugin window */
+.pwin{position:absolute;z-index:60;width:540px;background:#202226;border:1px solid #000;border-radius:7px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.06),0 22px 60px rgba(0,0,0,.7);overflow:hidden}
+.pw-bar{height:30px;display:flex;align-items:center;gap:8px;padding:0 6px 0 10px;background:linear-gradient(#27292e,#1f2125);border-bottom:1px solid #000;cursor:move}
+.pw-bar .t{flex:1;font-size:12px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pw-bar .t b{color:var(--text);font-weight:600}
+.pw-body{height:290px;display:grid;place-items:center;text-align:center;color:var(--dim);background:repeating-linear-gradient(45deg,#18191c 0 10px,#1c1d21 10px 20px)}
+.pw-body b{display:block;font-size:15px;color:var(--text);margin-bottom:4px}
+
+.toast{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);display:flex;align-items:center;gap:10px;background:#26282d;border:1px solid #000;box-shadow:inset 0 0 0 1px rgba(255,255,255,.07),0 10px 24px rgba(0,0,0,.5);padding:6px 8px 6px 12px;border-radius:5px;font-size:12px;z-index:70;opacity:0;pointer-events:none;transition:opacity .15s}
+.toast.show{opacity:1;pointer-events:auto}
+.toast .btn{color:var(--accent)}
+.note{max-width:1360px;margin:12px auto 0;font-size:12px;color:#6d717a;line-height:1.5}
+@media (prefers-reduced-motion: reduce){.toast{transition:none}}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <header class="hb">
+    <div class="hb-l">
+      <button class="ib" type="button" id="menuBtn" aria-label="Main menu"></button>
+      <span class="ttl">Mixer</span>
+    </div>
+    <div class="lcd" aria-label="Audio engine status">
+      <span><b>48</b> kHz</span><span><b>256</b> samples</span><span><b>5.3</b> ms</span>
+      <span>DSP <span class="dspbar"><i id="dspbar"></i></span> <b id="dsp">7%</b></span>
+    </div>
+    <div class="hb-r">
+      <div class="wc" aria-hidden="true">
+        <button type="button" tabindex="-1" id="wc1"></button><button type="button" tabindex="-1" id="wc2"></button><button type="button" tabindex="-1" id="wc3"></button>
+      </div>
+    </div>
+  </header>
+
+  <main class="console">
+    <div class="bank-wrap">
+      <div class="sec">Inputs <span class="n" id="count"></span></div>
+      <div class="bank" id="bank"></div>
+    </div>
+    <div class="master-wrap">
+      <div class="sec">Mixes <span class="grow"></span><span style="text-transform:none;letter-spacing:0;font-weight:500">Headphones hear</span><div class="seg" id="hear"></div></div>
+      <div class="mbank" id="mbank"></div>
+    </div>
+  </main>
+
+  <div class="pop" id="pop" hidden></div>
+  <div class="pwin" id="pwin" hidden role="dialog"></div>
+  <div class="toast" id="toast" role="status"><span id="toastMsg"></span><button class="btn" type="button" id="toastAct" hidden></button></div>
+</div>
+<p class="note">Prototype v2 with example data and simulated meters. Inserts: drag to reorder or onto another channel (hold Ctrl to copy), double-click to open the plugin window, hover for settings and remove, click the dot to bypass. MON / STR on the FX header choose which mixes hear the chain. Double-click a channel name to rename it, double-click a fader for 0 dB.</p>
+
+<script>
+const S = p => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
+const I = {
+  phones:S('<path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4.5" height="6.5" rx="1.5"/><rect x="16.5" y="14" width="4.5" height="6.5" rx="1.5"/>'),
+  cast:S('<circle cx="12" cy="12" r="1.8"/><path d="M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7M5.6 5.6a9 9 0 0 0 0 12.8M18.4 5.6a9 9 0 0 1 0 12.8"/>'),
+  speaker:S('<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>'),
+  slash:'<svg class="slash" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4l16 16" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>',
+  link:S('<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>'),
+  mic:S('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/>'),
+  apps:S('<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>'),
+  plus:S('<path d="M12 4v16M4 12h16"/>'),
+  gear:S('<circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/>'),
+  trash:S('<path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13"/>'),
+  caret:S('<path d="M6 9l6 6 6-6"/>'),
+  search:S('<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>'),
+  star:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.8l-5.2 2.8 1-5.8-4.3-4.1 5.9-.8z"/></svg>',
+  menu:S('<path d="M4 7h16M4 12h16M4 17h16"/>'),
+  min:S('<path d="M6 12h12"/>'), max:S('<rect x="6" y="6" width="12" height="12" rx="1"/>'), close:S('<path d="M6 6l12 12M18 6L6 18"/>'),
+};
+
+/* ---------- example data ---------- */
+const CATS = ['EQ','Dynamics','Reverb','Delay','Distortion','Modulation','Pitch & vocal','Restoration','Multi-effect','Utility'];
+const PLUG = [
+  ['Pro-Q 3','FabFilter','EQ'],['Pro-L 2','FabFilter','Dynamics'],['Pro-C 2','FabFilter','Dynamics'],['Pro-DS','FabFilter','Dynamics'],
+  ['Pro-G','FabFilter','Dynamics'],['Pro-MB','FabFilter','Dynamics'],['Pro-R 2','FabFilter','Reverb'],['Saturn 2','FabFilter','Distortion'],['Timeless 3','FabFilter','Delay'],
+  ['OTT','Xfer Records','Dynamics'],
+  ['ValhallaSupermassive','Valhalla DSP','Reverb'],['ValhallaVintageVerb','Valhalla DSP','Reverb'],['ValhallaDelay','Valhalla DSP','Delay'],
+  ['RX 11 Voice De-noise','iZotope','Restoration'],['Nectar 4','iZotope','Pitch & vocal'],['Neutron 5','iZotope','Multi-effect'],
+  ['TDR Nova','Tokyo Dawn Labs','EQ'],['TDR Kotelnikov','Tokyo Dawn Labs','Dynamics'],
+  ['Noise Suppression for Voice','werman','Restoration'],
+  ['Airwindows Consolidated','Airwindows','Multi-effect'],
+  ['Surge XT Effects','Surge Synth Team','Multi-effect'],
+  ['Dragonfly Room Reverb','Michael Willis','Reverb'],['Dragonfly Plate Reverb','Michael Willis','Reverb'],['Dragonfly Hall Reverb','Michael Willis','Reverb'],
+  ['Auto-Tune Pro','Antares','Pitch & vocal'],
+  ['EchoBoy','Soundtoys','Delay'],['Decapitator','Soundtoys','Distortion'],
+  ['Vulf Compressor','Goodhertz','Dynamics'],
+  ['Spaced Out','BABY Audio','Reverb'],['Crystalline','BABY Audio','Reverb'],
+  ['Youlean Loudness Meter 2','Youlean','Utility'],
+  ['MAutoPitch','MeldaProduction','Pitch & vocal'],['MEqualizer','MeldaProduction','EQ'],
+  ['ShaperBox 3','Cableguys','Modulation'],['Kickstart 2','Cableguys','Dynamics'],
+  ['Comp FET-76','Arturia','Dynamics'],
+  ['Supercharger','Native Instruments','Dynamics'],
+  ['Snap Heap','Kilohearts','Multi-effect'],['kHs Chorus','Kilohearts','Modulation'],['kHs Gate','Kilohearts','Dynamics'],
+  ['SPAN','Voxengo','Utility'],['Gullfoss','Soundtheory','EQ'],
+].map(([name,vendor,cat],id) => ({id,name,vendor,cat}));
+const P = name => PLUG.find(p => p.name === name).id;
+const favs = new Set([P('Pro-Q 3'),P('Noise Suppression for Voice'),P('OTT'),P('Pro-L 2')]);
+let recent = [P('Pro-L 2'),P('OTT'),P('Pro-Q 3'),P('TDR Nova'),P('ValhallaSupermassive')];
+
+const APPS = [
+  {id:'firefox',name:'Firefox',run:true},{id:'chromium',name:'Chromium',run:false},{id:'spotify',name:'Spotify',run:true},
+  {id:'feishin',name:'Feishin',run:true},{id:'mpv',name:'mpv',run:false},{id:'vlc',name:'VLC media player',run:false},
+  {id:'discord',name:'Discord',run:true},{id:'vesktop',name:'Vesktop',run:false},{id:'steam',name:'Steam',run:true},
+  {id:'hades',name:'Hades II',run:true},{id:'obs',name:'OBS Studio',run:true},{id:'bitwig',name:'Bitwig Studio',run:false},
+  {id:'thunderbird',name:'Thunderbird',run:true},
+];
+const HW_IN = ['Wave:3','Scarlett 2i2 · In 1','Scarlett 2i2 · In 2','C920 webcam mic'];
+const HW_OUT = ['Scarlett 2i2 · Phones','Scarlett 2i2 · Out 1–2','HDMI · LG UltraGear','Built-in speakers'];
+
+const TAPER = [[0,-Infinity],[.04,-60],[.16,-40],[.32,-24],[.5,-12],[.63,-6],[.78,0],[1,6]];
+const UNITY = .78;
+const fx = (name,on=true) => ({pid:P(name),on});
+let channels = [
+  {id:1,name:'Mic',kind:'hw',device:'Wave:3',apps:[],mon:.72,str:UNITY,link:false,style:'speech',fxMon:true,fxStr:true,
+   fx:[fx('Noise Suppression for Voice'),fx('Pro-Q 3'),fx('Pro-C 2'),fx('Pro-L 2')]},
+  {id:2,name:'Game',kind:'apps',apps:['hades','steam'],mon:.7,str:.6,link:true,style:'game',fxMon:true,fxStr:true,fx:[]},
+  {id:3,name:'Music',kind:'apps',apps:['spotify','feishin','mpv','vlc'],mon:.64,str:.55,strMute:true,link:false,style:'steady',fxMon:true,fxStr:true,
+   fx:[fx('Pro-Q 3'),fx('OTT',false),fx('Pro-L 2')]},
+  {id:4,name:'Browser',kind:'apps',apps:['firefox','chromium'],mon:.68,str:.58,link:true,style:'low',fxMon:true,fxStr:true,fx:[]},
+  {id:5,name:'Voice chat',kind:'apps',apps:['discord','vesktop'],mon:.74,str:.6,link:false,style:'burst',fxMon:false,fxStr:true,fx:[fx('TDR Nova')]},
+  {id:6,name:'Synth',kind:'hw',device:'Scarlett 2i2 · In 2',apps:[],mon:.6,str:.6,link:true,style:'burst',fxMon:true,fxStr:true,fx:[fx('ValhallaSupermassive')]},
+];
+let uid = 7;
+const mix = {monitor:{dev:HW_OUT[0],v:UNITY,mute:false}, stream:{also:'',v:UNITY,mute:false}};
+let hear = 'monitor';
+
+/* ---------- helpers ---------- */
+const $ = s => document.querySelector(s);
+const appEl = $('#app'), bank = $('#bank'), mbank = $('#mbank'), pop = $('#pop'), pwin = $('#pwin');
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const clamp = (v,a=0,b=1) => Math.min(b, Math.max(a, v));
+const ch = id => channels.find(c => c.id === id);
+const appOf = id => APPS.find(a => a.id === id);
+function posToDb(p){
+  if(p <= .002) return -Infinity;
+  if(p < .04) return -80 + (p/.04)*20;
+  for(let k = 1; k < TAPER.length; k++){ const [p1,d1] = TAPER[k-1], [p2,d2] = TAPER[k]; if(p <= p2) return d1 + (d2-d1)*(p-p1)/(p2-p1); }
+  return 6;
+}
+function dbToPos(d){
+  if(!isFinite(d) || d <= -80) return 0;
+  if(d < -60) return (d + 80)/20 * .04;
+  for(let k = 2; k < TAPER.length; k++){ const [p1,d1] = TAPER[k-1], [p2,d2] = TAPER[k]; if(d <= d2) return p1 + (p2-p1)*(d-d1)/(d2-d1); }
+  return 1;
+}
+function dbTxt(p){ const d = posToDb(p); if(!isFinite(d)) return '−∞'; if(Math.abs(d) < .05) return '0.0'; return (d > 0 ? '+' : '') + d.toFixed(1); }
+let toastT;
+function toast(msg, label, fn){
+  $('#toastMsg').textContent = msg;
+  const b = $('#toastAct'); b.hidden = !label; if(label){ b.textContent = label; b.onclick = () => { fn(); $('#toast').classList.remove('show'); }; }
+  $('#toast').classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => $('#toast').classList.remove('show'), label ? 5000 : 2600);
+}
+$('#menuBtn').innerHTML = I.menu; $('#wc1').innerHTML = I.min; $('#wc2').innerHTML = I.max; $('#wc3').innerHTML = I.close;
+$('#menuBtn').addEventListener('click', () => toast('Menu: Preferences, Rescan plugins, Import / export setup, About'));
+
+/* ---------- shared fader markup ---------- */
+const SCALE = [[1,'+6'],[.78,'0'],[.63,'6'],[.5,'12'],[.32,'24'],[.16,'40'],[0,'∞']];
+const scaleHTML = () => `<div class="scale" aria-hidden="true">${SCALE.map(([y,t]) => `<span class="${t==='0'?'u':''}" style="--y:${y}">${t}</span>`).join('')}</div>`;
+const faderHTML = (p, label, attrs) => `<div class="fader" role="slider" tabindex="0" aria-label="${esc(label)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(p*100)}" aria-valuetext="${dbTxt(p)} dB" ${attrs} style="--p:${p}"><div class="rail"></div><div class="cap"></div></div>`;
+const meterHTML = key => `<div class="meter" data-m="${key}" aria-hidden="true"><b><i></i></b></div>`;
+
+/* ---------- channel strips ---------- */
+function srcText(c){
+  if(c.kind === 'hw') return {t:c.device, live:true};
+  if(!c.apps.length) return {t:'Pick apps…', live:false};
+  const list = c.apps.map(appOf).sort((a,b) => b.run - a.run);
+  const t = list.slice(0,2).map(a => a.name).join(', ') + (list.length > 2 ? ` +${list.length-2}` : '');
+  return {t, live:list.some(a => a.run)};
+}
+function stripHTML(c){
+  const s = srcText(c);
+  const slots = c.fx.map((f,i) => { const p = PLUG[f.pid]; return `<li class="slot${f.on?'':' off'}" data-i="${i}" tabindex="0" title="${esc(p.name)} · ${esc(p.vendor)}">
+      <button class="pw" type="button" data-act="bypass" aria-pressed="${f.on}" aria-label="${esc(p.name)} ${f.on?'on':'bypassed'}"></button>
+      <span class="pn">${esc(p.name)}</span>
+      <span class="hov"><button type="button" data-act="open" aria-label="Open ${esc(p.name)} window">${I.gear}</button><button type="button" data-act="del" aria-label="Remove ${esc(p.name)}">${I.trash}</button></span>
+    </li>`; }).join('');
+  const muted = k => !!c[k+'Mute'];
+  return `<div class="strip" data-id="${c.id}">
+    <div class="s-head">${c.kind==='hw'?I.mic:I.apps}<span class="s-name" title="Double-click to rename">${esc(c.name)}</span></div>
+    <button class="s-src" type="button" data-act="src" aria-label="${c.kind==='hw'?'Input device':'Apps'} for ${esc(c.name)}: ${esc(s.t)}"><span class="dot${s.live?' live':''}"></span><span class="t">${esc(s.t)}</span>${I.caret}</button>
+    <div class="fx">
+      <div class="fx-head"><span>FX</span><span class="fx-mix">
+        <button class="tg" type="button" data-act="fxMon" aria-pressed="${c.fxMon}" title="Monitor mix hears this chain">MON</button>
+        <button class="tg" type="button" data-act="fxStr" aria-pressed="${c.fxStr}" title="Stream mix hears this chain">STR</button></span></div>
+      <ol class="slots">${slots}<li class="slot add" data-act="add" tabindex="0">${I.plus}Add plugin</li></ol>
+    </div>
+    <div class="flabels" aria-hidden="true"><span>MON</span><span></span><span>STR</span></div>
+    <div class="faders">
+      <div class="send mon${muted('mon')?' muted':''}">${meterHTML(c.id+'-mon')}${faderHTML(c.mon, c.name+' Monitor send', `data-ch="${c.id}" data-send="mon"`)}</div>
+      ${scaleHTML()}
+      <div class="send str${muted('str')?' muted':''}">${meterHTML(c.id+'-str')}${faderHTML(c.str, c.name+' Stream send', `data-ch="${c.id}" data-send="str"`)}</div>
+    </div>
+    <div class="readouts"><span class="${muted('mon')?'muted':''}" data-r="${c.id}-mon">${dbTxt(c.mon)}</span><span></span><span class="${muted('str')?'muted':''}" data-r="${c.id}-str">${dbTxt(c.str)}</span></div>
+    <div class="mutes">
+      <button class="mute" type="button" data-act="mute" data-send="mon" aria-pressed="${muted('mon')}" aria-label="Mute ${esc(c.name)} in Monitor mix" title="Mute in Monitor mix">${I.phones}${I.slash}</button>
+      <button class="link" type="button" data-act="link" aria-pressed="${c.link}" aria-label="Link ${esc(c.name)} faders" title="Move both faders together">${I.link}</button>
+      <button class="mute" type="button" data-act="mute" data-send="str" aria-pressed="${muted('str')}" aria-label="Mute ${esc(c.name)} in Stream mix" title="Mute in Stream mix">${I.cast}${I.slash}</button>
+    </div>
+  </div>`;
+}
+function render(){
+  bank.innerHTML = channels.map(stripHTML).join('') + (channels.length < 8 ? `<div class="addcol"><button type="button" id="addCh" aria-label="Add channel">${I.plus}<span>Add channel</span></button></div>` : '');
+  $('#count').textContent = `${channels.length} / 8`;
+}
+function renderMaster(){
+  const opts = sel => HW_OUT.map(d => `<option ${d===sel?'selected':''}>${esc(d)}</option>`).join('');
+  const strip = k => {
+    const m = mix[k], isM = k === 'monitor', name = isM ? 'Monitor' : 'Stream';
+    const dest = isM
+      ? `<span class="dl">Output</span><select class="dsel" data-o="dev" aria-label="Monitor output device">${opts(m.dev)}</select>
+         <span class="dnote${hear==='stream'?' on':''}">${hear==='stream'?'Your headphones are playing the Stream mix.':'What you hear.'}</span>`
+      : `<span class="dl">Output</span><span class="vmic">${I.mic}Virtual mic</span>
+         <span class="dl">Also to</span><select class="dsel" data-o="also" aria-label="Also send Stream mix to"><option value="">None</option>${opts(m.also)}</select>
+         <span class="dnote">What OBS records. Pick “Stream Mix” as its mic.</span>`;
+    return `<div class="mstrip" data-mix="${k}">
+      <div class="s-head">${isM?I.phones:I.cast}<span class="s-name" style="cursor:default">${name}</span></div>
+      <div class="dest">${dest}</div>
+      <div class="flabels" style="grid-template-columns:1fr" aria-hidden="true"><span>MASTER</span></div>
+      <div class="mfaders${m.mute?' muted':''}">${faderHTML(m.v, name+' mix level', `data-mix="${k}"`)}${scaleHTML()}<div class="meters">${meterHTML(k+'-L')}${meterHTML(k+'-R')}</div></div>
+      <div class="readouts"><span class="${m.mute?'muted':''}" data-r="${k}">${dbTxt(m.v)}</span></div>
+      <div class="mutes"><button class="mute" type="button" data-o="mute" aria-pressed="${m.mute}" aria-label="Mute ${name} mix">${I.speaker}${I.slash}</button></div>
+    </div>`;
+  };
+  mbank.innerHTML = strip('monitor') + strip('stream');
+  $('#hear').innerHTML = ['monitor','stream'].map(k => `<button type="button" data-hear="${k}" aria-pressed="${hear===k}">${k==='monitor'?'Monitor':'Stream'}</button>`).join('');
+}
+
+/* ---------- faders ---------- */
+function paint(f, p){
+  f.style.setProperty('--p', p); f.setAttribute('aria-valuenow', Math.round(p*100)); f.setAttribute('aria-valuetext', dbTxt(p)+' dB');
+}
+function setChSend(c, send, p){
+  p = clamp(p);
+  const go = (k, v) => { c[k] = v; const f = bank.querySelector(`.fader[data-ch="${c.id}"][data-send="${k}"]`); if(f) paint(f, v); const r = bank.querySelector(`[data-r="${c.id}-${k}"]`); if(r) r.textContent = dbTxt(v); };
+  if(c.link){ const o = send === 'mon' ? 'str' : 'mon'; go(o, clamp(c[o] + (p - c[send]))); }
+  go(send, p);
+}
+function setMix(k, p){ mix[k].v = clamp(p); const f = mbank.querySelector(`.fader[data-mix="${k}"]`); paint(f, mix[k].v); mbank.querySelector(`[data-r="${k}"]`).textContent = dbTxt(mix[k].v); }
+function setFader(f, p){ if(f.dataset.mix) setMix(f.dataset.mix, p); else setChSend(ch(+f.dataset.ch), f.dataset.send, p); }
+const valOf = f => f.dataset.mix ? mix[f.dataset.mix].v : ch(+f.dataset.ch)[f.dataset.send];
+appEl.addEventListener('pointerdown', e => {
+  const f = e.target.closest('.fader'); if(!f || e.button !== 0) return;
+  e.preventDefault(); f.focus({preventScroll:true});
+  const r0 = f.getBoundingClientRect(), y0 = e.clientY, p0 = valOf(f);
+  const capR = f.querySelector('.cap').getBoundingClientRect();
+  const onCap = y0 >= capR.top && y0 <= capR.bottom;
+  const move = ev => {
+    const fine = ev.shiftKey ? .25 : 1;
+    if(onCap) setFader(f, p0 + (y0 - ev.clientY) / (r0.height - 24) * fine);
+    else setFader(f, (r0.bottom - 12 - ev.clientY) / (r0.height - 24));
+  };
+  f.setPointerCapture(e.pointerId); if(!onCap) move(e);
+  f.onpointermove = move; f.onpointerup = f.onpointercancel = () => { f.onpointermove = f.onpointerup = f.onpointercancel = null; };
+});
+appEl.addEventListener('dblclick', e => { const f = e.target.closest('.fader'); if(f) setFader(f, UNITY); });
+appEl.addEventListener('keydown', e => {
+  const f = e.target.closest && e.target.closest('.fader'); if(!f) return;
+  const v = valOf(f), st = e.shiftKey ? .002 : .01;
+  const map = {ArrowUp:v+st, ArrowRight:v+st, ArrowDown:v-st, ArrowLeft:v-st, Home:0, End:1};
+  if(e.key in map){ e.preventDefault(); setFader(f, map[e.key]); }
+});
+
+/* ---------- strip clicks ---------- */
+bank.addEventListener('click', e => {
+  if(e.target.closest('#addCh')) return openMenu(e.target.closest('#addCh'));
+  const b = e.target.closest('[data-act]'); if(!b) return;
+  const strip = b.closest('.strip'); const c = ch(+strip.dataset.id);
+  const slot = b.closest('.slot[data-i]'); const i = slot ? +slot.dataset.i : -1;
+  switch(b.dataset.act){
+    case 'mute': { const k = b.dataset.send + 'Mute'; c[k] = !c[k]; render(); break; }
+    case 'link': c.link = !c.link; b.setAttribute('aria-pressed', c.link); break;
+    case 'fxMon': case 'fxStr': c[b.dataset.act] = !c[b.dataset.act]; b.setAttribute('aria-pressed', c[b.dataset.act]); break;
+    case 'bypass': c.fx[i].on = !c.fx[i].on; render(); break;
+    case 'open': openWin(c.id, i); break;
+    case 'del': removeFx(c, i); break;
+    case 'add': openBrowser(c.id, b); break;
+    case 'src': openSource(c.id, b); break;
+  }
+});
+function removeFx(c, i){
+  const [gone] = c.fx.splice(i, 1); render(); closeWinIf(c.id, i);
+  toast(`Removed ${PLUG[gone.pid].name} from ${c.name}`, 'Undo', () => { c.fx.splice(i, 0, gone); render(); });
+}
+bank.addEventListener('dblclick', e => {
+  const slot = e.target.closest('.slot[data-i]');
+  if(slot && !e.target.closest('button')) return openWin(+slot.closest('.strip').dataset.id, +slot.dataset.i);
+  const nm = e.target.closest('.s-name'); if(nm) rename(nm);
+});
+bank.addEventListener('keydown', e => {
+  const slot = e.target.closest && e.target.closest('.slot'); if(!slot || e.target !== slot) return;
+  const c = ch(+slot.closest('.strip').dataset.id);
+  if(slot.classList.contains('add')){ if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); openBrowser(c.id, slot); } return; }
+  const i = +slot.dataset.i;
+  if(e.key === 'Enter'){ e.preventDefault(); openWin(c.id, i); }
+  else if(e.key === ' '){ e.preventDefault(); c.fx[i].on = !c.fx[i].on; render(); focusSlot(c.id, i); }
+  else if(e.key === 'Delete' || e.key === 'Backspace'){ e.preventDefault(); removeFx(c, i); focusSlot(c.id, Math.min(i, c.fx.length-1)); }
+  else if(e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')){
+    e.preventDefault(); const j = e.key === 'ArrowUp' ? i-1 : i+1; if(j < 0 || j >= c.fx.length) return;
+    [c.fx[i], c.fx[j]] = [c.fx[j], c.fx[i]]; render(); focusSlot(c.id, j);
+  }
+  else if(e.key === 'ArrowUp' || e.key === 'ArrowDown'){ e.preventDefault(); focusSlot(c.id, i + (e.key === 'ArrowUp' ? -1 : 1)); }
+});
+function focusSlot(id, i){ const s = bank.querySelector(`.strip[data-id="${id}"] .slot[data-i="${i}"]`); if(s) s.focus(); }
+function rename(nm){
+  const c = ch(+nm.closest('.strip').dataset.id);
+  const inp = document.createElement('input'); inp.className = 's-rename'; inp.value = c.name; inp.setAttribute('aria-label','Channel name');
+  nm.replaceWith(inp); inp.focus(); inp.select();
+  let done = false;
+  const commit = ok => { if(done) return; done = true; if(ok && inp.value.trim()) c.name = inp.value.trim(); render(); };
+  inp.addEventListener('keydown', e => { if(e.key === 'Enter') commit(true); if(e.key === 'Escape'){ e.stopPropagation(); commit(false); } });
+  inp.addEventListener('blur', () => commit(true));
+}
+
+/* ---------- insert drag & drop ---------- */
+let drag = null;
+bank.addEventListener('pointerdown', e => {
+  const slot = e.target.closest('.slot[data-i]'); if(!slot || e.button !== 0 || e.target.closest('button')) return;
+  drag = {ch:+slot.closest('.strip').dataset.id, i:+slot.dataset.i, x:e.clientX, y:e.clientY, slot, active:false};
+  slot.setPointerCapture(e.pointerId);
+});
+bank.addEventListener('pointermove', e => {
+  if(!drag) return;
+  if(!drag.active){ if(Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 5) return; startDrag(); }
+  moveDrag(e);
+});
+bank.addEventListener('pointerup', e => { if(!drag) return; if(drag.active) endDrag(e, true); drag = null; });
+bank.addEventListener('pointercancel', () => { if(drag && drag.active) endDrag(null, false); drag = null; });
+function startDrag(){
+  drag.active = true; closePop();
+  drag.ghost = document.createElement('div'); drag.ghost.className = 'ghost';
+  document.body.appendChild(drag.ghost); drag.slot.classList.add('dragging'); document.body.classList.add('dragging');
+}
+function clearDrop(){ bank.querySelectorAll('.drop-before').forEach(n => n.classList.remove('drop-before')); bank.querySelectorAll('.drop-into').forEach(n => n.classList.remove('drop-into')); }
+function moveDrag(e){
+  const copy = e.ctrlKey || e.altKey, name = PLUG[ch(drag.ch).fx[drag.i].pid].name;
+  drag.ghost.innerHTML = (copy ? '<em>+ Copy</em>' : '') + esc(name);
+  drag.ghost.style.transform = `translate(${e.clientX + 14}px, ${e.clientY + 10}px)`;
+  clearDrop(); drag.target = null;
+  const el = document.elementFromPoint(e.clientX, e.clientY);
+  const strip = el && el.closest('.strip'); if(!strip) return;
+  const list = strip.querySelector('.slots');
+  const items = [...list.querySelectorAll('.slot[data-i]')];
+  let idx = items.length;
+  for(const s of items){ const r = s.getBoundingClientRect(); if(e.clientY < r.top + r.height/2){ idx = +s.dataset.i; break; } }
+  (items[idx] || list.querySelector('.slot.add')).classList.add('drop-before');
+  if(+strip.dataset.id !== drag.ch) list.classList.add('drop-into');
+  drag.target = {ch:+strip.dataset.id, idx};
+}
+function endDrag(e, commit){
+  drag.ghost.remove(); drag.slot.classList.remove('dragging'); document.body.classList.remove('dragging'); clearDrop();
+  if(!commit || !drag.target) return;
+  const from = ch(drag.ch), to = ch(drag.target.ch), copy = e && (e.ctrlKey || e.altKey);
+  let idx = drag.target.idx; const item = from.fx[drag.i];
+  if(!copy){ if(from === to && (idx === drag.i || idx === drag.i + 1)) return; from.fx.splice(drag.i, 1); if(from === to && idx > drag.i) idx--; }
+  to.fx.splice(idx, 0, copy ? {...item} : item);
+  render();
+  if(from !== to || copy) toast(`${copy ? 'Copied' : 'Moved'} ${PLUG[item.pid].name} to ${to.name}`);
+}
+document.addEventListener('keydown', e => { if(e.key === 'Escape' && drag && drag.active){ endDrag(null, false); drag = null; } });
+
+/* ---------- popovers ---------- */
+let popFor = null;
+function placePop(anchor, prefer = 'below'){
+  const ar = appEl.getBoundingClientRect(), r = anchor.getBoundingClientRect();
+  let left = r.left - ar.left, top = prefer === 'right' ? r.top - ar.top : r.bottom - ar.top + 4;
+  if(prefer === 'right') left = r.right - ar.left + 6;
+  left = Math.max(8, Math.min(left, ar.width - pop.offsetWidth - 8));
+  top = Math.max(8, Math.min(top, ar.height - pop.offsetHeight - 8));
+  pop.style.left = left + 'px'; pop.style.top = top + 'px';
+}
+function closePop(){ pop.hidden = true; popFor = null; }
+document.addEventListener('pointerdown', e => {
+  if(pop.hidden || pop.contains(e.target)) return;
+  if(popFor && popFor.anchor && popFor.anchor.contains(e.target)) return;
+  closePop();
+});
+document.addEventListener('keydown', e => {
+  if(e.key !== 'Escape' || (drag && drag.active)) return;
+  if(!pop.hidden){ const a = popFor && popFor.anchor; closePop(); if(a && document.contains(a)) a.focus(); }
+  else if(!pwin.hidden) pwin.hidden = true;
+});
+
+/* add-channel menu */
+function openMenu(anchor){
+  popFor = {kind:'menu', anchor};
+  pop.innerHTML = `<div class="menu" role="menu"><button type="button" role="menuitem" data-k="apps">${I.apps}App channel</button><button type="button" role="menuitem" data-k="hw">${I.mic}Hardware input</button></div>`;
+  pop.hidden = false; placePop(anchor, 'right'); pop.querySelector('button').focus();
+  pop.onclick = e => {
+    const b = e.target.closest('[data-k]'); if(!b) return;
+    const k = b.dataset.k;
+    const c = {id:uid++, name:k==='hw'?'Input':'Apps', kind:k, device:HW_IN[1], apps:[], mon:UNITY, str:UNITY, link:true, style:k==='hw'?'burst':'low', fxMon:true, fxStr:true, fx:[]};
+    channels.push(c); render(); closePop();
+    openSource(c.id, bank.querySelector(`.strip[data-id="${c.id}"] .s-src`));
+  };
+}
+
+/* source picker */
+function openSource(id, anchor){
+  if(popFor && popFor.kind === 'src' && popFor.id === id){ closePop(); return; }
+  popFor = {kind:'src', id, anchor, q:''};
+  renderSource(); pop.hidden = false; placePop(anchor);
+  const inp = pop.querySelector('input[type=search]'); (inp || pop.querySelector('input')).focus();
+}
+function renderSource(){
+  const c = ch(popFor.id), q = popFor.q.toLowerCase();
+  const owner = id => channels.find(x => x !== c && x.kind === 'apps' && x.apps.includes(id));
+  let body;
+  if(c.kind === 'apps'){
+    const row = a => { const o = owner(a.id); return `<label class="ap-row${a.run?'':' off'}"><input type="checkbox" data-app="${a.id}" ${c.apps.includes(a.id)?'checked':''}><span class="ag">${esc(a.name[0])}</span><span class="an">${esc(a.name)}</span><span class="nt">${o?'in '+esc(o.name):''}</span></label>`; };
+    const hit = APPS.filter(a => a.name.toLowerCase().includes(q));
+    const run = hit.filter(a => a.run), off = hit.filter(a => !a.run);
+    body = `<div class="search">${I.search}<input type="search" placeholder="Find an app" value="${esc(popFor.q)}" aria-label="Find an app"></div>
+      <div class="ap-list">${run.length?`<div class="ap-h">Playing now</div>${run.map(row).join('')}`:''}${off.length?`<div class="ap-h">Seen before</div>${off.map(row).join('')}`:''}${hit.length?'':'<div class="br-empty">No app matches.</div>'}</div>`;
+  } else {
+    body = `<div class="ap-h" style="padding:10px 10px 4px">Input device</div><div class="ap-list">${HW_IN.map(d => `<label class="ap-row" style="grid-template-columns:14px 1fr"><input type="radio" name="hw" value="${esc(d)}" ${d===c.device?'checked':''}><span class="an">${esc(d)}</span></label>`).join('')}</div>`;
+  }
+  const sc = pop.querySelector('.ap-list'); const top = sc ? sc.scrollTop : 0;
+  pop.innerHTML = `<div class="ap">${body}<div class="ap-foot"><button class="btn danger" type="button" data-x="remove">Remove channel</button><button class="btn" type="button" data-x="done">Done</button></div></div>`;
+  pop.querySelector('.ap-list').scrollTop = top;
+  pop.onclick = e => {
+    const b = e.target.closest('[data-x]'); if(!b) return;
+    if(b.dataset.x === 'remove'){ const gone = c, at = channels.indexOf(c); channels = channels.filter(x => x !== c); closePop(); render(); toast(`Removed ${gone.name}`, 'Undo', () => { channels.splice(at, 0, gone); render(); }); }
+    else closePop();
+  };
+}
+pop.addEventListener('input', e => {
+  if(!popFor) return;
+  if(popFor.kind === 'src' && e.target.type === 'search'){ popFor.q = e.target.value; renderSource(); const i = pop.querySelector('input[type=search]'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }
+  if(popFor.kind === 'br' && e.target.id === 'bq'){ popFor.q = e.target.value; popFor.filter = 'all'; popFor.active = 0; renderList(); renderNav(); }
+});
+pop.addEventListener('change', e => {
+  if(!popFor || popFor.kind !== 'src') return;
+  const c = ch(popFor.id), t = e.target;
+  if(t.dataset.app){
+    const id = t.dataset.app;
+    if(t.checked){ channels.forEach(x => { if(x !== c) x.apps = x.apps.filter(a => a !== id); }); c.apps.push(id); }
+    else c.apps = c.apps.filter(a => a !== id);
+    render(); popFor.anchor = bank.querySelector(`.strip[data-id="${c.id}"] .s-src`); renderSource();
+    const again = pop.querySelector(`[data-app="${id}"]`); if(again) again.focus();
+  }
+  if(t.name === 'hw'){ c.device = t.value; render(); popFor.anchor = bank.querySelector(`.strip[data-id="${c.id}"] .s-src`); }
+});
+
+/* plugin browser */
+function openBrowser(id, anchor){
+  popFor = {kind:'br', id, anchor, q:'', filter:'all', active:0};
+  pop.innerHTML = `<div class="br">
+    <div class="search">${I.search}<input id="bq" type="search" placeholder="Search ${PLUG.length} plugins by name, maker or type" autocomplete="off" aria-label="Search plugins"><span class="kbd">↑ ↓ to pick · Enter to add</span></div>
+    <div class="br-body"><nav class="br-nav" id="bnav"></nav><ul class="br-list" id="blist" role="listbox" aria-label="Plugins"></ul></div>
+    <div class="br-foot"><span>Adds to <b>${esc(ch(id).name)}</b>, slot ${ch(id).fx.length + 1}</span><span class="grow"></span>
+      <button class="btn" type="button" data-b="import">Import chain…</button><button class="btn" type="button" data-b="export">Export chain…</button></div>
+  </div>`;
+  pop.hidden = false; renderNav(); renderList(); placePop(anchor, 'right');
+  $('#bq').focus();
+  pop.onclick = e => {
+    const n = e.target.closest('[data-f]'); if(n){ popFor.filter = n.dataset.f; popFor.q = ''; $('#bq').value = ''; popFor.active = 0; renderNav(); renderList(); return; }
+    const st = e.target.closest('[data-star]'); if(st){ const id = +st.dataset.star; favs.has(id) ? favs.delete(id) : favs.add(id); renderNav(); renderList(); return; }
+    const row = e.target.closest('.br-row'); if(row) return addPlugin(+row.dataset.pid);
+    const b = e.target.closest('[data-b]'); if(b) toast(b.dataset.b === 'import' ? 'Pick a .chain file to load into this channel' : `Saves ${ch(popFor.id).name}'s chain with plugin settings`);
+  };
+}
+function renderNav(){
+  const f = popFor.filter, count = fn => PLUG.filter(fn).length;
+  const item = (key, label, n) => `<button type="button" class="nav-i${f===key?' on':''}" data-f="${esc(key)}"><span>${esc(label)}</span><span class="c">${n}</span></button>`;
+  const vendors = [...new Set(PLUG.map(p => p.vendor))].sort((a,b) => a.localeCompare(b));
+  $('#bnav').innerHTML = item('fav','Favorites',favs.size) + item('recent','Recent',recent.length) + item('all','All plugins',PLUG.length)
+    + `<div class="nav-h">Type</div>` + CATS.map(c => item('cat:'+c, c, count(p => p.cat === c))).join('')
+    + `<div class="nav-h">Maker</div>` + vendors.map(v => item('ven:'+v, v, count(p => p.vendor === v))).join('');
+}
+function listFor(){
+  const {filter:f} = popFor, q = popFor.q.trim().toLowerCase();
+  if(q){
+    const score = p => { const n = p.name.toLowerCase(); if(n.startsWith(q)) return 0; if(n.includes(q)) return 1; if(p.vendor.toLowerCase().includes(q)) return 2; if(p.cat.toLowerCase().includes(q)) return 3; return 9; };
+    return PLUG.map(p => [score(p), p]).filter(([s]) => s < 9).sort((a,b) => a[0]-b[0] || a[1].name.localeCompare(b[1].name)).map(([,p]) => p);
+  }
+  if(f === 'fav') return [...favs].map(i => PLUG[i]).sort((a,b) => a.name.localeCompare(b.name));
+  if(f === 'recent') return recent.map(i => PLUG[i]);
+  if(f.startsWith('cat:')) return PLUG.filter(p => p.cat === f.slice(4)).sort((a,b) => a.name.localeCompare(b.name));
+  if(f.startsWith('ven:')) return PLUG.filter(p => p.vendor === f.slice(4)).sort((a,b) => a.name.localeCompare(b.name));
+  return [...PLUG].sort((a,b) => a.name.localeCompare(b.name));
+}
+function hl(name){ const q = popFor.q.trim(); if(!q) return esc(name); const i = name.toLowerCase().indexOf(q.toLowerCase()); if(i < 0) return esc(name); return esc(name.slice(0,i)) + '<mark>' + esc(name.slice(i, i+q.length)) + '</mark>' + esc(name.slice(i+q.length)); }
+function renderList(){
+  const list = listFor(); popFor.items = list; popFor.active = clamp(popFor.active, 0, Math.max(0, list.length-1));
+  const row = (p, i) => `<li class="br-row${i===popFor.active?' act':''}" role="option" aria-selected="${i===popFor.active}" data-pid="${p.id}" data-n="${i}">
+      <button type="button" class="star${favs.has(p.id)?' on':''}" data-star="${p.id}" aria-label="${favs.has(p.id)?'Remove from':'Add to'} favorites">${I.star}</button>
+      <span class="nm">${hl(p.name)}</span><span class="vn">${esc(p.vendor)}</span><span class="ct">${esc(p.cat)}</span></li>`;
+  let html = '';
+  if(!popFor.q.trim() && popFor.filter === 'all'){
+    let letter = '';
+    list.forEach((p, i) => { const L = /[a-z]/i.test(p.name[0]) ? p.name[0].toUpperCase() : '#'; if(L !== letter){ letter = L; html += `<li class="br-group">${L}</li>`; } html += row(p, i); });
+  } else html = list.map(row).join('');
+  $('#blist').innerHTML = list.length ? html : `<li class="br-empty">No installed plugin matches “${esc(popFor.q)}”.</li>`;
+  const act = $('#blist').querySelector('.act'); if(act) act.scrollIntoView({block:'nearest'});
+}
+pop.addEventListener('keydown', e => {
+  if(!popFor || popFor.kind !== 'br' || e.target.id !== 'bq') return;
+  if(e.key === 'ArrowDown' || e.key === 'ArrowUp'){ e.preventDefault(); popFor.active += e.key === 'ArrowDown' ? 1 : -1; renderList(); }
+  if(e.key === 'Enter'){ e.preventDefault(); const p = popFor.items[popFor.active]; if(p) addPlugin(p.id); }
+});
+function addPlugin(pid){
+  const c = ch(popFor.id); c.fx.push({pid, on:true});
+  recent = [pid, ...recent.filter(x => x !== pid)].slice(0, 8);
+  closePop(); render(); toast(`Added ${PLUG[pid].name} to ${c.name}`);
+}
+
+/* plugin window */
+let winFor = null;
+function openWin(id, i){
+  const c = ch(id), f = c.fx[i], p = PLUG[f.pid];
+  winFor = {id, f};
+  pwin.innerHTML = `<div class="pw-bar"><span class="t"><b>${esc(p.name)}</b> · ${esc(c.name)} · slot ${i+1}</span>
+      <button class="tg" type="button" data-w="on" aria-pressed="${f.on}" style="height:18px;padding:0 6px">${f.on?'ON':'BYPASS'}</button>
+      <button class="ib" type="button" data-w="close" aria-label="Close plugin window" style="width:22px;height:22px">${I.close}</button></div>
+    <div class="pw-body"><div><b>${esc(p.vendor)} ${esc(p.name)}</b>The plugin's own interface draws here,<br>in a separate window you can move to any screen.</div></div>`;
+  pwin.hidden = false;
+  const ar = appEl.getBoundingClientRect();
+  pwin.style.left = Math.round((ar.width - pwin.offsetWidth)/2) + 'px'; pwin.style.top = '90px';
+}
+function closeWinIf(id){ if(winFor && winFor.id === id && !ch(id).fx.includes(winFor.f)) pwin.hidden = true; }
+pwin.addEventListener('click', e => {
+  const b = e.target.closest('[data-w]'); if(!b) return;
+  if(b.dataset.w === 'close') pwin.hidden = true;
+  if(b.dataset.w === 'on'){ winFor.f.on = !winFor.f.on; b.setAttribute('aria-pressed', winFor.f.on); b.textContent = winFor.f.on ? 'ON' : 'BYPASS'; render(); }
+});
+pwin.addEventListener('pointerdown', e => {
+  const bar = e.target.closest('.pw-bar'); if(!bar || e.target.closest('button')) return;
+  const sx = e.clientX - pwin.offsetLeft, sy = e.clientY - pwin.offsetTop;
+  bar.setPointerCapture(e.pointerId);
+  bar.onpointermove = ev => { pwin.style.left = (ev.clientX - sx) + 'px'; pwin.style.top = Math.max(0, ev.clientY - sy) + 'px'; };
+  bar.onpointerup = () => { bar.onpointermove = bar.onpointerup = null; };
+});
+
+/* master */
+mbank.addEventListener('click', e => {
+  const b = e.target.closest('[data-o="mute"]'); if(!b) return;
+  const k = b.closest('.mstrip').dataset.mix; mix[k].mute = !mix[k].mute; renderMaster();
+});
+mbank.addEventListener('change', e => {
+  const t = e.target, k = t.closest('.mstrip').dataset.mix;
+  if(t.dataset.o === 'dev') mix[k].dev = t.value;
+  if(t.dataset.o === 'also'){ mix[k].also = t.value; if(t.value) toast(`Stream mix also plays to ${t.value}`); }
+});
+$('#hear').addEventListener('click', e => { const b = e.target.closest('[data-hear]'); if(!b) return; hear = b.dataset.hear; renderMaster(); });
+
+/* ---------- simulated signal ---------- */
+const sim = {};
+function target(style){
+  const r = Math.random();
+  switch(style){
+    case 'speech': return r < .3 ? .01 : .25 + Math.random()*.45;
+    case 'steady': return .3 + Math.random()*.25;
+    case 'game':   return .15 + Math.random()*.3;
+    case 'burst':  return r < .5 ? .005 : .15 + Math.random()*.35;
+    default:       return r < .6 ? .005 : .06 + Math.random()*.12;
+  }
+}
+const amp2db = a => a <= 0.0001 ? -Infinity : 20*Math.log10(a);
+function setM(key, pos){ const m = document.querySelector(`[data-m="${key}"] i`); if(m) m.style.height = (1 - clamp(pos))*100 + '%'; }
+function tick(t, settle){
+  const sums = {mon:[-Infinity,-Infinity], str:[-Infinity,-Infinity]};
+  channels.forEach(c => {
+    const s = sim[c.id] || (sim[c.id] = {a:0, b:0, tgt:.2, next:0});
+    if(t > s.next){ s.tgt = target(c.style); s.next = t + 110 + Math.random()*380; }
+    const live = c.kind === 'hw' || c.apps.some(id => appOf(id).run), tg = live ? s.tgt : 0, k = settle ? 1 : .22;
+    s.a += (tg*(.92 + Math.random()*.12) - s.a)*k; s.b += (tg*(.86 + Math.random()*.12) - s.b)*k;
+    const inDb = amp2db(Math.max(s.a, s.b));
+    ['mon','str'].forEach(send => {
+      const d = c[send+'Mute'] ? -Infinity : inDb + posToDb(c[send]);
+      setM(c.id+'-'+send, dbToPos(d));
+      if(isFinite(d)){ const L = amp2db(s.a) + posToDb(c[send]), R = amp2db(s.b) + posToDb(c[send]); sums[send][0] = Math.max(sums[send][0], L); sums[send][1] = Math.max(sums[send][1], R); }
+    });
+  });
+  [['monitor','mon'],['stream','str']].forEach(([k, send]) => {
+    const g = mix[k].mute ? -Infinity : posToDb(mix[k].v);
+    setM(k+'-L', dbToPos(sums[send][0] + g)); setM(k+'-R', dbToPos(sums[send][1] + g));
+  });
+}
+let lastDsp = 0;
+function loop(t){
+  tick(t);
+  if(t - lastDsp > 900){ lastDsp = t; const v = 6 + Math.round(Math.random()*3); $('#dsp').textContent = v + '%'; $('#dspbar').style.width = v + '%'; }
+  requestAnimationFrame(loop);
+}
+
+render(); renderMaster();
+$('#dspbar').style.width = '7%';
+if(window.matchMedia('(prefers-reduced-motion: reduce)').matches) tick(1, true); else requestAnimationFrame(loop);
+</script>
+</body>
+</html>
