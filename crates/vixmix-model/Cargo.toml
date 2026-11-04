@@ -1,0 +1,20 @@
+[package]
+name = "vixmix-model"
+description = "The mixer's setup as pure data: channels, sends, mixes, inserts, commands with validation, the fader taper, RON persistence and the engine snapshot"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "vixmix_model"
+
+[dependencies]
+serde.workspace = true
+ron.workspace = true
+thiserror.workspace = true
+chimaeraproject-fs.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

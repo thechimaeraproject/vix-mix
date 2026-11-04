@@ -1,0 +1,24 @@
+[package]
+name = "vixmix-plugins"
+description = "Everything between the kit's VST3 host and the mixer: the catalog, instances on the UI thread, the rack that lends them to chains, state and editor sessions"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "vixmix_plugins"
+
+[dependencies]
+vixmix-model.workspace = true
+vixmix-engine.workspace = true
+chimaeraproject-vst3-host.workspace = true
+chimaeraproject-audio-processor.workspace = true
+chimaeraproject-param.workspace = true
+chimaeraproject-fs.workspace = true
+raw-window-handle.workspace = true
+serde.workspace = true
+ron.workspace = true
+thiserror.workspace = true
+log.workspace = true

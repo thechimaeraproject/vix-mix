@@ -1,0 +1,6 @@
+# The kit is a private repository. Cargo's built-in libgit2 fetch ignores git's `insteadOf`
+# rewrite and the credential helper, and reads a private repository as "Repository not
+# found"; through the git CLI it uses this machine's credentials, and in CI the KIT_TOKEN
+# rewrite (.github/workflows/ci.yml). The kit's handbook/reference/rust.md has the rule.
+[net]
+git-fetch-with-cli = true

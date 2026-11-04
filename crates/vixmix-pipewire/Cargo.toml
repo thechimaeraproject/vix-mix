@@ -1,0 +1,21 @@
+[package]
+name = "vixmix-pipewire"
+description = "Linux only: the mixer as a PipeWire client; the crate is empty on every other target"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "vixmix_pipewire"
+
+[dependencies]
+vixmix-model.workspace = true
+vixmix-engine.workspace = true
+thiserror.workspace = true
+
+# Only Linux builds pipewire-sys (libpipewire-0.3 and libclang); Windows never resolves it into
+# a build, so the workspace still builds and tests there (docs/charter.md, Windows).
+[target.'cfg(target_os = "linux")'.dependencies]
+pipewire.workspace = true

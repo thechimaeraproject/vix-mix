@@ -1,0 +1,22 @@
+[package]
+name = "vixmix-host"
+description = "The orchestrator: owns the model, the engine, the plugins and the backend behind the Host trait the UI drives, and FakeHost for the UI's tests"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "vixmix_host"
+
+[dependencies]
+vixmix-model.workspace = true
+vixmix-engine.workspace = true
+vixmix-plugins.workspace = true
+vixmix-pipewire.workspace = true # empty on every target but Linux
+chimaeraproject-fs.workspace = true
+chimaeraproject-vst3-host.workspace = true
+raw-window-handle.workspace = true
+thiserror.workspace = true
+log.workspace = true
