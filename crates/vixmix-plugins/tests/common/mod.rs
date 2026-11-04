@@ -78,8 +78,16 @@ pub fn plugin_dir(name: &str) -> PathBuf {
     let bundle = dir.join(BUNDLE_NAME);
     let target = binary_path(&bundle, Os::current(), Arch::current());
     std::fs::create_dir_all(target.parent().unwrap()).unwrap();
-    std::fs::copy(built_example(), &target).unwrap();
+    install_binary(&bundle);
     dir
+}
+
+/// Copies the test plugin's binary into `bundle`, whose `Contents/<arch>-<os>/` must exist,
+/// and returns where it went.
+pub fn install_binary(bundle: &Path) -> PathBuf {
+    let target = binary_path(bundle, Os::current(), Arch::current());
+    std::fs::copy(built_example(), &target).unwrap();
+    target
 }
 
 /// A scratch directory of this process, for files a test writes.
