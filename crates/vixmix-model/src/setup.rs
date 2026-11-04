@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ids::{ChannelId, MixId};
+use crate::ids::{ChannelId, InstanceId, MixId};
 use crate::persist::VERSION;
 use crate::taper::UNITY;
 
@@ -15,6 +15,16 @@ pub const MAX_CHANNELS: usize = 8;
 /// Everything the user set up, saved as `setup.ron` and restored at the next start.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Setup {
+    /// The file format this setup was written in; [`crate::persist`] migrates older ones on
+    /// load, so in memory it is always [`VERSION`]. First, so it is the file's first line.
+    pub version: u32,
+    /// The id the next new channel takes. It is above every channel id this setup ever
+    /// handed out and only grows, so a removed channel's id never comes back: the host keeps
+    /// a removed channel while its undo toast shows, and a new one must not take its id.
+    pub next_channel: ChannelId,
+    /// The id the next new insert's instance takes, by the same rule: the host keeps a
+    /// removed insert's live instance while its undo toast shows.
+    pub next_instance: InstanceId,
     /// The input channels, left to right as the console shows them. At most [`MAX_CHANNELS`].
     pub channels: Vec<Channel>,
     /// The Monitor mix: what you hear.
@@ -25,9 +35,6 @@ pub struct Setup {
     pub preview_master: bool,
     /// Preferences that are not part of the console.
     pub prefs: Prefs,
-    /// The file format this setup was written in; [`crate::persist`] migrates older ones on
-    /// load, so in memory it is always [`VERSION`].
-    pub version: u32,
 }
 
 /// One input channel: a source, a chain, and a send to each mix.
@@ -150,7 +157,7 @@ impl Mix {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Insert {
     /// The live instance the plugins crate keeps for this slot.
-    pub instance: crate::ids::InstanceId,
+    pub instance: InstanceId,
     pub plugin: PluginRef,
     /// The bypass square: a disabled insert passes its input through.
     pub enabled: bool,
@@ -297,6 +304,9 @@ impl Default for Setup {
     /// both sends and both mixes at unity, no plugins.
     fn default() -> Setup {
         Setup {
+            version: VERSION,
+            next_channel: ChannelId(2),
+            next_instance: InstanceId(1),
             channels: vec![Channel {
                 id: ChannelId(1),
                 name: "Mic".to_string(),
@@ -312,7 +322,6 @@ impl Default for Setup {
             master: Mix::new(MixId::Master),
             preview_master: false,
             prefs: Prefs::default(),
-            version: VERSION,
         }
     }
 }

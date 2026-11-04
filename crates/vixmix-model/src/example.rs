@@ -292,12 +292,15 @@ pub fn setup() -> Setup {
         ..Mix::new(MixId::Master)
     };
     Setup {
+        version: crate::persist::VERSION,
+        // The prototype's `uid = 7`: the next channel is c7.
+        next_channel: ChannelId(7),
+        next_instance: InstanceId(next + 1),
         channels,
         monitor,
         master,
         preview_master: false,
         prefs: Prefs::default(),
-        version: crate::persist::VERSION,
     }
 }
 
