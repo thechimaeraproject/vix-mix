@@ -3,31 +3,45 @@
 //! raw window handle, which Vix's shell already does.
 //!
 //! Modules: [`app`] is the winit application and the frame loop; [`gpu`] the surface and the
-//! egui renderer; [`ui`] what each frame draws.
+//! egui renderer; [`ui`] what each frame draws: the header and the [`console`] of [`strip`]s,
+//! in the [`theme`]'s colours, sizes and fonts, with the prototype's [`icons`] and the
+//! [`meters`]' levels and peak-hold lines; [`capture`] the look gate's offscreen frame.
 //!
 //! The command line is for checks, not for users: `--fake` runs against `FakeHost` (prototype
-//! v5's example data and simulated meters) instead of the real host, and
+//! v5's example data and simulated meters) instead of the real host,
 //! `--quit-after-frames N` closes the window once N frames have been drawn, so a headless run
-//! proves the window works. See `docs/reference/app.md`.
+//! proves the window works, and `--dump-png <file>` draws `FakeHost`'s console once, offscreen
+//! at the prototype's scale, into a PNG. See `docs/reference/app.md`.
 //!
 //! [`Host`]: vixmix_host::Host
 
 mod app;
+mod capture;
+mod console;
 mod gpu;
+mod icons;
+mod meters;
+mod strip;
+mod theme;
 mod ui;
+
+use std::path::PathBuf;
 
 use winit::event_loop::EventLoop;
 
 const USAGE: &str = "\
-usage: vix-mix [--fake] [--quit-after-frames <n>]
+usage: vix-mix [--fake] [--quit-after-frames <n>] | --dump-png <file>
   --fake               run against FakeHost: the prototype's example console, simulated meters, no audio
-  --quit-after-frames  close the window once this many frames have been drawn";
+  --quit-after-frames  close the window once this many frames have been drawn
+  --dump-png           draw FakeHost's console once, offscreen at twice the size, into a PNG, and exit";
 
 /// What the command line asked for.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Startup {
     pub fake: bool,
     pub quit_after_frames: Option<u64>,
+    /// Draw one frame into this PNG instead of opening the window.
+    pub dump_png: Option<PathBuf>,
 }
 
 impl Startup {
@@ -55,12 +69,25 @@ impl Startup {
                     }
                     startup.quit_after_frames = Some(frames);
                 }
+                "--dump-png" => {
+                    let path = rest.next().ok_or_else(|| {
+                        "`--dump-png` wants the file to write, e.g. `--dump-png look-gate.png`"
+                            .to_string()
+                    })?;
+                    startup.dump_png = Some(PathBuf::from(path));
+                }
                 other => {
                     return Err(format!(
-                        "`{other}` is not something vix-mix takes; it takes --fake and --quit-after-frames <n>"
+                        "`{other}` is not something vix-mix takes; it takes --fake, --quit-after-frames <n> and --dump-png <file>"
                     ));
                 }
             }
+        }
+        if startup.dump_png.is_some() && startup.quit_after_frames.is_some() {
+            return Err(
+                "`--dump-png` draws one frame without a window, so `--quit-after-frames` has nothing to close; drop one of them"
+                    .to_string(),
+            );
         }
         Ok(startup)
     }
@@ -76,6 +103,18 @@ fn main() {
             std::process::exit(2);
         }
     };
+    if let Some(path) = &startup.dump_png {
+        match capture::dump_png(path) {
+            Ok([width, height]) => {
+                log::info!("wrote {} ({width} x {height} pixels)", path.display());
+                return;
+            }
+            Err(problem) => {
+                eprintln!("vix-mix: {problem}");
+                std::process::exit(1);
+            }
+        }
+    }
     let event_loop = match EventLoop::new() {
         Ok(event_loop) => event_loop,
         Err(e) => {
@@ -112,9 +151,12 @@ mod tests {
             parsed,
             Startup {
                 fake: true,
-                quit_after_frames: Some(3)
+                quit_after_frames: Some(3),
+                dump_png: None,
             }
         );
+        let dump = Startup::parse(&args(&["--dump-png", "gate.png"])).unwrap();
+        assert_eq!(dump.dump_png, Some(PathBuf::from("gate.png")));
     }
 
     #[test]
@@ -123,7 +165,15 @@ mod tests {
             (vec!["--quit-after-frames"], "--quit-after-frames 3"),
             (vec!["--quit-after-frames", "soon"], "whole number"),
             (vec!["--quit-after-frames", "0"], "1 or more"),
-            (vec!["--fullscreen"], "--fake and --quit-after-frames"),
+            (
+                vec!["--fullscreen"],
+                "--fake, --quit-after-frames <n> and --dump-png",
+            ),
+            (vec!["--dump-png"], "--dump-png look-gate.png"),
+            (
+                vec!["--dump-png", "a.png", "--quit-after-frames", "3"],
+                "drop one of them",
+            ),
         ] {
             let error = Startup::parse(&args(&words)).expect_err("refused");
             assert!(error.contains(expected), "{words:?} said `{error}`");

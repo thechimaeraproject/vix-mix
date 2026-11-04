@@ -22,3 +22,6 @@ wgpu.workspace = true
 pollster.workspace = true
 log.workspace = true
 env_logger.workspace = true
+# The look gate's capture (`--dump-png`): the frame as an RGBA PNG. Already in the lock
+# through the workspace's other crates, so it adds nothing to resolve.
+png = "0.18"
