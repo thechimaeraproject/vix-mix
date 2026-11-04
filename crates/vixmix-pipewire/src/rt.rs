@@ -12,14 +12,11 @@
 
 use std::cell::UnsafeCell;
 use std::sync::Arc;
-use std::sync::atomic::{
-    AtomicBool, AtomicPtr, AtomicU8, AtomicU32, AtomicU64, AtomicUsize, Ordering,
-};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 use assert_no_alloc::{assert_no_alloc, permit_alloc};
 use pipewire::spa::buffer::Data;
 use pipewire::stream::Stream;
-use pipewire::sys as pw_sys;
 use rtrb::{Consumer, Producer, RingBuffer};
 use vixmix_engine::{ChannelInput, Engine, MAX_QUANTUM, Tick};
 use vixmix_model::MAX_CHANNELS;
@@ -33,6 +30,10 @@ pub(crate) type Frame = [f32; 2];
 /// tick that comes two cycles late at the largest quantum loses nothing.
 pub(crate) const RING_FRAMES: usize = 3 * MAX_QUANTUM;
 
+/// An input that came short and delivers again within this many ticks underran; one that
+/// stays silent longer stopped (an app quit or was moved away), which is no xrun.
+const RESUMED_WITHIN: u64 = 8;
+
 /// Plans in flight each way between the control thread and the tick.
 const PLAN_SLOTS: usize = 16;
 
@@ -45,7 +46,7 @@ pub(crate) enum Role {
     MasterSource = 2,
 }
 
-/// `elected` when no output ticks.
+/// `expected` when no output can tick.
 const NO_ROLE: u8 = 3;
 
 impl Role {
@@ -96,6 +97,9 @@ pub(crate) struct Tap {
     channel: Arc<ChannelShared>,
     /// The ring has held one quantum ahead of the tick since it last ran short.
     primed: bool,
+    /// The tick (by count) at which the running input last came short: an underrun once it
+    /// delivers again within [`RESUMED_WITHIN`] ticks, an app that stopped otherwise.
+    short_at: Option<u64>,
     left: Box<[f32]>,
     right: Box<[f32]>,
 }
@@ -113,6 +117,7 @@ pub(crate) fn input_ring(shared: &Arc<Shared>) -> (InputRt, Tap, Arc<ChannelShar
         consumer,
         channel: Arc::clone(&channel),
         primed: false,
+        short_at: None,
         left: vec![0.0; MAX_QUANTUM].into_boxed_slice(),
         right: vec![0.0; MAX_QUANTUM].into_boxed_slice(),
     };
@@ -202,68 +207,15 @@ impl Staging {
     }
 }
 
-/// The streams the tick triggers each cycle (`PW_STREAM_FLAG_TRIGGER`), by role. The control
-/// thread publishes a stream after connecting it and retracts it before disconnecting it;
-/// `firing` counts ticks between their loads and their last trigger, so a retraction waits
-/// out a tick that may still hold the old pointer.
-pub(crate) struct Triggers {
-    streams: [AtomicPtr<pw_sys::pw_stream>; 3],
-    firing: AtomicUsize,
-}
-
-impl Triggers {
-    fn new() -> Triggers {
-        Triggers {
-            streams: std::array::from_fn(|_| AtomicPtr::new(std::ptr::null_mut())),
-            firing: AtomicUsize::new(0),
-        }
-    }
-
-    /// Control thread: the tick triggers `stream` from now on. It stays valid until
-    /// [`retract`](Triggers::retract).
-    pub(crate) fn publish(&self, role: Role, stream: &Stream) {
-        self.streams[role as usize].store(stream.as_raw_ptr(), Ordering::SeqCst);
-    }
-
-    /// Control thread: the tick stops triggering `role`'s stream; when this returns no tick
-    /// can still reach it, so it may be disconnected.
-    pub(crate) fn retract(&self, role: Role) {
-        self.streams[role as usize].store(std::ptr::null_mut(), Ordering::SeqCst);
-        while self.firing.load(Ordering::SeqCst) != 0 {
-            std::thread::yield_now();
-        }
-    }
-
-    /// Data thread: triggers every published stream but the tick's own.
-    fn fire(&self, from: Role) {
-        self.firing.fetch_add(1, Ordering::SeqCst);
-        for role in Role::ALL {
-            if role == from {
-                continue;
-            }
-            let stream = self.streams[role as usize].load(Ordering::SeqCst);
-            if !stream.is_null() {
-                // SAFETY: a published pointer is a live, connected `pw_stream` until
-                // `retract` returns, and `retract` cannot return while `firing` counts us.
-                // `pw_stream_trigger_process` is meant to be called from another stream's
-                // realtime `process` (PipeWire's module-loopback does exactly this).
-                unsafe {
-                    pw_sys::pw_stream_trigger_process(stream);
-                }
-            }
-        }
-        self.firing.fetch_sub(1, Ordering::SeqCst);
-    }
-}
-
 /// Everything the control thread and the data thread share. Lives as long as the backend,
 /// across reconnects.
 pub(crate) struct Shared {
     pub engine: Arc<Engine>,
     counters: Counters,
-    /// The role whose `process` runs the tick ([`Role`] as `u8`, or `NO_ROLE`).
-    elected: AtomicU8,
-    pub triggers: Triggers,
+    /// The output the control thread expects to run the tick ([`Role`] as `u8`, or
+    /// `NO_ROLE`): what the host is told. The data thread does not read it — whichever output
+    /// runs first in a cycle ticks.
+    expected: AtomicU8,
     staging: Staging,
     tick: TickCell,
 }
@@ -290,12 +242,12 @@ impl Shared {
             warm: false,
             last_stamp: 0,
             last_frames: 0,
+            ticks: 0,
         };
         let shared = Arc::new(Shared {
             engine,
             counters: Counters::default(),
-            elected: AtomicU8::new(NO_ROLE),
-            triggers: Triggers::new(),
+            expected: AtomicU8::new(NO_ROLE),
             staging: Staging::new(),
             tick: TickCell {
                 busy: AtomicBool::new(false),
@@ -305,15 +257,15 @@ impl Shared {
         (PlanPort { to_tick, from_tick }, shared)
     }
 
-    /// Control thread: which output's `process` runs the tick from the next cycle.
-    pub(crate) fn elect(&self, role: Option<Role>) {
-        self.elected
+    /// Control thread: the output that is expected to run the tick (for [`BackendStats`]).
+    pub(crate) fn expect(&self, role: Option<Role>) {
+        self.expected
             .store(role.map_or(NO_ROLE, |r| r as u8), Ordering::SeqCst);
     }
 
-    pub(crate) fn elected(&self) -> Option<Role> {
-        let elected = self.elected.load(Ordering::SeqCst);
-        Role::ALL.into_iter().find(|r| *r as u8 == elected)
+    pub(crate) fn expected(&self) -> Option<Role> {
+        let expected = self.expected.load(Ordering::SeqCst);
+        Role::ALL.into_iter().find(|r| *r as u8 == expected)
     }
 
     pub(crate) fn stats(&self) -> BackendStats {
@@ -321,7 +273,7 @@ impl Shared {
         let load = |a: &AtomicU64| a.load(Ordering::Relaxed);
         BackendStats {
             tick_source: self
-                .elected()
+                .expected()
                 .map_or(TickSource::Stopped, Role::tick_source),
             ticks: load(&c.ticks),
             rate: c.rate.load(Ordering::Relaxed),
@@ -396,6 +348,8 @@ struct TickState {
     warm: bool,
     last_stamp: u64,
     last_frames: usize,
+    /// Ticks this state has run: the clock `Tap::short_at` reads.
+    ticks: u64,
 }
 
 impl TickState {
@@ -437,7 +391,7 @@ impl TickState {
         }
 
         for tap in self.slots.iter_mut().flatten() {
-            tap.govern(n, stamp, shared);
+            tap.govern(n, stamp, self.ticks, shared);
         }
 
         let TickState {
@@ -493,6 +447,7 @@ impl TickState {
         }
         self.last_stamp = stamp;
         self.last_frames = n;
+        self.ticks += 1;
     }
 
     /// What the tick computed for `role`'s output.
@@ -513,24 +468,29 @@ impl Tap {
     /// when the input already delivered this cycle, one when it delivers after the tick), so
     /// the tick always reads the frames from one cycle ago whichever runs first. More is
     /// discarded, oldest first; less is silence until the ring holds one quantum ahead again.
-    fn govern(&mut self, n: usize, stamp: u64, shared: &Shared) {
+    /// `tick` counts the ticks, for telling an underrun from an input that stopped.
+    fn govern(&mut self, n: usize, stamp: u64, tick: u64, shared: &Shared) {
         let counters = &shared.counters;
         let delivered = stamp != 0 && self.channel.last_write.load(Ordering::Acquire) == stamp;
         let ahead = if delivered { 2 * n } else { n };
         let streaming = self.channel.streaming.load(Ordering::Relaxed);
         let was_primed = self.primed;
         let mut held = self.consumer.slots();
-        let on_target = held == ahead;
+        if was_primed && streaming {
+            counters.ring_checks.fetch_add(1, Ordering::Relaxed);
+        }
         if held > ahead {
             if let Ok(chunk) = self.consumer.read_chunk(held - ahead) {
                 chunk.commit_all();
             }
             held = ahead;
+            if was_primed && streaming {
+                counters.ring_off.fetch_add(1, Ordering::Relaxed);
+            }
         }
         if held < ahead {
             if was_primed && streaming {
-                counters.underruns.fetch_add(1, Ordering::Relaxed);
-                shared.xrun();
+                self.short_at = Some(tick);
             }
             self.primed = false;
             self.left[..n].fill(0.0);
@@ -545,11 +505,12 @@ impl Tap {
                 chunk.commit_all();
             }
             self.primed = true;
-        }
-        if was_primed && streaming {
-            counters.ring_checks.fetch_add(1, Ordering::Relaxed);
-            if !on_target {
+            if let Some(short_at) = self.short_at.take()
+                && tick.saturating_sub(short_at) <= RESUMED_WITHIN
+            {
+                counters.underruns.fetch_add(1, Ordering::Relaxed);
                 counters.ring_off.fetch_add(1, Ordering::Relaxed);
+                shared.xrun();
             }
         }
     }
@@ -636,8 +597,10 @@ pub(crate) struct OutputRt {
     pub shared: Arc<Shared>,
 }
 
-/// An output stream's `process`: the tick when its role is elected (then it triggers the
-/// others), otherwise a copy of the mix the tick staged earlier in this cycle.
+/// An output stream's `process`. The first output to run in a cycle runs the tick and
+/// stages the mix; every later one in the same cycle copies what was staged. Which output
+/// comes first is the graph's business (unlinked nodes have no order): this way none of them
+/// waits on another, and when one stops running the next cycle's first output ticks.
 pub(crate) fn output_process(stream: &Stream, rt: &mut OutputRt) {
     assert_no_alloc(|| {
         let shared = &*rt.shared;
@@ -664,20 +627,16 @@ pub(crate) fn output_process(stream: &Stream, rt: &mut OutputRt) {
             if left.len() != n || right.len() != n {
                 left.fill(0.0);
                 right.fill(0.0);
-            } else if shared.elected.load(Ordering::Relaxed) == role as u8 {
-                let ticked = shared.tick.claim(|state| {
-                    state.run(shared, n, stamp, rate);
-                    state.copy_out(role, left, right);
-                });
-                if ticked.is_some() {
-                    shared.counters.cycles[role as usize].fetch_add(1, Ordering::Relaxed);
-                } else {
-                    left.fill(0.0);
-                    right.fill(0.0);
-                    shared.counters.stale.fetch_add(1, Ordering::Relaxed);
-                }
-                shared.triggers.fire(role);
-            } else if shared.staging.read(stamp, role, left, right) {
+            } else if shared.staging.read(stamp, role, left, right)
+                || (stamp != 0
+                    && shared
+                        .tick
+                        .claim(|state| {
+                            state.run(shared, n, stamp, rate);
+                            state.copy_out(role, left, right);
+                        })
+                        .is_some())
+            {
                 shared.counters.cycles[role as usize].fetch_add(1, Ordering::Relaxed);
             } else {
                 left.fill(0.0);
@@ -719,23 +678,23 @@ mod tests {
         let n = 4;
         // Cycle 1, input first: priming, silence, nothing consumed.
         deliver(&mut rt, n, 1.0, 1);
-        tap.govern(n, 1, &shared);
+        tap.govern(n, 1, 1, &shared);
         assert_eq!(&tap.left[..n], &[0.0; 4]);
         // Cycle 2, input first: two quanta held, the tick reads cycle 1's.
         deliver(&mut rt, n, 2.0, 2);
-        tap.govern(n, 2, &shared);
+        tap.govern(n, 2, 2, &shared);
         assert_eq!(&tap.left[..n], &[1.0; 4]);
         // Cycle 3, the order flips: the tick runs first and reads cycle 2's.
-        tap.govern(n, 3, &shared);
+        tap.govern(n, 3, 3, &shared);
         assert_eq!(&tap.left[..n], &[2.0; 4]);
         deliver(&mut rt, n, 3.0, 3);
         // Cycle 4, tick first again: cycle 3's.
-        tap.govern(n, 4, &shared);
+        tap.govern(n, 4, 4, &shared);
         assert_eq!(&tap.left[..n], &[3.0; 4]);
         deliver(&mut rt, n, 4.0, 4);
         // Cycle 5 flips back to input first: still cycle 4's, nothing lost, nothing doubled.
         deliver(&mut rt, n, 5.0, 5);
-        tap.govern(n, 5, &shared);
+        tap.govern(n, 5, 5, &shared);
         assert_eq!(&tap.left[..n], &[4.0; 4]);
         let stats = shared.stats();
         assert_eq!((stats.ring_checks, stats.ring_off, stats.xruns), (3, 0, 0));
@@ -748,21 +707,45 @@ mod tests {
         channel.streaming.store(true, Ordering::Relaxed);
         let n = 4;
         deliver(&mut rt, n, 1.0, 1);
-        tap.govern(n, 2, &shared);
+        tap.govern(n, 2, 2, &shared);
         assert_eq!(&tap.left[..n], &[1.0; 4]);
         // Three cycles delivered while no tick ran: only the newest before this cycle is read.
         deliver(&mut rt, n, 2.0, 2);
         deliver(&mut rt, n, 3.0, 3);
         deliver(&mut rt, n, 4.0, 4);
-        tap.govern(n, 5, &shared);
+        tap.govern(n, 5, 5, &shared);
         assert_eq!(&tap.left[..n], &[4.0; 4]);
         assert_eq!(shared.stats().ring_off, 1);
-        // The input misses a cycle while it runs: silence, one underrun, one xrun.
-        tap.govern(n, 6, &shared);
+        // The input misses a cycle while it runs: silence, and an underrun once it is back.
+        tap.govern(n, 6, 6, &shared);
         assert_eq!(&tap.left[..n], &[0.0; 4]);
+        assert_eq!(shared.stats().underruns, 0, "not yet: it may have stopped");
+        deliver(&mut rt, n, 7.0, 6);
+        tap.govern(n, 7, 7, &shared);
         let stats = shared.stats();
         assert_eq!((stats.underruns, stats.xruns), (1, 1));
         assert_eq!(shared.engine.stats().xruns.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn an_input_that_stops_delivering_is_not_an_underrun() {
+        let (_plans, shared) = shared();
+        let (mut rt, mut tap, channel) = input_ring(&shared);
+        channel.streaming.store(true, Ordering::Relaxed);
+        let n = 4;
+        deliver(&mut rt, n, 1.0, 1);
+        tap.govern(n, 2, 2, &shared);
+        // The app quits: its sink still says it runs for a few cycles, then not.
+        for tick in 3..20 {
+            tap.govern(n, tick, tick, &shared);
+        }
+        channel.streaming.store(false, Ordering::Relaxed);
+        // Much later another app plays into the same sink.
+        deliver(&mut rt, n, 2.0, 30);
+        tap.govern(n, 31, 31, &shared);
+        assert_eq!(&tap.left[..n], &[2.0; 4]);
+        let stats = shared.stats();
+        assert_eq!((stats.underruns, stats.xruns, stats.ring_off), (0, 0, 0));
     }
 
     #[test]
@@ -770,7 +753,7 @@ mod tests {
         let (_plans, shared) = shared();
         let (_rt, mut tap, _channel) = input_ring(&shared);
         tap.primed = true;
-        tap.govern(8, 1, &shared);
+        tap.govern(8, 1, 1, &shared);
         assert_eq!(&tap.left[..8], &[0.0; 8]);
         let stats = shared.stats();
         assert_eq!((stats.underruns, stats.xruns, stats.ring_checks), (0, 0, 0));

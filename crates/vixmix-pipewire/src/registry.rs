@@ -18,6 +18,8 @@ pub(crate) enum Global {
     AppStream,
     /// The `default` metadata object: where `target.object` routing goes.
     DefaultMetadata,
+    /// A client: bind it for the identity its streams may not carry themselves.
+    Client,
     /// Anything else, ours included.
     Other,
 }
@@ -61,6 +63,7 @@ pub(crate) fn classify(type_: &ObjectType, props: Option<&DictRef>, app: &str) -
         ObjectType::Metadata if props.get("metadata.name") == Some("default") => {
             Global::DefaultMetadata
         }
+        ObjectType::Client => Global::Client,
         _ => Global::Other,
     }
 }
@@ -72,10 +75,20 @@ pub(crate) fn is_ours(node_name: &str, app: &str) -> bool {
         .is_some_and(|rest| rest.starts_with('.'))
 }
 
-/// An app stream's identity from its node's full properties: the portal app id, the process
-/// binary and `application.name` (the node's name when an app sets none), and what it plays.
-pub(crate) fn app_stream(node: u32, props: &DictRef) -> AppStream {
-    let text = |key: &str| props.get(key).filter(|v| !v.is_empty()).map(str::to_string);
+/// An app stream's identity: the portal app id, the process binary and `application.name`
+/// (the node's name when an app sets none), and what it plays. The node's own properties come
+/// first; its client's fill what they lack — the portal app id and the process binary live on
+/// the client for a native PipeWire app — except for a stream pipewire-pulse made, whose client
+/// is pipewire-pulse itself (pipewire-pulse copies the app's identity onto the stream).
+pub(crate) fn app_stream(node: u32, props: &DictRef, client: Option<&DictRef>) -> AppStream {
+    let client = client.filter(|_| props.get("client.api") != Some("pipewire-pulse"));
+    let text = |key: &str| {
+        props
+            .get(key)
+            .or_else(|| client.and_then(|c| c.get(key)))
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+    };
     AppStream {
         node,
         app: AppRef {
@@ -156,7 +169,7 @@ mod tests {
             Global::AppStream
         );
         assert_eq!(
-            app_stream(42, props.dict()),
+            app_stream(42, props.dict(), None),
             AppStream {
                 node: 42,
                 app: AppRef {
@@ -168,7 +181,34 @@ mod tests {
             }
         );
         let bare = properties! { "node.name" => "pw-play" };
-        assert_eq!(app_stream(7, bare.dict()).app.name, "pw-play");
+        assert_eq!(app_stream(7, bare.dict(), None).app.name, "pw-play");
+    }
+
+    #[test]
+    fn what_a_native_stream_lacks_comes_from_its_client_but_never_from_pipewire_pulse() {
+        let client = properties! {
+            "application.name" => "pw-play",
+            "application.process.binary" => "pw-cat",
+            "pipewire.access.portal.app_id" => "org.example.Player",
+        };
+        let native = properties! { "application.name" => "Player" };
+        let stream = app_stream(5, native.dict(), Some(client.dict()));
+        assert_eq!(stream.app.name, "Player", "the node's own name wins");
+        assert_eq!(stream.app.binary.as_deref(), Some("pw-cat"));
+        assert_eq!(stream.app.app_id.as_deref(), Some("org.example.Player"));
+
+        let pulse_client = properties! { "application.process.binary" => "pipewire-pulse" };
+        let pulse = properties! {
+            "client.api" => "pipewire-pulse",
+            "application.name" => "Firefox",
+            "application.process.binary" => "firefox",
+        };
+        let stream = app_stream(6, pulse.dict(), Some(pulse_client.dict()));
+        assert_eq!(stream.app.binary.as_deref(), Some("firefox"));
+        let bare_pulse =
+            properties! { "client.api" => "pipewire-pulse", "application.name" => "Old" };
+        let stream = app_stream(7, bare_pulse.dict(), Some(pulse_client.dict()));
+        assert_eq!(stream.app.binary, None, "pipewire-pulse is nobody's binary");
     }
 
     #[test]

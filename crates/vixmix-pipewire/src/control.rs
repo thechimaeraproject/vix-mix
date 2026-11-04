@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{SyncSender, TrySendError};
 use std::time::{Duration, Instant};
 
+use pipewire::client::{Client, ClientListener};
 use pipewire::context::ContextRc;
 use pipewire::core::CoreRc;
 use pipewire::main_loop::{MainLoopRc, MainLoopWeak};
@@ -39,6 +40,10 @@ const MAX_NOTES: usize = 4096;
 const MAX_BACKLOG: usize = 1024;
 /// Routings waiting for the `default` metadata to be bound.
 const MAX_PENDING_ROUTES: usize = 256;
+/// How long after an app stream appears a routing written over the host's is put back, and
+/// how often at most.
+const RESTORE_WINDOW: Duration = Duration::from_secs(3);
+const MAX_REWRITES: u8 = 3;
 /// Reconnecting to a lost daemon: the first wait, doubled on each failure up to the last.
 const BACKOFF_FIRST: Duration = Duration::from_millis(250);
 const BACKOFF_MAX: Duration = Duration::from_secs(5);
@@ -70,6 +75,10 @@ enum Note {
     Global(GlobalObject<PropertiesBox>),
     GlobalRemove(u32),
     NodeInfo {
+        id: u32,
+        props: PropertiesBox,
+    },
+    ClientInfo {
         id: u32,
         props: PropertiesBox,
     },
@@ -330,7 +339,35 @@ struct ChannelStream {
 struct AppEntry {
     _listener: NodeListener,
     _node: Node,
+    /// Its full properties, once the node's info arrived.
+    props: Option<PropertiesBox>,
     announced: bool,
+    /// When the registry announced it: the window in which a session manager restores a
+    /// routing for it ([`RESTORE_WINDOW`]).
+    appeared: Instant,
+    /// The routing the host asked for it, and how often it was written again since.
+    wish: Option<Option<String>>,
+    rewritten: u8,
+}
+
+/// A client bound for its full properties. The listener goes before the proxy.
+struct ClientEntry {
+    _listener: ClientListener,
+    _client: Client,
+    props: Option<PropertiesBox>,
+}
+
+/// Where the `default` metadata sends one subject: the two keys routing reads.
+#[derive(Default)]
+struct Target {
+    object: Option<String>,
+    node: Option<String>,
+}
+
+/// A node the registry announced: its global id and its `object.serial`.
+struct Named {
+    id: u32,
+    serial: String,
 }
 
 /// The `default` metadata, bound. The listener goes before the proxy.
@@ -345,10 +382,15 @@ struct Conn {
     channels: HashMap<ChannelId, ChannelStream>,
     outputs: [Option<Live>; 3],
     routing: Option<Routing>,
-    /// `target.object` of each subject in the `default` metadata, as the metadata reports it.
-    targets: HashMap<u32, String>,
+    /// Where the `default` metadata sends each subject, as the metadata reports it.
+    targets: HashMap<u32, Target>,
+    /// Routings waiting for the metadata to be bound or for their sink to be announced.
     pending_routes: Vec<(u32, Option<String>)>,
+    /// Every node the registry announced (ours included), by `node.name`, and back.
+    nodes: HashMap<String, Named>,
+    node_names: HashMap<u32, String>,
     apps: HashMap<u32, AppEntry>,
+    clients: HashMap<u32, ClientEntry>,
     devices: HashMap<u32, DeviceInfo>,
     /// The first registry pass is done: devices are known, graphs may be applied.
     ready: bool,
@@ -360,6 +402,73 @@ struct Conn {
 }
 
 impl Conn {
+    /// Writes a routing: `target.object` set to the sink's `object.serial` (or removed for the
+    /// default), and `target.node` removed. False while the metadata is not bound or the sink
+    /// not announced yet.
+    ///
+    /// The serial rather than the name: WirePlumber's `restore-stream.lua` (as Ubuntu 24.04
+    /// ships it) persists a `target.object` only by looking its value up as a serial, and
+    /// restores through `target.node`, which is why both keys are written.
+    fn try_route(&self, node: u32, to: Option<&str>) -> bool {
+        let Some(routing) = &self.routing else {
+            return false;
+        };
+        let serial = match to {
+            Some(name) => match self.nodes.get(name) {
+                Some(named) => Some(named.serial.as_str()),
+                None => return false,
+            },
+            None => None,
+        };
+        let metadata = &routing.metadata;
+        metadata.set_property(node, "target.node", None, None);
+        metadata.set_property(node, "target.object", serial.map(|_| "Spa:Id"), serial);
+        true
+    }
+
+    /// A session manager restores a routing it remembers when an app appears (WirePlumber's
+    /// `restore-stream`), and may do so after the host has routed the app: within
+    /// [`RESTORE_WINDOW`] of its appearance, a routing that is not the host's is written over
+    /// again (a few times at most, so two writers never fight forever).
+    fn keep_wish(&mut self, subject: u32) {
+        let Some(app) = self.apps.get(&subject) else {
+            return;
+        };
+        let Some(wish) = app.wish.clone() else {
+            return;
+        };
+        if app.appeared.elapsed() > RESTORE_WINDOW || app.rewritten >= MAX_REWRITES {
+            return;
+        }
+        let target = self.targets.get(&subject);
+        let object = target.and_then(|t| t.object.as_deref());
+        let node = target
+            .and_then(|t| t.node.as_deref())
+            .filter(|n| *n != "-1");
+        let kept = match &wish {
+            None => object.is_none() && node.is_none(),
+            Some(sink) => match self.nodes.get(sink) {
+                Some(named) => object == Some(named.serial.as_str()) && node.is_none(),
+                // Not announced yet: the routing waits in `pending_routes` anyway.
+                None => true,
+            },
+        };
+        if !kept
+            && self.try_route(subject, wish.as_deref())
+            && let Some(app) = self.apps.get_mut(&subject)
+        {
+            app.rewritten += 1;
+        }
+    }
+
+    fn flush_routes(&mut self) {
+        for (node, to) in std::mem::take(&mut self.pending_routes) {
+            if !self.try_route(node, to.as_deref()) {
+                self.pending_routes.push((node, to));
+            }
+        }
+    }
+
     fn device_present(&self, name: &str) -> bool {
         self.devices.values().any(|d| d.device.name == name)
     }
@@ -391,15 +500,6 @@ struct Control {
     slots: [Option<ChannelId>; MAX_CHANNELS],
     pending: Pending,
     seen: Seen,
-}
-
-/// Whether `role`'s stream runs only when the tick (`tick`) triggers it.
-fn triggered_by(tick: Option<Role>, role: Role) -> bool {
-    match tick {
-        Some(Role::Monitor) => role != Role::Monitor,
-        Some(Role::MasterOut) => role == Role::MasterSource,
-        Some(Role::MasterSource) | None => false,
-    }
 }
 
 impl Control {
@@ -445,11 +545,19 @@ impl Control {
             Note::NodeInfo { id, props } => {
                 if let Some(conn) = &mut self.conn
                     && let Some(app) = conn.apps.get_mut(&id)
-                    && !app.announced
+                    && app.props.is_none()
                 {
-                    app.announced = true;
-                    let stream = registry::app_stream(id, props.dict());
-                    self.events.send(BackendEvent::AppStreamAdded(stream));
+                    app.props = Some(props);
+                    self.announce_apps();
+                }
+            }
+            Note::ClientInfo { id, props } => {
+                if let Some(conn) = &mut self.conn
+                    && let Some(client) = conn.clients.get_mut(&id)
+                    && client.props.is_none()
+                {
+                    client.props = Some(props);
+                    self.announce_apps();
                 }
             }
             Note::Metadata {
@@ -458,15 +566,26 @@ impl Control {
                 value,
             } => {
                 if let Some(conn) = &mut self.conn {
-                    match (key.as_deref(), value) {
-                        (None, _) => conn.targets.clear(),
-                        (Some("target.object"), Some(value)) => {
-                            conn.targets.insert(subject, value);
+                    match key.as_deref() {
+                        None => conn.targets.clear(),
+                        Some(key @ ("target.object" | "target.node")) => {
+                            // Only a key set to something can be a routing not ours: our own
+                            // writes remove `target.node` before they set `target.object`.
+                            let set = value.is_some();
+                            let target = conn.targets.entry(subject).or_default();
+                            if key == "target.object" {
+                                target.object = value;
+                            } else {
+                                target.node = value;
+                            }
+                            if target.object.is_none() && target.node.is_none() {
+                                conn.targets.remove(&subject);
+                            }
+                            if set {
+                                conn.keep_wish(subject);
+                            }
                         }
-                        (Some("target.object"), None) => {
-                            conn.targets.remove(&subject);
-                        }
-                        _ => {}
+                        Some(_) => {}
                     }
                 }
             }
@@ -504,7 +623,6 @@ impl Control {
                         "vix-mix-pipewire: {} is {phase:?}",
                         live.spec.node_name(&self.config)
                     );
-                    live.retract();
                     live.retry_at = Some(Instant::now() + STREAM_RETRY);
                 }
                 live.phase = phase;
@@ -562,7 +680,10 @@ impl Control {
             routing: None,
             targets: HashMap::new(),
             pending_routes: Vec::new(),
+            nodes: HashMap::new(),
+            node_names: HashMap::new(),
             apps: HashMap::new(),
+            clients: HashMap::new(),
             devices: HashMap::new(),
             ready: false,
             sync,
@@ -576,7 +697,7 @@ impl Control {
 
     /// Tears the connection down: every stream, every proxy, the core.
     fn close(&mut self) {
-        self.shared.elect(None);
+        self.shared.expect(None);
         self.conn = None;
     }
 
@@ -585,7 +706,7 @@ impl Control {
         let Some(conn) = self.conn.take() else {
             return;
         };
-        self.shared.elect(None);
+        self.shared.expect(None);
         for info in conn.devices.values() {
             self.events
                 .send(BackendEvent::DeviceRemoved(info.device.name.clone()));
@@ -609,6 +730,21 @@ impl Control {
             return;
         };
         let props = global.props.as_ref().map(|p| p.dict());
+        if global.type_ == pipewire::types::ObjectType::Node
+            && let Some(props) = props
+            && let (Some(name), Some(serial)) = (props.get("node.name"), props.get("object.serial"))
+        {
+            conn.nodes.insert(
+                name.to_string(),
+                Named {
+                    id: global.id,
+                    serial: serial.to_string(),
+                },
+            );
+            conn.node_names.insert(global.id, name.to_string());
+            // A routing may have been waiting for this sink.
+            conn.flush_routes();
+        }
         match registry::classify(&global.type_, props, self.config.app_name) {
             Global::Device(info) => {
                 let name = info.device.name.clone();
@@ -638,7 +774,37 @@ impl Control {
                     AppEntry {
                         _listener: listener,
                         _node: node,
+                        props: None,
                         announced: false,
+                        appeared: Instant::now(),
+                        wish: None,
+                        rewritten: 0,
+                    },
+                );
+            }
+            Global::Client => {
+                let Ok(client) = conn.registry.bind::<Client, _>(&global) else {
+                    return;
+                };
+                let note = noter(ctl);
+                let id = global.id;
+                let listener = client
+                    .add_listener_local()
+                    .info(move |info| {
+                        if let Some(props) = info.props() {
+                            note(Note::ClientInfo {
+                                id,
+                                props: PropertiesBox::from_dict(props),
+                            });
+                        }
+                    })
+                    .register();
+                conn.clients.insert(
+                    id,
+                    ClientEntry {
+                        _listener: listener,
+                        _client: client,
+                        props: None,
                     },
                 );
             }
@@ -665,9 +831,7 @@ impl Control {
                     _listener: listener,
                     metadata,
                 });
-                for (node, to) in std::mem::take(&mut conn.pending_routes) {
-                    self.route(node, to);
-                }
+                conn.flush_routes();
             }
             Global::Other => {}
         }
@@ -677,6 +841,12 @@ impl Control {
         let Some(conn) = &mut self.conn else {
             return;
         };
+        if let Some(name) = conn.node_names.remove(&id)
+            && conn.nodes.get(&name).is_some_and(|named| named.id == id)
+        {
+            conn.nodes.remove(&name);
+        }
+        conn.pending_routes.retain(|(node, _)| *node != id);
         if let Some(info) = conn.devices.remove(&id) {
             self.events
                 .send(BackendEvent::DeviceRemoved(info.device.name));
@@ -686,66 +856,81 @@ impl Control {
                 self.events.send(BackendEvent::AppStreamRemoved(id));
             }
             conn.targets.remove(&id);
+        } else if conn.clients.remove(&id).is_some() {
+            // Its streams that waited for its properties go out with what they have.
+            self.announce_apps();
+        }
+    }
+
+    /// Reports every app stream whose properties have arrived, once its client's have too
+    /// (or its client is gone or unknown).
+    fn announce_apps(&mut self) {
+        let Some(conn) = &mut self.conn else {
+            return;
+        };
+        let mut ready = Vec::new();
+        for (id, app) in &conn.apps {
+            let Some(props) = app.props.as_ref().filter(|_| !app.announced) else {
+                continue;
+            };
+            let client = props
+                .get("client.id")
+                .and_then(|c| c.parse::<u32>().ok())
+                .and_then(|c| conn.clients.get(&c));
+            if client.is_some_and(|c| c.props.is_none()) {
+                continue;
+            }
+            let client = client.and_then(|c| c.props.as_ref()).map(|p| p.dict());
+            ready.push(registry::app_stream(*id, props.dict(), client));
+        }
+        for stream in ready {
+            if let Some(app) = conn.apps.get_mut(&stream.node) {
+                app.announced = true;
+            }
+            self.events.send(BackendEvent::AppStreamAdded(stream));
         }
     }
 
     /// A device appeared: connect again every stream of ours that waits for it.
     fn device_appeared(&mut self, name: &str) {
-        let tick = self.wanted_tick();
         let Some(conn) = &mut self.conn else {
             return;
         };
-        for (index, live) in conn.outputs.iter_mut().enumerate() {
-            if let Some(live) = live
-                && !live.alive()
-                && live.spec.target() == Some(name)
-            {
-                let trigger = triggered_by(tick, Role::ALL[index]);
-                reconnect(&self.config, live, trigger);
-            }
-        }
-        for channel in conn.channels.values_mut() {
-            if let Some(live) = &mut channel.live
-                && !live.alive()
-                && live.spec.target() == Some(name)
-            {
-                reconnect(&self.config, live, false);
+        let waiting = conn
+            .outputs
+            .iter_mut()
+            .flatten()
+            .chain(conn.channels.values_mut().filter_map(|c| c.live.as_mut()));
+        for live in waiting {
+            if !live.alive() && live.spec.target() == Some(name) {
+                reconnect(&self.config, live);
             }
         }
         self.elect();
     }
 
-    /// Routes `node` through the `default` metadata, or keeps it until the metadata is bound.
+    /// Routes `node` through the `default` metadata ([`Conn::try_route`]), or keeps the
+    /// routing until the metadata is bound and the sink announced. The newest one wins.
     fn route(&mut self, node: u32, to: Option<String>) {
         let Some(conn) = &mut self.conn else {
             return;
         };
-        let Some(routing) = &conn.routing else {
-            conn.pending_routes.retain(|(n, _)| *n != node);
-            if conn.pending_routes.len() >= MAX_PENDING_ROUTES {
-                conn.pending_routes.remove(0);
-            }
-            conn.pending_routes.push((node, to));
-            return;
-        };
-        // `target.node` is the older key other tools still write; ours replaces it.
-        routing
-            .metadata
-            .set_property(node, "target.node", None, None);
-        match &to {
-            Some(sink) => {
-                routing
-                    .metadata
-                    .set_property(node, "target.object", Some("Spa:String"), Some(sink))
-            }
-            None => routing
-                .metadata
-                .set_property(node, "target.object", None, None),
+        if let Some(app) = conn.apps.get_mut(&node) {
+            app.wish = Some(to.clone());
         }
+        conn.pending_routes.retain(|(n, _)| *n != node);
+        if conn.try_route(node, to.as_deref()) {
+            return;
+        }
+        if conn.pending_routes.len() >= MAX_PENDING_ROUTES {
+            conn.pending_routes.remove(0);
+        }
+        conn.pending_routes.push((node, to));
     }
 
-    /// The output whose `process` should run the tick: Monitor while it has a device and has
-    /// not been given up on, else Master out, else the Master source.
+    /// The output expected to run the tick: Monitor while it has a device and has not been
+    /// given up on, else Master out, else the Master source. (The data thread does not ask:
+    /// whichever output runs first in a cycle ticks. This is what the host is told.)
     fn wanted_tick(&self) -> Option<Role> {
         let conn = self.conn.as_ref()?;
         let usable = |role: Role| {
@@ -756,26 +941,12 @@ impl Control {
         Role::ALL.into_iter().find(|role| usable(*role))
     }
 
-    /// Hands the tick to the output [`wanted_tick`](Control::wanted_tick) names, reconnecting
-    /// the others with or without `TRIGGER` to match.
+    /// Tells the host when the output expected to tick changes.
     fn elect(&mut self) {
         let tick = self.wanted_tick();
-        let changed = tick != self.shared.elected();
+        let changed = tick != self.shared.expected();
         if changed {
-            self.shared.elect(tick);
-        }
-        if let Some(conn) = &mut self.conn {
-            for (index, live) in conn.outputs.iter_mut().enumerate() {
-                let trigger = triggered_by(tick, Role::ALL[index]);
-                if let Some(live) = live
-                    && live.alive()
-                    && live.triggered != trigger
-                {
-                    reconnect(&self.config, live, trigger);
-                }
-            }
-        }
-        if changed {
+            self.shared.expect(tick);
             let source = tick.map_or(crate::TickSource::Stopped, Role::tick_source);
             log::info!("vix-mix-pipewire: the tick is now {source:?}");
             self.events.send(BackendEvent::TickSource(source));
@@ -847,6 +1018,14 @@ impl Control {
             if current.as_ref() == spec.as_ref() && conn.channels.contains_key(id) {
                 continue;
             }
+            // The sink this channel had, by id and serial, to move its apps if it is renamed.
+            let old_sink = match &current {
+                Some(Spec::AppSink { node_name, .. }) => conn
+                    .nodes
+                    .get(node_name)
+                    .map(|named| (named.id.to_string(), named.serial.clone())),
+                _ => None,
+            };
             // The old stream goes first, so a new one may take its node name.
             conn.channels.remove(id);
             let mut stream = ChannelStream {
@@ -865,7 +1044,7 @@ impl Control {
                     shared: &self.shared,
                     notify: &notify,
                 };
-                match Live::create(&make, spec.clone(), Some(input), serial, false) {
+                match Live::create(&make, spec.clone(), Some(input), serial) {
                     Ok(live) => {
                         stream.live = Some(live);
                         stream.channel = Some(channel);
@@ -881,17 +1060,19 @@ impl Control {
             self.pending.taps[slot] = tap;
             self.pending.replace[slot] = true;
             self.pending.dirty = true;
-            // A renamed app sink keeps its apps: move what was routed to the old name.
-            if let (
-                Some(Spec::AppSink { node_name: old, .. }),
-                Some(Spec::AppSink { node_name: new, .. }),
-            ) = (&current, spec)
-                && old != new
+            // A renamed app sink keeps its apps: what the metadata sends to the old sink (our
+            // routing by serial, WirePlumber's restore by id) is sent to the new one, as soon
+            // as the registry announces it.
+            if let (Some((old_id, old_serial)), Some(Spec::AppSink { node_name: new, .. })) =
+                (old_sink, spec)
             {
                 let moved: Vec<u32> = conn
                     .targets
                     .iter()
-                    .filter(|(_, target)| *target == old)
+                    .filter(|(_, target)| {
+                        target.object.as_deref() == Some(old_serial.as_str())
+                            || target.node.as_deref() == Some(old_id.as_str())
+                    })
                     .map(|(subject, _)| *subject)
                     .collect();
                 for subject in moved {
@@ -906,7 +1087,7 @@ impl Control {
         self.pending.count = wanted.len();
         self.pending.dirty = true;
 
-        // The outputs, created with the trigger flags of the tick they will have.
+        // The outputs.
         let specs = [
             graph.monitor.as_ref().map(|d| Spec::Output {
                 role: Role::Monitor,
@@ -918,13 +1099,6 @@ impl Control {
             }),
             graph.master_source.then_some(Spec::MasterSource),
         ];
-        let tick = self.conn.as_ref().and_then(|conn| {
-            Role::ALL.into_iter().find(|role| {
-                specs[*role as usize]
-                    .as_ref()
-                    .is_some_and(|spec| spec.target().is_none_or(|t| conn.device_present(t)))
-            })
-        });
         for (index, spec) in specs.into_iter().enumerate() {
             let Some(conn) = &mut self.conn else {
                 return;
@@ -944,8 +1118,7 @@ impl Control {
                 shared: &self.shared,
                 notify: &notify,
             };
-            let trigger = triggered_by(tick, Role::ALL[index]);
-            match Live::create(&make, spec.clone(), None, serial, trigger) {
+            match Live::create(&make, spec.clone(), None, serial) {
                 Ok(live) => conn.outputs[index] = Some(live),
                 Err(error) => log::warn!(
                     "vix-mix-pipewire: could not create {}: {error}",
@@ -1029,7 +1202,6 @@ impl Control {
 
     /// Connects again the streams the session manager gave up on whose device is present.
     fn retry_streams(&mut self) {
-        let tick = self.wanted_tick();
         let Some(conn) = &mut self.conn else {
             return;
         };
@@ -1043,20 +1215,15 @@ impl Control {
                     .is_some_and(|t| conn_devices.values().any(|d| d.device.name == t))
         };
         let mut retried = false;
-        let devices = conn.devices.clone();
-        for (index, live) in conn.outputs.iter_mut().enumerate() {
-            if let Some(live) = live
-                && due(live, &devices)
-            {
-                reconnect(&self.config, live, triggered_by(tick, Role::ALL[index]));
-                retried = true;
-            }
-        }
-        for channel in conn.channels.values_mut() {
-            if let Some(live) = &mut channel.live
-                && due(live, &devices)
-            {
-                reconnect(&self.config, live, false);
+        let devices = &conn.devices;
+        let streams = conn
+            .outputs
+            .iter_mut()
+            .flatten()
+            .chain(conn.channels.values_mut().filter_map(|c| c.live.as_mut()));
+        for live in streams {
+            if due(live, devices) {
+                reconnect(&self.config, live);
                 retried = true;
             }
         }
@@ -1093,9 +1260,9 @@ impl Control {
 }
 
 /// Connects `live` again, logging a refusal (the next retry tries again).
-fn reconnect(config: &BackendConfig, live: &mut Live, trigger: bool) {
+fn reconnect(config: &BackendConfig, live: &mut Live) {
     live.retry_at = Some(Instant::now() + STREAM_RETRY);
-    if let Err(error) = live.reconnect(trigger) {
+    if let Err(error) = live.reconnect() {
         log::warn!(
             "vix-mix-pipewire: could not connect {} again: {error}",
             live.spec.node_name(config)
