@@ -32,6 +32,15 @@ handoff, and CI on two legs with a headless PipeWire on Linux. Nothing makes sou
 that ships appends a dated paragraph here in the shape *"X is implemented (date): what it owns,
 what it does not, see `docs/reference/x.md` and the handoff."*
 
+**The model is implemented (2026-11-04):** `vixmix-model` owns the setup as data and its rules:
+every command validated and applied whole or refused, its `Applied` exact part by part (proven
+against the diff by a property test), channel and instance ids from counters so a removed id
+never comes back, the prototype's taper, the engine snapshot, and `setup.ron` at format 2 (LF,
+plugin state as base64) with the migration from format 1 and the rules checked at load. It does
+not decide when to save, prepare, route or retire (the host), nor hold anything live. See
+[docs/reference/model.md](docs/reference/model.md) and
+[handoff 01](docs/handoffs/01-model.md).
+
 ## Git workflow (read first)
 
 **Work on a branch, never on `master`/`main`.** Every change is a PR: `kit push --yes` runs

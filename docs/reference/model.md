@@ -1,11 +1,12 @@
 # Model (`vixmix-model`)
 **Owns:** `crates/vixmix-model/`
 
-**Reference — the contract as lane 00 wrote it; [handoff 01](../handoffs/01-model.md)
-completes it.** `vixmix-model` is the whole setup as pure data: up to eight channels with
-their sources, chains and sends; the Monitor and Master mixes; the commands that change it,
-validated and applied whole or not at all, each saying what it changed; the fader taper; RON
-persistence of `setup.ron` over the kit's `chimaeraproject-fs`; and the flat
+**Reference — the contract as [handoff 01](../handoffs/01-model.md) built it.**
+`vixmix-model` is the whole setup as pure data: up to eight channels with their sources,
+chains and sends; the Monitor and Master mixes; the commands that change it, validated and
+applied whole or not at all, each saying exactly what it changed; the fader taper; RON
+persistence of `setup.ron` over the kit's `chimaeraproject-fs`, with a format version, a
+migration from every older format and the rules checked at load; and the flat
 `EngineSnapshot` the engine prepares from. It holds **no thread, device handle, plugin
 instance or window type**, and depends on no other workspace crate: everything else reads it,
 and it reads nothing of theirs.
@@ -14,71 +15,113 @@ and it reads nothing of theirs.
 
 | The model | The others |
 |---|---|
-| the setup's types and their invariants (≤ 8 channels, an app in one channel only, Monitor always has a device, a plugin stored by id and bundle name) | the engine: what a snapshot sounds like; the backend: which nodes exist; the plugins crate: the live instances an `InstanceId` names |
-| `apply`: validation, the change, and `Applied` (what to do next) | the host: doing it — prepare, apply the graph, route, create or retire instances, save |
+| the setup's types and their invariants (≤ 8 channels, ids unique and never handed out twice, an app in one channel only, Monitor keeps a device once it has one, a plugin stored by id and bundle name) | the engine: what a snapshot sounds like; the backend: which nodes exist; the plugins crate: the live instances an `InstanceId` names |
+| `apply`: validation, the change, and `Applied` (exactly what changed) | the host: acting on it — prepare, apply the graph, route, create or retire instances, save |
 | the taper: position ↔ dB, the readout text | the window: drawing a fader and its meter at a position |
-| `setup.ron`: where, the format, the version | the host: when to save (debounced) and what to do with an unreadable file |
+| `setup.ron`: where, the format, the version, the migrations, the rules a file must keep | the host: when to save (debounced), creating the directory, and moving aside a file that did not load |
 
 ## The setup
 
-`Setup { channels, monitor, master, preview_master, prefs, version }`. A `Channel` is
-`{ id, name, source, chain, chain_to_monitor, chain_to_master, monitor, master, link }`;
-`Source` is `Hardware(Option<DeviceRef>)` or `Apps(Vec<AppRef>)`; `Send { position, mute }`
-is a fader (a position in 0..=1, the taper's domain) and its mute, used for each channel's two
-sends and for each mix's level; `Mix { id, device, level, chain }`; `Insert { instance,
-plugin, enabled, state }` with `state` the plugin's `PluginState::encode` bytes, captured
-before a save. `PluginRef { id, bundle, name }` stores `vst3:<32 hex>` and the bundle's file
-name, never a path. `AppRef { app_id, binary, name }` stores PipeWire's
-`pipewire.access.portal.app_id`, `application.process.binary` and `application.name`, and
-`AppRef::matches` compares app id when both have one, else binary, else name.
-`DeviceRef { name, description }` is `node.name` and `node.description`; `DeviceInfo` is a
-present device with its direction, here because both the Linux-only backend and the host name
-it. `Prefs { quantum, plugin_dirs }`: 128, 256 or 512 frames asked through `node.latency`, and
-extra VST3 directories. `Setup::default()` is the first start: one hardware channel named Mic,
-no device yet, everything at unity.
+`Setup { version, next_channel, next_instance, channels, monitor, master, preview_master,
+prefs }`. A `Channel` is `{ id, name, source, chain, chain_to_monitor, chain_to_master,
+monitor, master, link }`; `Source` is `Hardware(Option<DeviceRef>)` or `Apps(Vec<AppRef>)`;
+`Send { position, mute }` is a fader (a position in 0..=1, the taper's domain) and its mute,
+used for each channel's two sends and for each mix's level; `Mix { id, device, level, chain }`;
+`Insert { instance, plugin, enabled, state }` with `state` the plugin's `PluginState::encode`
+bytes, captured before a save. `PluginRef { id, bundle, name }` stores `vst3:<32 hex>` (either
+case) and the bundle's file name, never a path. `AppRef { app_id, binary, name }` stores
+PipeWire's `pipewire.access.portal.app_id`, `application.process.binary` and
+`application.name`, and `AppRef::matches` compares app id when both have one, else binary,
+else name. `DeviceRef { name, description }` is `node.name` and `node.description`;
+`DeviceInfo` is a present device with its direction, here because both the Linux-only backend
+and the host name it. `Prefs { quantum, plugin_dirs }`: 128, 256 or 512 frames asked through
+`node.latency`, and extra VST3 directories. `Setup::default()` is the first start: one hardware
+channel named Mic with no device yet, everything at unity, no plugins.
 
 `ChannelId(u32)` and `InstanceId(u32)` are `Copy` with public fields; `MixId` is `Monitor` or
 `Master`. **`Send` shadows the standard `Send` marker trait** where it is imported by name:
 write `vixmix_model::Send` (or import it under another name) in any module with thread bounds.
 
+### Ids
+
+A new channel takes `next_channel` and a new insert's instance (added, or copied) takes
+`next_instance`; each counter then moves on by one and never moves back. So **a removed id is
+never handed out again**, in this run or the next: the host keeps a removed channel or insert,
+and its live instance, while the undo toast shows, and a new one must not take its id (the
+engine's `Lender` would lend the old processor under the new plugin's name). `u32::MAX` is
+never handed out; a counter that reached it refuses with `OutOfIds`. A file whose counters sit
+at or below an id it uses (a hand edit, or format 1, which had none) has them raised on load.
+
 ## Commands
 
 `apply(&mut Setup, Command) -> Result<Applied, Refused>` applies a command whole or refuses
-it and leaves the setup as it was. The variants: `AddChannel { kind }`, `RemoveChannel(id)`,
-`Rename { ch, name }`, `SetSource { ch, source }`, `SetSend { ch, mix, position }`,
-`SetMute { ch, mix, mute }`, `SetLink { ch, link }`, `SetChainRouting { ch, mix, on }`,
-`AddInsert { strip, plugin, at }`, `RemoveInsert { instance }`,
-`MoveInsert { from, to, copy }` (two `SlotRef { strip, index }`), `SetInsertEnabled`,
-`SetInsertState`, `SetMixDevice { mix, device }`, `SetMixLevel { mix, position }`,
-`SetMixMute { mix, mute }`, `SetPreview(bool)`, `SetPrefs(Prefs)`. `Strip` is
-`Channel(ChannelId)` or `Mix(MixId)`.
+it and leaves the setup exactly as it was (not even an id is spent). The variants:
+`AddChannel { kind }`, `RemoveChannel(id)`, `Rename { ch, name }`, `SetSource { ch, source }`,
+`SetSend { ch, mix, position }`, `SetMute { ch, mix, mute }`, `SetLink { ch, link }`,
+`SetChainRouting { ch, mix, on }`, `AddInsert { strip, plugin, at }`,
+`RemoveInsert { instance }`, `MoveInsert { from, to, copy }` (two `SlotRef { strip, index }`),
+`SetInsertEnabled`, `SetInsertState`, `SetMixDevice { mix, device }`,
+`SetMixLevel { mix, position }`, `SetMixMute { mix, mute }`, `SetPreview(bool)`,
+`SetPrefs(Prefs)`. `Strip` is `Channel(ChannelId)` or `Mix(MixId)`.
 
-`Applied { save, engine, graph, routing, created, removed, channel }` says what changed:
-`engine` — derive the snapshot and prepare; `graph` — the backend's nodes or devices;
-`routing` — app assignments; `created` / `removed` — instances to make or retire; `channel` —
-what `AddChannel` made. All false and empty is no change (a drop on its own place); `changed()`
-says whether to save.
+What each does, as the prototype does it:
 
-What lane 00's `apply` already does, as the prototype does it:
-
-- **Limits and ids.** A ninth channel is refused (`TooManyChannels`, "remove a channel before
-  adding another"); an unknown channel, instance or slot is refused with what to read again.
-  A new channel or instance takes one more than the largest id in use (handoff 01 decides
-  whether a removed id may come back, since the host keeps a removed instance alive while its
-  undo toast shows).
+- **Limits and ids.** A ninth channel is refused (`TooManyChannels`: "vix-mix mixes at most 8
+  channels … remove a channel before adding another"); an unknown channel, instance or slot is
+  refused with what to read again. A new channel is named Input (hardware) or Apps, at the
+  right end, sends at unity, linked, MON and MST on.
+- **Names.** `Rename` trims; a name that is empty once trimmed is refused (`EmptyName`).
 - **An app in one channel only.** `SetSource` with apps removes each ticked app from every
-  other channel and de-duplicates the list (the prototype's checklist).
-- **Linked faders.** `SetSend` on a linked channel moves the other send by the same position
-  delta, clamped to 0..=1. A position outside 0..=1 (or NaN) is refused.
+  other channel (by `AppRef::matches`) and lists each app once (the prototype's checklist).
+- **Faders.** A position outside 0..=1, or NaN, is refused (`NotAPosition`); −0 is stored as 0.
+  `SetSend` on a linked channel moves the other send by the same position delta, clamped to
+  0..=1 (the prototype's `setFader`).
 - **Moves.** `MoveInsert` within a strip is a no-op when dropped on its own place or the gap
-  below it, and otherwise removes then inserts with the index adjusted, as the prototype's
-  drop does; across strips the same instance moves; with `copy` a new instance is made with the
-  same plugin, enabled flag and state.
-- **Devices and plugins.** `SetMixDevice { Monitor, None }` is refused; an `AddInsert` whose id
-  is not `vst3:` and 32 hex digits, or whose bundle is a path, is refused; a quantum other
-  than 128, 256 or 512 is refused.
+  below it, and otherwise removes, then inserts at the index adjusted for the removal; across
+  strips the same instance moves (nothing is created or retired); with `copy` a new instance
+  is made with the same plugin, enabled flag and state, and the original stays.
+- **Devices, plugins, preferences.** `SetMixDevice { Monitor, None }` is refused
+  (`MonitorNeedsDevice`); an `AddInsert` whose id is not `vst3:` and 32 hex digits
+  (`NotAPluginId`), or whose bundle is a path (`BundleIsAPath`), is refused; a quantum other
+  than 128, 256 or 512 is refused (`NotAQuantum`).
 
 Every `Refused` message ends with what to do instead.
+
+### What `Applied` says
+
+`Applied { save, engine, graph, routing, created, removed, channel }`, **each part set exactly
+when its part of the setup changed**:
+
+| Part | Set when | The host then |
+|---|---|---|
+| `save` | the setup differs at all (`changed()` reads it) | saves, debounced |
+| `engine` | `snapshot()` differs: a gain (not merely a position: a fader moved within silence changes no gain), a mute, MON/MST, a chain's instances, plugins or bypass, the ear button, a channel added or removed | derives the snapshot and prepares |
+| `graph` | the channels in order with their names and inputs (an app sink, or a capture on its device), a mix's device, or the quantum | applies the backend's graph |
+| `routing` | which app goes to which channel (the set of channel and app pairs) | routes the apps again |
+| `created` | instances whose inserts entered the setup, in chain order | creates them (with the state, for a copy) |
+| `removed` | instances whose inserts left the setup, in chain order | retires them, or keeps them while an undo toast shows |
+| `channel` | the channel `AddChannel` made | |
+
+A command that changes nothing — a drop on its own place, a mute set to what it was, the same
+name, the same state — answers `Applied::default()`. By command:
+
+| Command | `save` | `engine` | `graph` | `routing` | Lists |
+|---|---|---|---|---|---|
+| `AddChannel` | yes | yes | yes | no | `channel` |
+| `RemoveChannel` | yes | yes | yes | when it had apps | `removed`: its chain |
+| `Rename` | when the trimmed name differs | no | when it differs | no | |
+| `SetSource` | when a list or the source differs | no | when the input differs: the kind, or the device | when an app joined or left a channel | |
+| `SetSend`, `SetMixLevel` | when a position moved | when a gain moved | no | no | |
+| `SetMute`, `SetMixMute`, `SetChainRouting`, `SetInsertEnabled`, `SetPreview` | when it differs | when it differs | no | no | |
+| `SetLink`, `SetInsertState` | when it differs | no | no | no | |
+| `AddInsert` | yes | yes | no | no | `created` |
+| `RemoveInsert` | yes | yes | no | no | `removed` |
+| `MoveInsert` | unless a move (not a copy) is dropped in place | the same | no | no | `created` for a copy |
+| `SetMixDevice` | when it differs | no | when it differs | no | |
+| `SetPrefs` | when it differs | no | when the quantum differs | no | |
+
+A rename changes only `graph`, but the backend names a channel's sink after it, so applying
+the graph may move routed apps to the renamed node: that is the host's to do (handoff 06).
 
 ## The taper
 
@@ -106,13 +149,37 @@ prototype.
 `persist::profile(debug_build)` is `user_config_base("vix-mix")` resolved with the kit's
 `resolve_from_env` (a debug build in `profiles/dev`, `CHIMAERA_CONFIG_DIR` and
 `CHIMAERA_PROFILE` honoured); pass `cfg!(debug_assertions)` from the binary.
-`persist::load(dir) -> Loaded<Setup>` reads `dir/setup.ron` through `load_or_default`: no file
-is the default with no problem; an unreadable or unparseable file is the default with the
-reason. `persist::save(dir, &Setup)` writes it with `atomic_write`; `dir` must exist. The text
-is pretty RON without struct names, so `parse` reads `version` first: the current `VERSION` is
-read, a higher one is refused as written by a newer Vix Mix (`PersistError::Newer`), and a lower
-one goes through the migration seam (none exists yet). Never save over a file that did not
-load: the host moves it aside first.
+`persist::save(dir, &Setup)` writes `dir/setup.ron` with `atomic_write`; `dir` must exist.
+`persist::load(dir) -> Loaded<Setup>` reads it through `load_or_default` and `persist::parse`:
+no file is the default with no problem; a file that cannot be read or used is the default with
+the reason (`FsError::Parse` around a `PersistError`, ending "fix it by hand, or delete it to
+start from the default"). Never save over a file that did not load: the host moves it aside
+first.
+
+**The text** (`persist::to_ron`) is pretty RON without struct names, `version` the first field,
+LF line ends on every platform (RON's default is CRLF on Windows, which would make the same
+setup two different files), a plugin's state as one standard padded base64 string
+(`state: Some("AAECf4D+/w==")`, as Vix stores one, rather than a number per line), and the
+plugin directories as text, lossily (serde refuses a path that is not UTF-8, which would leave
+nothing to write). Serializing cannot fail.
+
+**Reading** (`persist::parse`) is three steps:
+
+1. The bytes must be UTF-8 (`NotText`), and `version` is read alone (`Ron` when it is not RON
+   or has none).
+2. The current `VERSION` (format 2) is read with the current types. A higher one is refused as
+   written by a newer vix-mix (`Newer`), never guessed at. A lower one goes through **the
+   migration seam**: each older format is read with its own types and converted forward one
+   step at a time (`migrate.rs`). Format 1, the bootstrap's, had no id counters, kept
+   `version` last and wrote the state as numbers; it converts to format 2 whole. A version no
+   vix-mix wrote (0) is `Unknown`. The next format change bumps `VERSION`, copies the changed
+   types' old shapes into `migrate.rs` and adds the step, with a fixture of the old file.
+3. The id counters are raised above every id in use, then the setup must keep every rule
+   `apply` keeps (`persist::Invalid`, inside `PersistError::Invalid`): at most 8 channels,
+   unique channel ids and instance ids, every channel named, an app in one channel only,
+   every fader in 0..=1, every plugin stored by id and bundle name, `monitor` and `master`
+   in their places, a quantum the preferences offer. Each message names the rule and the edit
+   that fixes the file.
 
 ## The engine snapshot
 
@@ -121,23 +188,49 @@ channel `ChannelSnap { id, monitor, master, chain_to_monitor, chain_to_master, c
 mix `MixSnap { id, level, chain }`, each send a `SendSnap { gain, mute }` with the gain linear
 (exactly 1.0 at unity, 0.0 silent) and each insert an `InsertSnap { instance, plugin_id,
 enabled }`. It is flat, not `Copy` (plugin ids are strings), and the channel order is the
-backend's input order.
+console's, which is the backend's input order.
 
 ## The example
 
 `example` holds prototype v5's example data: the `APPS`, `INPUTS`, `OUTPUTS`, `CATEGORIES`,
 `PLUGINS`, `FAVORITES`, `RECENT` and `STYLES` tables and `example::setup()`, the six-channel
 console (Mic, Game, Music, Browser, Voice chat, Synth) with its levels, mutes, link flags,
-MON/MST and inserts. `FakeHost` serves it; nothing in a real run reads it.
+MON/MST and inserts, `next_channel` 7 (the prototype's `uid`) and `next_instance` one past its
+nine inserts. `FakeHost` serves it; nothing in a real run reads it.
 
 ## Verification
 
-`cargo test -p vixmix-model`: the taper at every table point exactly, the ramp, the clamps, the
-readout strings, and two property tests (a position survives a round trip through decibels;
-louder never reads quieter); a ninth channel refused with the limit and nothing changed; an
-app ticked in channel B leaves channel A; unknown ids refused; linked faders; inserts moved
-within and between strips and copied with their state; plugin references refused by id or
-path; Monitor keeps a device; the example is the prototype's console; the snapshot at unity is
-exactly 1.0 and the example derives in order; `setup.ron` round-trips byte for byte, a missing
-file is the first start, a bad one says why, a newer format is refused, and the directory
-follows the profile rule. `kit-check-docs` holds this page's `Owns:` line against the crate.
+`cargo test -p vixmix-model`:
+
+- **`tests/applied.rs`** — `every_applied_matches_the_diff_it_made`: a property over 512
+  sequences of up to 47 commands each, from the first start or the example, drawn against the
+  setup reached so far (unknown ids, bad slots, bad positions, bad plugins and apps that match
+  each other in each of the three ways included). A refused command changes nothing and says a
+  fix; an applied one answers exactly the `Applied` the diff calls for, part by part, with the
+  parts written in the test from the outside (the whole setup, the snapshot, the graph's
+  inputs, the app and channel pairs, the instances, the new channel); and the setup reached
+  round-trips through `to_ron` and `parse`, so every setup commands make keeps the load rules.
+  `the_sequences_change_the_setup_through_every_command` holds the generator to landing every
+  kind of command, and an exhaustive `match` there fails to compile when a `Command` variant is
+  added without a seed.
+- **`command`** — a ninth channel refused with the limit and nothing changed; an app ticked in
+  channel B leaves channel A, listed once, and reordering routes nothing; unknown ids and slots
+  refused without spending an id; a removed id never comes back; a spent id space refused; a
+  command that changes nothing says so, for every kind that can; a fader moved within silence
+  saved but not prepared; linked faders clamped at both ends; inserts moved within and between
+  strips and copied with their state and bypass; a removed channel's instances retired and its
+  apps routed; plugins refused by id or path; Monitor keeps a device; the quantum.
+- **`taper`** — every table point exact both ways, silence at or below 0.002, the ramp, the
+  prototype's values between points, the clamps, the readout strings, and two properties (a
+  position survives a round trip through decibels; louder never reads quieter).
+- **`persist`** — a byte-for-byte round trip through the file; version first, LF, the state as
+  base64; `tests/fixtures/setup-v1.ron` (the bootstrap's own output) converted forward with its
+  counters and state; a missing file is the first start, a bad one and one that is not text say
+  why; a newer format refused and format 0 unknown; a file that breaks a rule refused with its
+  fix; counters raised, never lowered; the profile rule.
+- **`check`**, **`base64`**, **`snapshot`**, **`example`**, **`setup`** — each rule a hand edit
+  can break, named with its fix; RFC 4648's vectors, refusals and a round-trip property; unity
+  exactly 1.0, the example in order with every part the engine runs; the example is the
+  prototype's console; app matching.
+
+`kit-check-docs` holds this page's `Owns:` line against the crate.

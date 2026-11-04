@@ -1,6 +1,38 @@
 # 01 — Model
 
-**Record — not yet built.**
+**Record — shipped 2026-11-04.** `vixmix-model` complete: every command validated and applied
+whole or refused, its `Applied` exact part by part and proven against the diff by a property
+test, ids from counters so a removed id never comes back, the prototype's taper, the engine
+snapshot, `setup.ron` at format 2 with the migration from format 1 and the rules checked at
+load; [reference/model.md](../reference/model.md) and [kit-fs.md](../kit-fs.md) complete,
+`dev check` green on Windows. Deviations from the steps below, all deliberate:
+
+- **Step 1** took the counters the step suggests, `Setup::next_channel` and
+  `Setup::next_instance`, and moved `version` to the first field so it is the file's first
+  line. `u32::MAX` is never handed out: a spent counter refuses with a new `Refused::OutOfIds`.
+- **Step 2** made `Applied` exact for no-ops too: lane 00 reported a mute, a link, a state, a
+  device or the preferences as changed whatever they had been, so the host would have saved and
+  prepared for nothing. `routing` is the set of app and channel pairs (a reordered checklist
+  saves without routing anew), and −0 is stored as 0 so `save` never reports a change the file
+  cannot show. A refusal never spends an id.
+- **Step 7** moved the format to 2 (the counters, `version` first, a plugin's state as one
+  base64 string as Vix stores it, where format 1 wrote a number per line), so the migration
+  seam has a real step, pinned by `tests/fixtures/setup-v1.ron`, the bootstrap's own output.
+  Three fixes to lane 00's persistence: LF line ends on every platform (RON writes CRLF on
+  Windows, so one setup was two files); a strict UTF-8 read (a lossy one could change a name
+  silently); plugin directories written lossily, because serde refuses a path that is not
+  UTF-8 and `to_ron`'s fallback would have saved an empty file. **Added the rules checked at
+  load** (`persist::Invalid`), because a hand edit could hand the engine a ninth channel or two
+  inserts on one instance; counters a hand edit left behind are raised rather than refused.
+- **The acceptance property** is `crates/vixmix-model/tests/applied.rs`, over the public API
+  only, so each part of `Applied` is defined there independently of `apply`. Five mutations of
+  `apply` were tried against it: four fail it, and the fifth (`routing` ignoring the other
+  channels) is equivalent under the one-channel rule.
+- **Not built: undo.** Putting a removed channel or insert back with its ids, as the undo
+  toast needs, takes a command the contract does not have; it is proposed as change request 2
+  in the [build map](../build-map.md), not implemented. The contract additions this lane did
+  make are recorded there as change request 3.
+
 **Needs:** 00. **Runs alongside:** 02, 03, 04, 05. **Size:** M.
 
 ## Goal
