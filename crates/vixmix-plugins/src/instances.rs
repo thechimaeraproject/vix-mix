@@ -37,8 +37,9 @@ pub enum InstanceEvent {
     },
     /// The plugin's state differs from what was saved: the setup should save.
     Dirty(InstanceId),
-    /// The plugin changed its buses (`kIoChanged`): the rack's generation has moved, so the
-    /// engine prepares again and the chain sets the instance up anew.
+    /// The plugin changed its buses (`kIoChanged`): the rack's generation has moved, and the
+    /// host calls `Engine::set_up_again(instance)` so the engine sets it up anew once no
+    /// running graph holds it (change request 5).
     IoChanged(InstanceId),
 }
 
