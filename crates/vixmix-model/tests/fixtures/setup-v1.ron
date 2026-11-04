@@ -1,0 +1,302 @@
+(
+    channels: [
+        (
+            id: (1),
+            name: "Mic",
+            source: Hardware(Some((
+                name: "alsa_input.wave_3",
+                description: "Wave:3",
+            ))),
+            chain: [
+                (
+                    instance: (1),
+                    plugin: (
+                        id: "vst3:41BE96789BC1C62D0EC7C5CA85056267",
+                        bundle: "Noise Suppression for Voice.vst3",
+                        name: "Noise Suppression for Voice",
+                    ),
+                    enabled: true,
+                    state: Some([
+                        0,
+                        1,
+                        2,
+                        127,
+                        128,
+                        254,
+                        255,
+                    ]),
+                ),
+                (
+                    instance: (2),
+                    plugin: (
+                        id: "vst3:E7A7B39D4FC616189EFBDD6B3191BB8E",
+                        bundle: "Pro-C 2.vst3",
+                        name: "Pro-C 2",
+                    ),
+                    enabled: true,
+                    state: None,
+                ),
+                (
+                    instance: (3),
+                    plugin: (
+                        id: "vst3:FD8B2AA8B9E3688DF91863BACEAACF97",
+                        bundle: "Pro-L 2.vst3",
+                        name: "Pro-L 2",
+                    ),
+                    enabled: true,
+                    state: None,
+                ),
+            ],
+            chain_to_monitor: true,
+            chain_to_master: true,
+            monitor: (
+                position: 0.76,
+                mute: false,
+            ),
+            master: (
+                position: 0.84,
+                mute: false,
+            ),
+            link: false,
+        ),
+        (
+            id: (2),
+            name: "Game",
+            source: Apps([
+                (
+                    app_id: None,
+                    binary: Some("hades"),
+                    name: "Hades II",
+                ),
+                (
+                    app_id: None,
+                    binary: Some("steam"),
+                    name: "Steam",
+                ),
+            ]),
+            chain: [],
+            chain_to_monitor: true,
+            chain_to_master: true,
+            monitor: (
+                position: 0.74,
+                mute: false,
+            ),
+            master: (
+                position: 0.64,
+                mute: false,
+            ),
+            link: true,
+        ),
+        (
+            id: (3),
+            name: "Music",
+            source: Apps([
+                (
+                    app_id: None,
+                    binary: Some("spotify"),
+                    name: "Spotify",
+                ),
+                (
+                    app_id: None,
+                    binary: Some("feishin"),
+                    name: "Feishin",
+                ),
+                (
+                    app_id: None,
+                    binary: Some("mpv"),
+                    name: "mpv",
+                ),
+                (
+                    app_id: None,
+                    binary: Some("vlc"),
+                    name: "VLC media player",
+                ),
+            ]),
+            chain: [
+                (
+                    instance: (4),
+                    plugin: (
+                        id: "vst3:6DAF7D51523993D0D16ECABBF3F0256A",
+                        bundle: "OTT.vst3",
+                        name: "OTT",
+                    ),
+                    enabled: false,
+                    state: None,
+                ),
+            ],
+            chain_to_monitor: true,
+            chain_to_master: true,
+            monitor: (
+                position: 0.68,
+                mute: false,
+            ),
+            master: (
+                position: 0.58,
+                mute: true,
+            ),
+            link: false,
+        ),
+        (
+            id: (4),
+            name: "Browser",
+            source: Apps([
+                (
+                    app_id: None,
+                    binary: Some("firefox"),
+                    name: "Firefox",
+                ),
+                (
+                    app_id: None,
+                    binary: Some("chromium"),
+                    name: "Chromium",
+                ),
+            ]),
+            chain: [],
+            chain_to_monitor: true,
+            chain_to_master: true,
+            monitor: (
+                position: 0.72,
+                mute: false,
+            ),
+            master: (
+                position: 0.6,
+                mute: false,
+            ),
+            link: true,
+        ),
+        (
+            id: (5),
+            name: "Voice chat",
+            source: Apps([
+                (
+                    app_id: None,
+                    binary: Some("discord"),
+                    name: "Discord",
+                ),
+                (
+                    app_id: None,
+                    binary: Some("vesktop"),
+                    name: "Vesktop",
+                ),
+            ]),
+            chain: [
+                (
+                    instance: (5),
+                    plugin: (
+                        id: "vst3:DE0956C0961CA187CAE9F30A93770CF9",
+                        bundle: "TDR Nova.vst3",
+                        name: "TDR Nova",
+                    ),
+                    enabled: true,
+                    state: None,
+                ),
+            ],
+            chain_to_monitor: false,
+            chain_to_master: true,
+            monitor: (
+                position: 0.78,
+                mute: false,
+            ),
+            master: (
+                position: 0.62,
+                mute: false,
+            ),
+            link: false,
+        ),
+        (
+            id: (6),
+            name: "Synth",
+            source: Hardware(Some((
+                name: "alsa_input.scarlett_2i2___in_2",
+                description: "Scarlett 2i2 · In 2",
+            ))),
+            chain: [
+                (
+                    instance: (6),
+                    plugin: (
+                        id: "vst3:072BA9AC847DD2DBF8A4808E837E3CFD",
+                        bundle: "ValhallaSupermassive.vst3",
+                        name: "ValhallaSupermassive",
+                    ),
+                    enabled: true,
+                    state: None,
+                ),
+            ],
+            chain_to_monitor: true,
+            chain_to_master: true,
+            monitor: (
+                position: 0.64,
+                mute: false,
+            ),
+            master: (
+                position: 0.64,
+                mute: false,
+            ),
+            link: true,
+        ),
+    ],
+    monitor: (
+        id: Monitor,
+        device: Some((
+            name: "alsa_output.scarlett_2i2___phones",
+            description: "Scarlett 2i2 · Phones",
+        )),
+        level: (
+            position: 0.84,
+            mute: false,
+        ),
+        chain: [
+            (
+                instance: (7),
+                plugin: (
+                    id: "vst3:7209DDA44602865191FB15FEDB68879B",
+                    bundle: "Pro-Q 3.vst3",
+                    name: "Pro-Q 3",
+                ),
+                enabled: true,
+                state: None,
+            ),
+        ],
+    ),
+    master: (
+        id: Master,
+        device: Some((
+            name: "alsa_output.scarlett_2i2___out_1_2",
+            description: "Scarlett 2i2 · Out 1–2",
+        )),
+        level: (
+            position: 0.84,
+            mute: false,
+        ),
+        chain: [
+            (
+                instance: (8),
+                plugin: (
+                    id: "vst3:7209DDA44602865191FB15FEDB68879B",
+                    bundle: "Pro-Q 3.vst3",
+                    name: "Pro-Q 3",
+                ),
+                enabled: true,
+                state: None,
+            ),
+            (
+                instance: (9),
+                plugin: (
+                    id: "vst3:FD8B2AA8B9E3688DF91863BACEAACF97",
+                    bundle: "Pro-L 2.vst3",
+                    name: "Pro-L 2",
+                ),
+                enabled: true,
+                state: None,
+            ),
+        ],
+    ),
+    preview_master: false,
+    prefs: (
+        quantum: 128,
+        plugin_dirs: [
+            "/opt/vst3",
+        ],
+    ),
+    version: 1,
+)
