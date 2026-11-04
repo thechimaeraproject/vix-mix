@@ -1,0 +1,96 @@
+# The push gate, `dev check` (cargo fmt --check, clippy, test, kit-check-docs), on every pull
+# request, on Linux and Windows, on the toolchain rust-toolchain.toml pins. The check-run names
+# are exactly `check (linux)` and `check (windows)`: kit.repo.json's ci.required lists them and
+# the ruleset requires them (docs/kit-cli.md).
+#
+# Pull requests and dispatch only, never on push: `kit push` has run the same gate locally
+# before anything reaches origin, and GitHub counts only a pull_request run toward a PR's
+# required checks.
+#
+# The Linux leg also builds vixmix-pipewire against libpipewire (bindgen needs libclang) and
+# starts a headless PipeWire and WirePlumber with a null sink and a null source before the gates
+# (scripts/ci/headless-pipewire.sh), proving the daemon answers: handoff 03's integration tests
+# run against it. It runs on ubuntu-latest rather than the organisation's self-hosted runner
+# because it installs packages and runs a daemon of its own. The Windows leg needs neither:
+# vixmix-pipewire compiles to nothing there and nothing else wants libclang.
+name: ci
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: check (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux, os: ubuntu-latest }
+          - { name: windows, os: windows-latest }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      # No version here: the action reads rust-toolchain.toml, which is the one pin.
+      - name: Install the pinned toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: rustfmt, clippy
+          cache: false
+
+      # Says in the log which toolchain the gates ran on, and installs it from
+      # rust-toolchain.toml if the step above somehow did not.
+      - name: Show the toolchain
+        run: rustup show
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      # The kit's tooling (dev, kit-check-docs) from npm.rhyes.org through .npmrc.
+      - name: Install the kit's tooling
+        run: npm ci
+
+      - name: Install PipeWire and libclang
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpipewire-0.3-dev pipewire wireplumber pipewire-audio-client-libraries libclang-dev dbus
+
+      # Leaves pipewire and wireplumber running for the rest of the job, and puts
+      # XDG_RUNTIME_DIR (and the session bus it started) in GITHUB_ENV for the steps after it.
+      - name: Start a headless PipeWire with null devices, and prove it answers
+        if: runner.os == 'Linux'
+        run: bash scripts/ci/headless-pipewire.sh
+
+      - name: Cache cargo and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      # The kit's crates come from its repository, which is private: the GIT_CONFIG_* rewrite
+      # hands KIT_TOKEN to git for this step alone and is never written to a git config file or
+      # echoed, and CARGO_NET_GIT_FETCH_WITH_CLI makes Cargo fetch through git, since its
+      # built-in libgit2 fetch ignores `insteadOf` and reads a private repository as
+      # `Repository not found`. The kit's handbook/reference/versioning.md § The kit credential
+      # has the rule.
+      - name: Run every gate (dev check)
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.KIT_TOKEN }}@github.com/thechimaeraproject/.insteadOf
+          GIT_CONFIG_VALUE_0: https://github.com/thechimaeraproject/
+        run: node scripts/dev.mjs check

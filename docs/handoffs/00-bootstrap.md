@@ -29,7 +29,15 @@ Deviations from the steps below, all deliberate:
 - **The window** shows the header, the banner and a one-line channel count rather than an
   empty frame, and takes `--fake` (FakeHost) beside `--quit-after-frames`.
 - **CI's Linux leg runs on `ubuntu-latest`**, not the organisation's self-hosted runner the
-  kit's adoption cookbook names: it installs packages and starts its own PipeWire daemon.
+  kit's adoption cookbook names: it installs packages and starts its own PipeWire daemon. The
+  daemon setup is a script, `scripts/ci/headless-pipewire.sh`, so WSL2, the VM and lane 03 run
+  the same thing; it adds `dbus` to the packages (WirePlumber wants a session bus) and also
+  proves the `default` metadata exists. No CI run exists yet (no push); the Linux leg was
+  proven before the first push in an `ubuntu:24.04` container with the same packages and
+  vendored sources: `cargo fmt --check`, `clippy -D warnings` (building `pipewire-sys`) and
+  `cargo test --workspace` green, the script listing the null sink, the null source and the
+  `default` metadata. WSL2 could not be used: its user has no passwordless `sudo` for the
+  packages.
 - **No cookbook** was written: the two named (`run-headless-pipewire.md`, `by-hand-pass.md`)
   are lanes 03's and 06's, so the index has no Cookbook section yet.
 - **Step 7** (the repository, the first push, `kit protect`) is the main session's: an agent's
