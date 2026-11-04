@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "name": "vix-mix",
+  "repository": "thechimaeraproject/vix-mix",
+  "defaultBranch": "master",
+  "role": "consumer",
+  "dev": {
+    "kind": "node",
+    "run": [
+      "{node}",
+      "scripts/dev.mjs"
+    ],
+    "registry": "scripts/dev/tasks.mjs"
+  },
+  "gates": {
+    "push": [
+      "check"
+    ],
+    "release": []
+  },
+  "kit": {
+    "npm": [
+      "."
+    ],
+    "cargo": {
+      "manifests": [
+        "Cargo.toml"
+      ],
+      "lock": "Cargo.lock"
+    }
+  },
+  "release": {
+    "kind": "none"
+  },
+  "ci": {
+    "workflows": [
+      {
+        "file": "ci.yml"
+      }
+    ],
+    "required": [
+      "check (linux)",
+      "check (windows)"
+    ]
+  },
+  "deploy": {
+    "kind": "none"
+  },
+  "protect": {
+    "merges": "admins"
+  }
+}
