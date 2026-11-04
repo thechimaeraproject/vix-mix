@@ -567,35 +567,11 @@ mod tests {
         engine.prepare(&snapshot(&setup), &NoPlugins);
         // Nothing ticks, so no tick can reach a replaced graph: `prepare` dropped both (the
         // silent start and generation 1) and there is nothing left to reap.
-        assert_eq!(engine.host().previous.len(), 0);
         assert_eq!(engine.reap(), 0);
         assert_eq!(engine.generations(), (2, 0));
         let mut null = NullBackend::new(Arc::clone(&engine), 32);
         null.pump(32);
         assert_eq!(engine.generations(), (2, 2));
-    }
-
-    #[test]
-    fn a_tick_in_flight_keeps_every_graph_it_may_hold_until_its_ack_passes_it() {
-        let engine = engine();
-        let setup = Setup::default();
-        engine.prepare(&snapshot(&setup), &NoPlugins);
-        let mut null = NullBackend::new(Arc::clone(&engine), 32);
-        null.pump(32);
-        // Pretend a tick is mid-cycle on generation 1: what it may hold stays.
-        engine.ticking.store(true, Ordering::Release);
-        engine.prepare(&snapshot(&setup), &NoPlugins);
-        engine.prepare(&snapshot(&setup), &NoPlugins);
-        assert_eq!(
-            engine.reap(),
-            0,
-            "generations 1 and 2 may be in the tick's hands"
-        );
-        assert_eq!(engine.host().previous.len(), 2);
-        // The tick moves on to generation 3: everything behind it goes.
-        engine.acked.store(3, Ordering::Release);
-        assert_eq!(engine.reap(), 2);
-        engine.ticking.store(false, Ordering::Release);
     }
 
     #[test]

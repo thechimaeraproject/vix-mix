@@ -31,28 +31,36 @@ fn the_previous_graph_drops_on_the_host_thread_only_after_the_tick_acknowledges_
     // The tick is inside generation 1, holding instance 1.
     assert_eq!(engine.generations(), (1, 1));
 
-    // The host removes instance 1 and adds instance 2 elsewhere.
+    // The host removes instance 1 and adds instance 2 elsewhere, then prepares once more
+    // (a fader move): generation 3.
     let mut second = snap(2);
     second.channels[1].chain = vec![insert(2)];
     engine.prepare(&second, &*rack);
-    assert_eq!(engine.reap(), 0, "generation 1 is in the tick's hands");
+    second.channels[1].monitor.gain = 0.5;
+    engine.prepare(&second, &*rack);
+    assert_eq!(
+        engine.reap(),
+        0,
+        "generations 1 and 2 may be in the tick's hands"
+    );
     assert_eq!(engine.reap(), 0);
     assert!(
         rack.homecomings().is_empty(),
         "instance 1 is still being processed"
     );
     assert!(!rack.is_home(1));
-    assert_eq!(engine.generations(), (2, 1));
+    assert_eq!(engine.generations(), (3, 1));
 
-    // The tick finishes generation 1 and enters generation 2, where it stops again.
+    // The tick finishes generation 1 and enters generation 3, where it stops again.
     x.release();
     let _ = data.result();
     data.pump(&signal);
     y.wait_entered();
-    assert_eq!(engine.generations(), (2, 2), "the acknowledgement");
+    assert_eq!(engine.generations(), (3, 3), "the acknowledgement");
 
-    // Now generation 1 goes, while the tick is still mid-cycle: on this thread.
-    assert_eq!(engine.reap(), 1);
+    // Now generations 1 and 2 go, while the tick is still mid-cycle: on this thread.
+    assert_eq!(engine.reap(), 2);
+    assert_eq!(engine.reap(), 0);
     assert_eq!(rack.homecomings(), vec![(InstanceId(1), host)]);
     assert!(rack.is_home(1));
 
@@ -293,7 +301,7 @@ fn an_instance_another_borrower_holds_is_reported_and_lent_once_the_rack_moves()
     let problems = engine.problems();
     assert_eq!(problems.len(), 1);
     assert!(
-        problems[0].message.contains("still in another chain"),
+        problems[0].message.contains("lent to another borrower"),
         "{}",
         problems[0].message
     );
