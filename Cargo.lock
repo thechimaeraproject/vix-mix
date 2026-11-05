@@ -3314,6 +3314,7 @@ dependencies = [
 name = "vixmix-host"
 version = "0.1.0"
 dependencies = [
+ "assert_no_alloc",
  "chimaeraproject-fs",
  "chimaeraproject-vst3-host",
  "log",
