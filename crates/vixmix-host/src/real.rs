@@ -1,33 +1,44 @@
 //! [`RealHost`]: the setup from `setup.ron`, the plugin instances it names, the engine
-//! prepared from it, and the backend — PipeWire on Linux once handoff 06 keeps it, the null
-//! backend until then and on every other platform — wired together on the UI thread.
-//!
-//! What it does today (handoff 00): boots, loads the setup and the plugin cache, creates the
-//! instances the catalog can find, prepares the engine, pumps the null backend one quantum a
-//! poll so meters and stats are live, applies commands (creating and retiring instances,
-//! preparing again), and saves on request. Handoff 06 makes it the whole orchestrator:
-//! routing, the debounced autosave, shutdown order.
+//! prepared from it, and the backend — PipeWire on Linux, the null backend elsewhere — wired
+//! together on the UI thread, in the order handoff 06 sets: boot, routing, acting on each
+//! command's `Applied`, the debounced autosave, the instances' lifecycle and shutdown.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use chimaeraproject_vst3_host::{EditorEvent, EditorSize, HostContext};
 use raw_window_handle::RawWindowHandle;
-use vixmix_engine::{Engine, EngineConfig, MAX_QUANTUM, NullBackend};
+use vixmix_engine::{Engine, EngineConfig, InsertProblem, Lender, MAX_QUANTUM};
 use vixmix_model::{
-    Applied, Command, DeviceInfo, InstanceId, Refused, Setup, apply, persist, snapshot,
+    AppRef, Applied, Command, DeviceInfo, Insert, InstanceId, Mix, MixId, Refused, Setup, Strip,
+    apply, persist, snapshot,
 };
-use vixmix_plugins::{Catalog, EditorSession, InstanceEvent, Instances, Rack};
+use vixmix_plugins::{
+    Catalog, EditorSession, InstanceEvent, Instances, Rack, ScanCache, ScanOutcome, search_dirs,
+};
 
+use crate::apps::{presence, remember};
+use crate::audio::{Audio, AudioBackend, Heard, POLL_INTERVAL};
+use crate::autosave::Autosave;
 use crate::host::{
     AppPresence, BackendState, ChannelLevels, Host, HostError, HostEvent, MeterFrame, StatsFrame,
-    Stereo,
+    Stereo, UNDO_TOAST,
 };
+use crate::undo::removal;
 
-/// The quantum the null backend pumps per poll.
-const NULL_QUANTUM: usize = 256;
+/// How long a removed insert's instance stays live: the toast, and a margin for the window's
+/// own clock.
+const KEEP_REMOVED: Duration = Duration::from_secs(UNDO_TOAST.as_secs() + 1);
 
-/// Where [`RealHost::boot`] reads and writes.
+/// The most removed instances kept for an undo at once; past it the oldest is let go early
+/// (its undo then makes it again from the state it was removed with).
+const MAX_KEPT: usize = 64;
+
+/// How many scan failures a toast names before it counts the rest.
+const FAILURES_NAMED: usize = 2;
+
+/// Where [`RealHost::boot`] reads and writes, and what it plays through.
 #[derive(Clone, Debug, Default)]
 pub struct BootOptions {
     /// The directory holding `setup.ron` and `plugins.ron`; `None` resolves the user's
@@ -35,6 +46,18 @@ pub struct BootOptions {
     pub config_dir: Option<PathBuf>,
     /// `cfg!(debug_assertions)` of the binary: a debug build keeps its own profile.
     pub debug_build: bool,
+    /// The backend. The default is the null backend, so a test never touches the desktop's
+    /// audio; the app asks for [`AudioBackend::APP`].
+    pub audio: AudioBackend,
+    /// Where to look for plugins: `None` is the SDK's standard places and the preferences'
+    /// extra directories; `Some` is only these (a test's).
+    pub plugin_dirs: Option<Vec<PathBuf>>,
+}
+
+/// A removed insert whose instance stays live until its undo toast dies.
+struct Kept {
+    insert: Insert,
+    until: Instant,
 }
 
 /// The real thing; see the module documentation.
@@ -43,21 +66,28 @@ pub struct RealHost {
     setup: Setup,
     /// The setup file existed but could not be used: move it aside before the first save.
     unreadable: bool,
+    vst3: HostContext,
+    plugin_dirs: Option<Vec<PathBuf>>,
     catalog: Catalog,
+    cache: ScanCache,
     engine: Arc<Engine>,
     rack: Arc<Rack>,
     instances: Instances,
     editors: Vec<EditorSession>,
-    null: NullBackend,
+    audio: Audio,
     backend: BackendState,
     apps: Vec<AppPresence>,
-    devices: Vec<DeviceInfo>,
+    /// Apps that played since start, for the source panel's "Seen before".
+    seen: Vec<AppRef>,
+    problems: Vec<InsertProblem>,
+    kept: Vec<Kept>,
+    autosave: Autosave,
     events: Vec<HostEvent>,
 }
 
 impl RealHost {
-    /// Loads the setup and the plugin cache, creates the instances, prepares the engine and
-    /// starts the backend.
+    /// Loads the setup and the plugin cache, rescans the plugins, creates the instances,
+    /// prepares the engine and starts the backend with the setup's graph.
     pub fn boot(options: BootOptions) -> Result<RealHost, HostError> {
         let dir = match options.config_dir {
             Some(dir) => dir,
@@ -73,42 +103,50 @@ impl RealHost {
         if let Some(problem) = problem {
             events.push(HostEvent::Toast(problem.to_string()));
         }
+        let vst3 = HostContext::new("Vix Mix");
         let (catalog, problem) = Catalog::load(&dir).into_parts();
         if let Some(problem) = problem {
             events.push(HostEvent::Toast(problem.to_string()));
         }
+        let cache = ScanCache::load(&dir);
 
         let engine = Arc::new(Engine::new(EngineConfig::new(48_000, MAX_QUANTUM, 2)));
         let rack = Rack::new();
-        let instances = Instances::new(HostContext::new("Vix Mix"), Arc::clone(&rack));
-        let backend = start_backend(&engine);
-        events.push(HostEvent::Backend(backend.clone()));
-        let null = NullBackend::new(Arc::clone(&engine), NULL_QUANTUM);
-
+        let instances = Instances::new(vst3.clone(), Arc::clone(&rack));
+        let audio = Audio::start(AudioBackend::Null, &engine, &setup);
         let mut host = RealHost {
             dir,
             setup,
             unreadable,
+            vst3,
+            plugin_dirs: options.plugin_dirs,
             catalog,
+            cache,
             engine,
             rack,
             instances,
             editors: Vec::new(),
-            null,
-            backend,
+            audio,
+            backend: BackendState::Connecting,
             apps: Vec::new(),
-            devices: Vec::new(),
+            seen: Vec::new(),
+            problems: Vec::new(),
+            kept: Vec::new(),
+            autosave: Autosave::default(),
             events,
         };
-        let inserts: Vec<_> = host
-            .setup
-            .inserts()
-            .map(|i| (i.instance, i.plugin.clone(), i.state.clone()))
-            .collect();
-        for (instance, plugin, state) in inserts {
-            host.create(instance, &plugin, state.as_deref());
-        }
+        host.scan(false);
+        host.sync_instances();
         host.prepare();
+        // The engine has its graph before the first tick can ask for one.
+        if options.audio != AudioBackend::Null {
+            host.audio = Audio::start(options.audio, &host.engine, &host.setup);
+        }
+        host.backend = host.audio.state();
+        host.events.push(HostEvent::Backend(host.backend.clone()));
+        host.refresh_apps();
+        host.take_notices();
+        host.refresh_problems();
         Ok(host)
     }
 
@@ -127,61 +165,272 @@ impl RealHost {
         &self.engine
     }
 
-    fn create(
-        &mut self,
-        instance: InstanceId,
-        plugin: &vixmix_model::PluginRef,
-        state: Option<&[u8]>,
-    ) {
-        if let Err(error) = self
-            .instances
-            .create(instance, plugin, &self.catalog, state)
-        {
-            log::warn!("{error}");
-            self.events.push(HostEvent::Toast(error.to_string()));
+    /// Whether `instance` is a live plugin instance: a test's view of the lifecycle.
+    pub fn is_live(&self, instance: InstanceId) -> bool {
+        self.instances.is_live(instance)
+    }
+
+    /// On the null backend, the input of the channel at `index` in the console (left and
+    /// right), which every later poll plays until it is written again: how a test feeds a
+    /// signal through the mixer with no audio system. `None` on a real backend.
+    pub fn null_input(&mut self, index: usize) -> Option<(&mut [f32], &mut [f32])> {
+        self.audio.null_input(index)
+    }
+
+    /// The directories a scan walks.
+    fn scan_dirs(&self) -> Vec<PathBuf> {
+        match &self.plugin_dirs {
+            Some(dirs) => dirs.clone(),
+            None => search_dirs(&self.setup.prefs.plugin_dirs),
+        }
+    }
+
+    /// Describes every new or changed bundle (and, after `forget_failures`, every one that
+    /// failed), and keeps the outcome in `plugins.ron` when it learned anything.
+    fn scan(&mut self, forget_failures: bool) {
+        if forget_failures {
+            self.cache.forget_failures();
+        }
+        let dirs = self.scan_dirs();
+        let outcome = self.catalog.rescan(&dirs, &self.vst3, &self.cache);
+        log::info!(
+            "plugins: {} found, {} bundles described, {} unchanged, {} failed",
+            outcome.catalog.plugins.len(),
+            outcome.described,
+            outcome.reused,
+            outcome.failures.len()
+        );
+        if let Some(toast) = failures(&outcome.failures) {
+            self.events.push(HostEvent::Toast(toast));
+        }
+        if forget_failures || outcome.described > 0 || outcome.cache.len() != self.cache.len() {
+            self.write_plugins(&outcome);
+        }
+        self.catalog = outcome.catalog;
+        self.cache = outcome.cache;
+    }
+
+    fn write_plugins(&mut self, outcome: &ScanOutcome) {
+        let written = std::fs::create_dir_all(&self.dir)
+            .map_err(|e| e.to_string())
+            .and_then(|()| outcome.save(&self.dir).map_err(|e| e.to_string()));
+        if let Err(error) = written {
+            self.events.push(HostEvent::Toast(format!(
+                "the plugin list could not be kept in {} ({error}): check the directory is writable; the next start scans again",
+                self.dir.display()
+            )));
+        }
+    }
+
+    fn write_catalog(&mut self) {
+        let written = std::fs::create_dir_all(&self.dir)
+            .map_err(|e| e.to_string())
+            .and_then(|()| self.catalog.save(&self.dir).map_err(|e| e.to_string()));
+        if let Err(error) = written {
+            self.events.push(HostEvent::Toast(format!(
+                "favourites and recent plugins could not be kept in {} ({error}): check the directory is writable",
+                self.dir.display()
+            )));
+        }
+    }
+
+    /// Makes the live instances match the setup's inserts and the removed ones kept for an
+    /// undo: retires the rest, creates what is missing with its stored state, reports a
+    /// plugin that cannot be made once (its insert passes audio through).
+    fn sync_instances(&mut self) {
+        let kept = self.kept.iter().map(|k| &k.insert);
+        self.instances
+            .sync(self.setup.inserts().chain(kept), &self.catalog);
+        let gone: Vec<InstanceId> = self
+            .editors
+            .iter()
+            .map(EditorSession::instance)
+            .filter(|i| !self.instances.is_live(*i))
+            .collect();
+        for instance in gone {
+            self.close_editor(instance);
+            self.events.push(HostEvent::EditorClosed(instance));
         }
     }
 
     fn prepare(&self) {
         self.engine.prepare(&snapshot(&self.setup), &*self.rack);
     }
-}
 
-/// The banner on Linux when PipeWire answers, until handoff 06 plays through it.
-#[cfg(target_os = "linux")]
-const PIPEWIRE_NOT_WIRED: &str =
-    "PipeWire answers, but this build does not play through it yet: the mixer runs silent";
+    /// The current state of each live instance among `instances`.
+    fn fresh_states(&mut self, instances: &[InstanceId]) -> Vec<(InstanceId, Vec<u8>)> {
+        let mut out = Vec::new();
+        for instance in instances {
+            if !self.instances.is_live(*instance) {
+                continue;
+            }
+            match self.instances.save_state(*instance) {
+                Ok(state) => out.push((*instance, state)),
+                Err(error) => self.events.push(HostEvent::Toast(error.to_string())),
+            }
+        }
+        out
+    }
 
-/// Linux: PipeWire, which is asked whether it answers and left again until handoff 06 keeps
-/// the backend and drives the engine from it; the null backend runs the engine meanwhile.
-/// Elsewhere: nothing.
-fn start_backend(engine: &Arc<Engine>) -> BackendState {
-    #[cfg(target_os = "linux")]
-    {
-        let (events, _receiver) = std::sync::mpsc::sync_channel(256);
-        match vixmix_pipewire::Backend::connect(
-            vixmix_pipewire::BackendConfig::default(),
-            Arc::clone(engine),
-            events,
-        ) {
-            // Handoff 06 keeps the backend and its receiver, and the state becomes Connecting.
-            Ok(backend) => {
-                backend.disconnect();
-                BackendState::Absent {
-                    reason: PIPEWIRE_NOT_WIRED.to_string(),
+    /// Puts every live instance's state into the setup; whether any changed.
+    fn capture_all(&mut self) -> bool {
+        let live: Vec<InstanceId> = self.setup.inserts().map(|i| i.instance).collect();
+        let fresh = self.fresh_states(&live);
+        store_states(&mut self.setup, fresh)
+    }
+
+    /// Writes the setup, moving an unreadable file aside first.
+    fn write(&mut self) {
+        self.autosave.saved();
+        if let Err(error) = std::fs::create_dir_all(&self.dir) {
+            self.events.push(HostEvent::Toast(format!(
+                "{} could not be created ({error}): check the parent directory is writable; the setup was not saved",
+                self.dir.display()
+            )));
+            return;
+        }
+        if self.unreadable {
+            // Never save over a file the user may still want: keep it beside the new one.
+            let path = persist::path(&self.dir);
+            let aside = path.with_extension("ron.unreadable");
+            match std::fs::rename(&path, &aside) {
+                Ok(()) => self.events.push(HostEvent::Toast(format!(
+                    "the setup that could not be read is kept as {}",
+                    aside.display()
+                ))),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    self.events.push(HostEvent::Toast(format!(
+                        "{} could not be moved aside ({error}): move it by hand; the setup was not saved over it",
+                        path.display()
+                    )));
+                    return;
                 }
             }
-            Err(error) => BackendState::Absent {
-                reason: format!("No audio backend: {error}"),
-            },
+            self.unreadable = false;
+        }
+        if let Err(error) = persist::save(&self.dir, &self.setup) {
+            self.events.push(HostEvent::Toast(error.to_string()));
         }
     }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = engine;
-        BackendState::Absent {
-            reason: BackendState::NO_BACKEND.to_string(),
+
+    /// Keeps a removed insert's instance live until its undo toast dies.
+    fn keep(&mut self, insert: Insert, now: Instant) {
+        if self.kept.len() == MAX_KEPT {
+            self.kept.remove(0);
         }
+        self.kept.push(Kept {
+            insert,
+            until: now + KEEP_REMOVED,
+        });
+    }
+
+    fn refresh_apps(&mut self) {
+        for stream in self.audio.streams() {
+            remember(&mut self.seen, &stream.app);
+        }
+        let apps = presence(
+            self.audio.streams().iter().map(|s| &s.app),
+            &self.setup,
+            &self.seen,
+        );
+        if apps != self.apps {
+            self.apps = apps.clone();
+            self.events.push(HostEvent::Apps(apps));
+        }
+    }
+
+    fn refresh_problems(&mut self) {
+        let problems = self.engine.problems();
+        if problems != self.problems {
+            self.problems = problems.clone();
+            self.events.push(HostEvent::Problems(problems));
+        }
+    }
+
+    fn take_notices(&mut self) {
+        for notice in self.instances.take_notices() {
+            self.events.push(HostEvent::Toast(notice));
+        }
+    }
+
+    fn heard(&mut self, heard: Heard) {
+        for toast in heard.toasts {
+            self.events.push(HostEvent::Toast(toast));
+        }
+        if heard.devices {
+            self.events
+                .push(HostEvent::Devices(self.audio.devices().to_vec()));
+        }
+        if heard.apps {
+            self.refresh_apps();
+        }
+    }
+}
+
+/// Stores each state in the setup; whether any differed from what it held.
+fn store_states(setup: &mut Setup, states: Vec<(InstanceId, Vec<u8>)>) -> bool {
+    let mut changed = false;
+    for (instance, state) in states {
+        let cmd = Command::SetInsertState {
+            instance,
+            state: Some(state),
+        };
+        changed |= apply(setup, cmd).is_ok_and(|applied| applied.save);
+    }
+    changed
+}
+
+/// The instances `cmd` copies or removes: their live state goes with them.
+fn carried(setup: &Setup, cmd: &Command) -> Vec<InstanceId> {
+    match cmd {
+        Command::RemoveInsert { instance } => vec![*instance],
+        Command::RemoveChannel(ch) => setup
+            .channel(*ch)
+            .map(|c| c.chain.iter().map(|i| i.instance).collect())
+            .unwrap_or_default(),
+        Command::MoveInsert {
+            from, copy: true, ..
+        } => {
+            let chain = match from.strip {
+                Strip::Channel(ch) => setup.channel(ch).map(|c| &c.chain),
+                Strip::Mix(mix) => Some(&setup.mix(mix).chain),
+            };
+            chain
+                .and_then(|c| c.get(from.index))
+                .map(|i| vec![i.instance])
+                .unwrap_or_default()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// One toast for a scan's failures: the first few with their fix, and how many more.
+fn failures(failures: &[String]) -> Option<String> {
+    for failure in failures {
+        log::warn!("plugin scan: {failure}");
+    }
+    let (named, rest) = failures.split_at(failures.len().min(FAILURES_NAMED));
+    if named.is_empty() {
+        return None;
+    }
+    let mut toast = named.join("; ");
+    if !rest.is_empty() {
+        toast.push_str(&format!(
+            "; and {} more plugin bundles could not be read (the log names them)",
+            rest.len()
+        ));
+    }
+    Some(toast)
+}
+
+/// A setup with nothing in it: preparing it lets every lent instance go home.
+fn nothing() -> Setup {
+    Setup {
+        channels: Vec::new(),
+        monitor: Mix::new(MixId::Monitor),
+        master: Mix::new(MixId::Master),
+        ..Setup::default()
     }
 }
 
@@ -191,46 +440,114 @@ impl Host for RealHost {
     }
 
     fn apply(&mut self, cmd: Command) -> Result<Applied, Refused> {
-        let applied = apply(&mut self.setup, cmd)?;
-        for instance in &applied.removed {
-            self.instances.retire(*instance);
-        }
-        for instance in &applied.created {
-            let found = self
-                .setup
-                .inserts()
-                .find(|i| i.instance == *instance)
-                .map(|i| (i.plugin.clone(), i.state.clone()));
-            if let Some((plugin, state)) = found {
-                self.create(*instance, &plugin, state.as_deref());
+        let now = Instant::now();
+        // A removed or copied plugin carries its live state, so an undo or the copy sounds
+        // as the plugin did; worked out on a copy of the setup, so a refusal changes nothing.
+        let carried = carried(&self.setup, &cmd);
+        let fresh = self.fresh_states(&carried);
+        let added = match &cmd {
+            Command::AddInsert { plugin, .. } => Some(plugin.id.clone()),
+            _ => None,
+        };
+        let (applied, gone) = if fresh.is_empty() {
+            let gone = removal(&self.setup, &cmd);
+            (apply(&mut self.setup, cmd)?, gone)
+        } else {
+            let mut next = self.setup.clone();
+            store_states(&mut next, fresh);
+            let gone = removal(&next, &cmd);
+            let applied = apply(&mut next, cmd)?;
+            self.setup = next;
+            (applied, gone)
+        };
+
+        if let Some(gone) = gone.filter(|_| applied.changed()) {
+            for insert in gone.inserts {
+                self.keep(insert, now);
             }
+            self.events.push(HostEvent::Removed {
+                message: gone.message,
+                undo: gone.undo,
+            });
+        }
+        // An undo brings back the instance kept for it.
+        self.kept
+            .retain(|k| !applied.created.contains(&k.insert.instance));
+        if let Some(id) = added {
+            self.catalog.used(&id);
+            self.write_catalog();
+        }
+        // A removed instance stays live (kept); its editor closes with its slot.
+        for instance in &applied.removed {
+            if self.editors.iter().any(|s| s.instance() == *instance) {
+                self.close_editor(*instance);
+                self.events.push(HostEvent::EditorClosed(*instance));
+            }
+        }
+        if !applied.created.is_empty() || !applied.removed.is_empty() {
+            self.sync_instances();
+            self.take_notices();
         }
         if applied.engine || !applied.created.is_empty() || !applied.removed.is_empty() {
             self.prepare();
+            self.refresh_problems();
         }
-        if applied.changed() {
+        if applied.graph {
+            let heard = self.audio.apply_graph(&self.setup, &self.engine);
+            self.heard(heard);
+        }
+        if applied.graph || applied.routing {
+            // After the graph: a routing names a sink of the newest graph. A rename moves
+            // the channel's apps to its new sink name too.
+            self.audio.reroute(&self.setup);
+            self.refresh_apps();
+        }
+        if applied.save {
+            self.autosave.touch(now);
             self.events.push(HostEvent::SetupChanged);
         }
         Ok(applied)
     }
 
     fn poll(&mut self) -> Vec<HostEvent> {
-        if matches!(self.backend, BackendState::Absent { .. }) {
-            self.null.pump(NULL_QUANTUM);
-        }
+        let now = Instant::now();
+        let heard = self.audio.poll(&self.setup, &self.engine, now);
+        self.heard(heard);
         self.engine.reap();
         self.instances.reap();
-        let mut prepare = false;
         for event in self.instances.tick() {
             match event {
-                InstanceEvent::Dirty(_) => self.events.push(HostEvent::SetupChanged),
-                InstanceEvent::IoChanged(_) => prepare = true,
-                // Reaching the processor is handoffs 02 and 04's path.
-                InstanceEvent::Edit { .. } => {}
+                // The edit already went to the processor; the stored state is stale.
+                InstanceEvent::Edit { .. } => self.autosave.touch(now),
+                InstanceEvent::Dirty(_) => {
+                    self.autosave.touch(now);
+                    self.events.push(HostEvent::SetupChanged);
+                }
+                // The engine sets it up again once no running graph holds it.
+                InstanceEvent::IoChanged(instance) => {
+                    self.engine.set_up_again(instance);
+                }
             }
         }
-        if prepare {
+        let kept = self.kept.len();
+        self.kept.retain(|k| k.until > now);
+        if self.kept.len() != kept {
+            self.sync_instances();
+        }
+        // What the rack holds moved past what the running graph was prepared against (an
+        // instance made, retired or reaped): prepare again so the engine asks.
+        if self.rack.generation() != self.engine.lender_generation() {
             self.prepare();
+        }
+        self.take_notices();
+        self.refresh_problems();
+        let state = self.audio.state();
+        if state != self.backend {
+            self.backend = state.clone();
+            self.events.push(HostEvent::Backend(state));
+        }
+        if self.autosave.due(now) {
+            self.save_now();
         }
         std::mem::take(&mut self.events)
     }
@@ -276,7 +593,7 @@ impl Host for RealHost {
     }
 
     fn devices(&self) -> &[DeviceInfo] {
-        &self.devices
+        self.audio.devices()
     }
 
     fn open_editor(
@@ -297,15 +614,8 @@ impl Host for RealHost {
     fn tick_editors(&mut self) -> Vec<(InstanceId, EditorEvent)> {
         let mut out = Vec::new();
         for session in &mut self.editors {
-            if let Some(run_loop) = session.run_loop() {
-                run_loop.poll();
-            }
-            out.extend(
-                session
-                    .poll_events()
-                    .into_iter()
-                    .map(|e| (session.instance(), e)),
-            );
+            let instance = session.instance();
+            out.extend(session.tick().into_iter().map(|e| (instance, e)));
         }
         out
     }
@@ -318,73 +628,90 @@ impl Host for RealHost {
     }
 
     fn save_now(&mut self) {
-        let live: Vec<InstanceId> = self
-            .setup
-            .inserts()
-            .map(|i| i.instance)
-            .filter(|i| self.instances.is_live(*i))
-            .collect();
-        for instance in live {
-            match self.instances.save_state(instance) {
-                Ok(state) => {
-                    let _ = apply(
-                        &mut self.setup,
-                        Command::SetInsertState {
-                            instance,
-                            state: Some(state),
-                        },
-                    );
-                }
-                Err(error) => self.events.push(HostEvent::Toast(error.to_string())),
-            }
+        self.capture_all();
+        self.write();
+    }
+
+    fn problems(&self) -> &[InsertProblem] {
+        &self.problems
+    }
+
+    fn set_favorite(&mut self, plugin_id: &str, favorite: bool) {
+        if self.catalog.favorites.contains(plugin_id) != favorite {
+            self.catalog.set_favorite(plugin_id, favorite);
+            self.write_catalog();
         }
-        if let Err(error) = std::fs::create_dir_all(&self.dir) {
-            self.events.push(HostEvent::Toast(format!(
-                "{} could not be created ({error}): check the parent directory is writable; the setup was not saved",
-                self.dir.display()
-            )));
-            return;
+    }
+
+    fn rescan_plugins(&mut self) {
+        self.scan(true);
+        self.instances.retry_failed();
+        self.sync_instances();
+        self.prepare();
+        self.take_notices();
+        self.refresh_problems();
+        self.events.push(HostEvent::PluginsRescanned);
+    }
+
+    fn next_poll(&self) -> Option<Duration> {
+        let now = Instant::now();
+        let mut at: Option<Instant> = None;
+        let mut sooner = |t: Instant| at = Some(at.map_or(t, |a| a.min(t)));
+        if let Some(due) = self.autosave.due_at() {
+            sooner(due);
         }
-        if self.unreadable {
-            // Never save over a file the user may still want: keep it beside the new one.
-            let path = persist::path(&self.dir);
-            let aside = path.with_extension("ron.unreadable");
-            match std::fs::rename(&path, &aside) {
-                Ok(()) => self.events.push(HostEvent::Toast(format!(
-                    "the setup that could not be read is kept as {}",
-                    aside.display()
-                ))),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => {
-                    self.events.push(HostEvent::Toast(format!(
-                        "{} could not be moved aside ({error}): move it by hand; the setup was not saved over it",
-                        path.display()
-                    )));
-                    return;
-                }
-            }
-            self.unreadable = false;
+        if let Some(until) = self.kept.iter().map(|k| k.until).min() {
+            sooner(until);
         }
-        if let Err(error) = persist::save(&self.dir, &self.setup) {
-            self.events.push(HostEvent::Toast(error.to_string()));
+        // An open editor's edits travel on each tick; a retired instance is reaped on one.
+        if !self.editors.is_empty() || self.instances.retiring() > 0 {
+            sooner(now + POLL_INTERVAL);
         }
+        if let Some(wait) = self.audio.next_poll(now) {
+            sooner(now + wait);
+        }
+        at.map(|t| t.saturating_duration_since(now))
     }
 }
 
 impl Drop for RealHost {
+    /// Shutdown, in the kit's order: every editor closes before its window and its instance
+    /// go; the routings are cleared and the backend leaves, so no tick runs again; the final
+    /// save, while every plugin is still live to give its state; an empty graph lets every
+    /// lent instance come home, here; then every instance is retired and reaped here,
+    /// processor before controller.
     fn drop(&mut self) {
-        // Every editor closes before its window and its instance go.
         for session in &mut self.editors {
             session.close();
         }
         self.editors.clear();
+        self.audio.shutdown();
+        let changed = self.capture_all();
+        if changed || self.autosave.pending() {
+            self.write();
+        }
+        self.engine.prepare(&snapshot(&nothing()), &*self.rack);
+        self.engine.reap();
+        self.kept.clear();
+        let live: Vec<InstanceId> = self.instances.live().collect();
+        for instance in live {
+            self.instances.retire(instance);
+        }
+        self.instances.reap();
+        for event in self.events.drain(..) {
+            if let HostEvent::Toast(message) = event {
+                log::warn!("{message}");
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vixmix_model::MixId;
+    use crate::audio::{NULL_CHOSEN, NULL_QUANTUM};
+    use crate::autosave::DEBOUNCE;
+    use vixmix_model::{ChannelId, ChannelKind, example};
 
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("vixmix-host-{name}-{}", std::process::id()));
@@ -392,12 +719,24 @@ mod tests {
         dir
     }
 
-    fn boot(dir: &Path) -> RealHost {
-        RealHost::boot(BootOptions {
+    fn options(dir: &Path) -> BootOptions {
+        BootOptions {
             config_dir: Some(dir.to_path_buf()),
             debug_build: true,
+            audio: AudioBackend::Null,
+            plugin_dirs: Some(Vec::new()),
+        }
+    }
+
+    fn boot(dir: &Path) -> RealHost {
+        RealHost::boot(options(dir)).unwrap()
+    }
+
+    fn banner(events: &[HostEvent]) -> Option<String> {
+        events.iter().find_map(|e| match e {
+            HostEvent::Backend(state) => Some(state.banner().unwrap_or_default().to_string()),
+            _ => None,
         })
-        .unwrap()
     }
 
     #[test]
@@ -405,20 +744,7 @@ mod tests {
         let dir = scratch("boot");
         let mut host = boot(&dir);
         let events = host.poll();
-        let banner = events
-            .iter()
-            .find_map(|e| match e {
-                HostEvent::Backend(state) => state.banner().map(str::to_string),
-                _ => None,
-            })
-            .expect("the first poll reports the backend");
-        if cfg!(target_os = "linux") {
-            // PipeWire answered (CI's headless daemon) or refused (no daemon): either way the
-            // banner names it, and the null backend runs the engine.
-            assert!(banner.contains("PipeWire"), "{banner}");
-        } else {
-            assert_eq!(banner, BackendState::NO_BACKEND);
-        }
+        assert_eq!(banner(&events).as_deref(), Some(NULL_CHOSEN));
         assert_eq!(host.setup(), &Setup::default());
         // Each poll pumps one quantum through the engine.
         let _ = host.poll();
@@ -432,11 +758,35 @@ mod tests {
                 .load(std::sync::atomic::Ordering::Relaxed)
                 >= 2 * NULL_QUANTUM as u64
         );
-        assert!(!dir.exists(), "booting writes nothing");
+        assert_eq!(
+            host.next_poll(),
+            None,
+            "with nothing pending it waits for nothing"
+        );
+        drop(host);
+        assert!(
+            !dir.exists(),
+            "booting and quitting unchanged writes nothing"
+        );
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn the_system_backend_where_there_is_none_is_the_null_backend_with_its_banner() {
+        let dir = scratch("system");
+        let mut host = RealHost::boot(BootOptions {
+            audio: AudioBackend::APP,
+            ..options(&dir)
+        })
+        .unwrap();
+        assert_eq!(
+            banner(&host.poll()).as_deref(),
+            Some(BackendState::NO_BACKEND)
+        );
     }
 
     #[test]
-    fn a_command_changes_the_setup_and_a_save_restores_it_at_the_next_boot() {
+    fn a_change_is_saved_once_the_setup_has_been_quiet_and_restored_at_the_next_boot() {
         let dir = scratch("save");
         let mut host = boot(&dir);
         let ch = host.setup().channels[0].id;
@@ -448,12 +798,30 @@ mod tests {
             })
             .unwrap();
         assert!(host.poll().contains(&HostEvent::SetupChanged));
-        host.save_now();
+        assert!(!dir.exists(), "not before the debounce");
+        let wait = host.next_poll().expect("a save is pending");
+        assert!(wait <= DEBOUNCE, "{wait:?}");
+        std::thread::sleep(wait + Duration::from_millis(20));
+        let _ = host.poll();
+        assert!(persist::path(&dir).exists(), "saved after the debounce");
         let saved = host.setup().clone();
         drop(host);
         let host = boot(&dir);
         assert_eq!(host.setup(), &saved);
         assert!(host.setup().channels[0].master.mute);
+        drop(host);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn quitting_with_a_change_pending_saves_it() {
+        let dir = scratch("quit");
+        let mut host = boot(&dir);
+        let _ = host.apply(Command::SetPreview(true)).unwrap();
+        drop(host);
+        let host = boot(&dir);
+        assert!(host.setup().preview_master);
+        drop(host);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -476,6 +844,96 @@ mod tests {
             "not a setup"
         );
         assert!(persist::path(&dir).exists());
+        drop(host);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_removed_channel_comes_back_through_the_undo_the_host_hands_out() {
+        let dir = scratch("undo");
+        let mut host = boot(&dir);
+        let ch = host
+            .apply(Command::AddChannel {
+                kind: ChannelKind::Apps,
+            })
+            .unwrap()
+            .channel
+            .unwrap();
+        let _ = host
+            .apply(Command::Rename {
+                ch,
+                name: "Music".into(),
+            })
+            .unwrap();
+        let before = host.setup().clone();
+        let _ = host.poll();
+        let _ = host.apply(Command::RemoveChannel(ch)).unwrap();
+        let events = host.poll();
+        let undo = events
+            .iter()
+            .find_map(|e| match e {
+                HostEvent::Removed { message, undo } => {
+                    assert_eq!(message, "Removed channel Music");
+                    Some(undo.clone())
+                }
+                _ => None,
+            })
+            .expect("a removal hands out its undo");
+        let applied = host.apply(undo).unwrap();
+        assert_eq!(applied.channel, Some(ch));
+        assert_eq!(host.setup().channels, before.channels);
+        // A refused command changes nothing.
+        assert!(host.apply(Command::RemoveChannel(ChannelId(99))).is_err());
+        assert_eq!(host.setup().channels, before.channels);
+        drop(host);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_missing_plugin_is_said_once_and_its_insert_plays_through() {
+        let dir = scratch("missing");
+        let mut host = boot(&dir);
+        let strip = Strip::Channel(host.setup().channels[0].id);
+        let _ = host
+            .apply(Command::AddInsert {
+                strip,
+                plugin: example::plugin("Pro-Q 3"),
+                at: 0,
+            })
+            .unwrap();
+        let events = host.poll();
+        let toasts = events
+            .iter()
+            .filter(|e| matches!(e, HostEvent::Toast(t) if t.contains("rescan plugins")))
+            .count();
+        assert_eq!(toasts, 1, "{events:?}");
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, HostEvent::Problems(p) if p.len() == 1)),
+            "{events:?}"
+        );
+        assert_eq!(host.problems().len(), 1);
+        assert!(host.problems()[0].message.contains(':'));
+        let _ = host.apply(Command::SetPreview(true)).unwrap();
+        let again = host.poll();
+        assert!(
+            !again.iter().any(|e| matches!(e, HostEvent::Toast(_))),
+            "said once: {again:?}"
+        );
+        drop(host);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scan_failures_make_one_toast_that_counts_the_rest() {
+        assert_eq!(failures(&[]), None);
+        let many: Vec<String> = (0..5).map(|n| format!("B{n}.vst3: broken")).collect();
+        let toast = failures(&many).unwrap();
+        assert!(
+            toast.starts_with("B0.vst3: broken; B1.vst3: broken"),
+            "{toast}"
+        );
+        assert!(toast.contains("and 3 more"), "{toast}");
     }
 }
