@@ -13,9 +13,12 @@ the earlier lanes' verifiers left open. Of the acceptance, the charter bullet is
 install on Fedora and the pass wait for the machine. Proven in the `vixmix-linux-dev`
 container (Ubuntu, not Fedora): `cargo install --path app --locked --offline` and the tarball
 build, `install.sh` from the checkout and from the unpacked tarball into `~/.local` and
-`/usr/local` and back out (nothing left behind), a prefix with a space quoted in `Exec`,
-`desktop-file-validate` silent and `appstreamcli validate --pedantic` successful, the binary
-linking only glibc, `libgcc_s` and `libpipewire-0.3`. `dev check` is green on Windows.
+`/usr/local` and back out (nothing left behind), `Exec` always double-quoted (a prefix with a
+space and one with each other reserved character of the Desktop Entry spec install and
+validate; `"`, `` ` ``, `$`, `\`, `%` and control characters are refused before anything is
+written), `desktop-file-validate` silent and `appstreamcli validate --pedantic` successful,
+the binary linking only glibc, `libgcc_s` and `libpipewire-0.3`. `dev check` is green on
+Windows.
 Deviations from the steps below, each with its reason:
 
 - **The desktop entry is `org.chimaeraproject.vixmix.desktop`, not `vix-mix.desktop`.** One id
@@ -23,7 +26,10 @@ Deviations from the steps below, each with its reason:
   Desktop Entry and AppStream specifications recommend, and a Wayland app id finds its entry by
   that name. `StartupWMClass=vix-mix` ties the window to it on X11, where winit names the class
   after the binary; on Wayland the app sets no app id, which handoff 09 item 9 checks rather
-  than a change to lane 05's window now.
+  than a change to lane 05's window now. `StartupNotify` is left out: the app does not read
+  the launcher's activation token yet, so `true` would promise what it does not do and `false`
+  would turn off the launch feedback that `StartupWMClass` ends on X11; item 9 checks Plasma's
+  feedback and names winit's fix.
 - **The packaging files sit in `packaging/linux/`, outside the code roots**, so no reference
   owns them; the cookbook documents what goes where, and each file says what it is in its
   header. `install.sh` writes `Exec` and `TryExec` as the absolute path of the binary it
@@ -51,6 +57,16 @@ Deviations from the steps below, each with its reason:
   § Latency wait for it.
 - **Step 5 needed no edit**: the Windows backend was already the roadmap's first row under
   *Named but not built*; this lane's roadmap rows add the RPM spec and a COPR beside it.
+- **Two files outside this lane's list gained an addition each, and two indexes a line.**
+  `README.md` gained § Install, the front page's pointer to the install cookbook, where a reader
+  of the repository looks first; `scripts/dev/tasks.mjs` gained the `Package` section with
+  `dev package`, which runs `scripts/package/linux-tarball.sh` as the cookbook's step 5 says.
+  Neither file is in this handoff's Files you own or in [build-map.md](../build-map.md)
+  § Conflict rules' append-only list, and lane 05 touches neither, so the main session accepts
+  or drops them at the merge. `docs/cookbook/README.md` and this folder's `README.md` gained
+  the index lines of the cookbook and the handoff this lane adds. `CLAUDE.md` § Layout
+  (`packaging/linux/`, `scripts/package/`) and a lane 09 row in the build map are not this
+  lane's to edit: the main session adds them at the merge.
 
 **Needs:** 06. **Runs alongside:** 07. **Size:** S.
 
