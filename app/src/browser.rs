@@ -11,8 +11,12 @@
 //! changes, each name lower-cased once for the sort; and only the rows in view, with a row
 //! and a heading past each edge ([`pop::LIST_REACH`]), are drawn and sensed, the rest taking
 //! their space. Tab reaches the row just out of view, which scrolls in as it takes the focus.
+//!
+//! **The list starts at its top** when the browser opens (the nav too) and when the query or
+//! the filter makes a new list, as the prototype's list, built again, shows its first row: the
+//! row Enter adds is always one the list shows. Both columns scroll at once, never eased, as the
+//! prototype's `scrollIntoView` does, so no scroll under way pulls a column from its top again.
 
-use egui::style::ScrollAnimation;
 use egui::text::{LayoutJob, TextFormat, TextWrapping};
 use egui::{Align2, EventFilter, Id, Key, Rect, ScrollArea, Sense, Stroke, Ui, Vec2, pos2, vec2};
 use vixmix_host::Host;
@@ -50,6 +54,8 @@ pub struct Browser {
     pub fresh: bool,
     /// The picked row moved by a key: scroll it into view.
     pub follow: bool,
+    /// The list is new (the query or the filter changed): show it from its top.
+    rewind: bool,
     /// The list and the nav as the last frame had them, with what they were built from
     /// (boxed: a popover is passed by value, and the open one is mostly not the browser).
     listing: Option<Box<Listing>>,
@@ -65,6 +71,7 @@ impl Browser {
             active: 0,
             fresh: true,
             follow: false,
+            rewind: false,
             listing: None,
         }
     }
@@ -328,6 +335,7 @@ pub fn show(ui: &mut Ui, browser: &mut Browser, cx: &mut PopCx<'_>) -> Outcome {
     if browser.query != before {
         browser.filter = Filter::All;
         browser.active = 0;
+        browser.rewind = true;
     }
 
     let listing = listing(browser, host);
@@ -368,91 +376,87 @@ pub fn show(ui: &mut Ui, browser: &mut Browser, cx: &mut PopCx<'_>) -> Outcome {
     );
     let mut picked = None;
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(nav_rect.shrink(pop::LIST_PAD)));
-    ScrollArea::vertical()
-        .id_salt("browser nav")
-        .auto_shrink([false, false])
-        .show(&mut child, |ui| {
-            ui.spacing_mut().item_spacing = Vec2::ZERO;
-            let reach = reach(ui);
-            let mut section = 0;
-            for (filter, label, count) in &listing.nav {
-                let heading = match filter {
-                    Filter::Kind(_) if section < 1 => Some("Type"),
-                    Filter::Vendor(_) if section < 2 => Some("Maker"),
-                    _ => None,
-                };
-                if let Some(heading) = heading {
-                    section = if heading == "Type" { 1 } else { 2 };
-                    nav_heading(ui, heading, reach);
-                }
-                let (_, rect) = ui.allocate_space(vec2(ui.available_width(), pop::NAV_ROW));
-                if !reach.intersects(rect) {
-                    continue;
-                }
-                // Typing searches everything, and the nav says so: All plugins is lit.
-                let on = *filter == browser.filter;
-                if nav_item(ui, rect, filter, label, *count, on, cx.keyboard) {
-                    picked = Some(filter.clone());
-                }
+    column("browser nav", fresh).show(&mut child, |ui| {
+        ui.spacing_mut().item_spacing = Vec2::ZERO;
+        let reach = reach(ui);
+        let mut section = 0;
+        for (filter, label, count) in &listing.nav {
+            let heading = match filter {
+                Filter::Kind(_) if section < 1 => Some("Type"),
+                Filter::Vendor(_) if section < 2 => Some("Maker"),
+                _ => None,
+            };
+            if let Some(heading) = heading {
+                section = if heading == "Type" { 1 } else { 2 };
+                nav_heading(ui, heading, reach);
             }
-        });
+            let (_, rect) = ui.allocate_space(vec2(ui.available_width(), pop::NAV_ROW));
+            if !reach.intersects(rect) {
+                continue;
+            }
+            // Typing searches everything, and the nav says so: All plugins is lit.
+            let on = *filter == browser.filter;
+            if nav_item(ui, rect, filter, label, *count, on, cx.keyboard) {
+                picked = Some(filter.clone());
+            }
+        }
+    });
 
     // The list.
     let mut star = None;
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(list_rect.shrink(pop::LIST_PAD)));
     let follow = std::mem::take(&mut browser.follow);
-    ScrollArea::vertical()
-        .id_salt("browser list")
-        .auto_shrink([false, false])
-        .show(&mut child, |ui| {
-            ui.spacing_mut().item_spacing = Vec2::ZERO;
-            if list.is_empty() {
-                let text = format!(
-                    "No installed plugin matches \u{201c}{}\u{201d}.",
-                    browser.query.trim()
-                );
-                empty(ui, &text);
+    let rewind = std::mem::take(&mut browser.rewind) || fresh;
+    column("browser list", rewind).show(&mut child, |ui| {
+        ui.spacing_mut().item_spacing = Vec2::ZERO;
+        if list.is_empty() {
+            let text = format!(
+                "No installed plugin matches \u{201c}{}\u{201d}.",
+                browser.query.trim()
+            );
+            empty(ui, &text);
+        }
+        let reach = reach(ui);
+        let grouped = browser.query.trim().is_empty() && browser.filter == Filter::All;
+        let mut letter = None;
+        for (index, &plugin) in list.iter().enumerate() {
+            let Some(row) = row_at(host, plugin) else {
+                continue;
+            };
+            if grouped && letter != Some(group(row.name)) {
+                letter = Some(group(row.name));
+                group_heading(ui, group(row.name), reach);
             }
-            let reach = reach(ui);
-            let grouped = browser.query.trim().is_empty() && browser.filter == Filter::All;
-            let mut letter = None;
-            for (index, &plugin) in list.iter().enumerate() {
-                let Some(row) = row_at(host, plugin) else {
-                    continue;
-                };
-                if grouped && letter != Some(group(row.name)) {
-                    letter = Some(group(row.name));
-                    group_heading(ui, group(row.name), reach);
-                }
-                let active = index == browser.active;
-                let (_, rect) = ui.allocate_space(vec2(ui.available_width(), pop::PLUGIN_ROW));
-                if active && follow {
-                    ui.scroll_to_rect(rect, None);
-                }
-                if !reach.intersects(rect) {
-                    continue;
-                }
-                let (pressed, starred) = plugin_row(
-                    ui,
-                    rect,
-                    &row,
-                    &browser.query,
-                    active,
-                    favorite(row.id),
-                    cx.keyboard,
-                );
-                if starred {
-                    star = Some(row);
-                } else if pressed {
-                    add = Some(row);
-                }
+            let active = index == browser.active;
+            let (_, rect) = ui.allocate_space(vec2(ui.available_width(), pop::PLUGIN_ROW));
+            if active && follow {
+                ui.scroll_to_rect(rect, None);
             }
-        });
+            if !reach.intersects(rect) {
+                continue;
+            }
+            let (pressed, starred) = plugin_row(
+                ui,
+                rect,
+                &row,
+                &browser.query,
+                active,
+                favorite(row.id),
+                cx.keyboard,
+            );
+            if starred {
+                star = Some(row);
+            } else if pressed {
+                add = Some(row);
+            }
+        }
+    });
     browser.listing = Some(listing);
     if let Some(filter) = picked {
         browser.filter = filter;
         browser.query.clear();
         browser.active = 0;
+        browser.rewind = true;
     }
     if let Some(row) = star {
         cx.out.push(Intent::Favorite {
@@ -482,6 +486,21 @@ pub fn show(ui: &mut Ui, browser: &mut Browser, cx: &mut PopCx<'_>) -> Outcome {
         outcome = Outcome::Close;
     }
     outcome
+}
+
+/// One of the browser's scrolling columns, the nav or the list: from its top when `top`, and
+/// scrolled at once rather than eased (a row the arrows pick, one that takes the focus), as
+/// the prototype's `scrollIntoView` scrolls.
+fn column(salt: &str, top: bool) -> ScrollArea {
+    let area = ScrollArea::vertical()
+        .id_salt(salt)
+        .auto_shrink([false, false])
+        .animated(false);
+    if top {
+        area.vertical_scroll_offset(0.0)
+    } else {
+        area
+    }
 }
 
 /// What of a scrolled list is drawn and sensed: the part in view and [`pop::LIST_REACH`]
@@ -561,7 +580,7 @@ fn nav_item(
     let response = widgets::press(ui, rect, Id::new(("nav", filter)));
     // Tab reaches an item just out of view; it scrolls in at once, so held Tab keeps up.
     if response.gained_focus() {
-        ui.scroll_to_rect_animation(rect, None, ScrollAnimation::none());
+        ui.scroll_to_rect(rect, None);
     }
     let painter = ui.painter();
     let (fill, ink) = if on {
@@ -636,7 +655,7 @@ fn plugin_row(
     });
     // Tab reaches a row just out of view; it scrolls in at once, so held Tab keeps up.
     if response.gained_focus() || star.gained_focus() {
-        ui.scroll_to_rect_animation(rect, None, ScrollAnimation::none());
+        ui.scroll_to_rect(rect, None);
     }
     let icon = Rect::from_center_size(star_rect.center(), vec2(pop::STAR, pop::STAR));
     if starred {

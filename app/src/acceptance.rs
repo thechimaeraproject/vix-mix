@@ -1305,3 +1305,196 @@ fn an_open_browser_lists_what_a_rescan_found() {
     let next = h.text_rect("Airwindows Consolidated");
     assert!(new.top() < next.top(), "first, A to Z: {new:?} {next:?}");
 }
+
+/// The browser's list as it shows: right of the nav, between the search row and the footer.
+fn browser_list(h: &Harness) -> egui::Rect {
+    let area = browser_area(h);
+    egui::Rect::from_min_max(
+        Pos2::new(
+            area.left() + pop::NAV_WIDTH,
+            area.top() + pop::SEARCH_HEIGHT,
+        ),
+        Pos2::new(area.right(), area.bottom() - pop::BROWSER_FOOT),
+    )
+}
+
+/// The browser's nav as it shows: left of the list, between the search row and the footer.
+fn browser_nav(h: &Harness) -> egui::Rect {
+    let area = browser_area(h);
+    egui::Rect::from_min_max(
+        Pos2::new(area.left(), area.top() + pop::SEARCH_HEIGHT),
+        Pos2::new(
+            area.left() + pop::NAV_WIDTH,
+            area.bottom() - pop::BROWSER_FOOT,
+        ),
+    )
+}
+
+fn browser_area(h: &Harness) -> egui::Rect {
+    let popover = h.shell.popover.as_ref().expect("a popover is open");
+    assert!(matches!(popover, Popover::Browser(_)), "{popover:?}");
+    h.ctx
+        .memory(|m| m.area_rect(popover.area_id()))
+        .expect("the browser was drawn")
+}
+
+/// Whether the last frame drew `text` inside `view` (the console's own texts are not the
+/// browser's names: none of its inserts is one these tests look for).
+fn shown(h: &Harness, view: egui::Rect, text: &str) -> bool {
+    h.texts
+        .iter()
+        .any(|(t, rect, _)| t == text && view.contains_rect(*rect))
+}
+
+/// The wheel turned by `delta` points over `at` (less than zero scrolls down), and the
+/// frames the wheel's smoothing takes to apply all of it.
+fn wheel(h: &mut Harness, at: Pos2, delta: f32) {
+    let _ = h.pass(vec![
+        egui::Event::PointerMoved(at),
+        egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: vec2(0.0, delta),
+            phase: egui::TouchPhase::Move,
+            modifiers: Modifiers::NONE,
+        },
+    ]);
+    h.idle(30);
+}
+
+#[test]
+fn typing_after_a_scroll_shows_the_first_hit_that_enter_adds() {
+    let mut h = Harness::new();
+    let game = open_browser(&mut h);
+    let list = browser_list(&h);
+    wheel(&mut h, list.center(), -5000.0);
+    assert!(
+        shown(&h, list, "Youlean Loudness Meter 2"),
+        "scrolled to the end"
+    );
+    assert!(!shown(&h, list, "Airwindows Consolidated"));
+    // "e": EchoBoy is the first hit, picked, and the list starts at its top to show it.
+    let _ = h.type_text("e");
+    h.idle(1);
+    assert!(shown(&h, list, "EchoBoy"), "{:?}", h.drawn());
+    let sent = h.key(Key::Enter, Modifiers::NONE);
+    assert_eq!(
+        sent,
+        vec![Command::AddInsert {
+            strip: game,
+            plugin: example::plugin("EchoBoy"),
+            at: 0
+        }]
+    );
+}
+
+#[test]
+fn typing_while_a_picked_row_scrolls_in_still_shows_the_first_hit() {
+    let mut h = Harness::new();
+    let _ = open_browser(&mut h);
+    let list = browser_list(&h);
+    // Down picks rows past the list's bottom, each scrolling in; a letter typed at once makes
+    // a new list from its top, and no scroll still under way pulls it back down.
+    for _ in 0..20 {
+        let _ = h.key(Key::ArrowDown, Modifiers::NONE);
+    }
+    let _ = h.type_text("e");
+    h.idle(30);
+    assert!(shown(&h, list, "EchoBoy"), "{:?}", h.drawn());
+}
+
+#[test]
+fn the_browser_opens_at_the_top_of_its_list_and_nav_on_any_strip() {
+    let mut h = Harness::new();
+    let _ = open_browser(&mut h);
+    let (list, nav) = (browser_list(&h), browser_nav(&h));
+    wheel(&mut h, list.center(), -5000.0);
+    wheel(&mut h, nav.center(), -5000.0);
+    assert!(!shown(&h, list, "Airwindows Consolidated"));
+    assert!(!shown(&h, nav, "Favorites"));
+    let _ = h.key(Key::Escape, Modifiers::NONE);
+    assert_eq!(h.shell.popover, None);
+    // Opened again from Mic's "+ Add plugin", the list and the nav start at their tops.
+    let mic = Strip::Channel(h.channel(0));
+    let len = h.setup().channels[0].chain.len();
+    let _ = h.click(h.slot(mic, len).center());
+    h.idle(1);
+    let (list, nav) = (browser_list(&h), browser_nav(&h));
+    assert!(shown(&h, list, "A"), "the first group's heading");
+    assert!(
+        shown(&h, list, "Airwindows Consolidated"),
+        "{:?}",
+        h.drawn()
+    );
+    assert!(shown(&h, nav, "Favorites"), "{:?}", h.drawn());
+    // The row drawn picked is the row Enter adds.
+    let sent = h.key(Key::Enter, Modifiers::NONE);
+    assert_eq!(
+        sent,
+        vec![Command::AddInsert {
+            strip: mic,
+            plugin: example::plugin("Airwindows Consolidated"),
+            at: len
+        }]
+    );
+}
+
+#[test]
+fn a_nav_filter_picked_after_a_scroll_shows_its_first_row() {
+    let mut h = Harness::new();
+    // Twenty more compressors: Dynamics is longer than the list shows.
+    let mut catalog = h.host.inner.catalog().clone();
+    let model = catalog
+        .plugins
+        .iter()
+        .find(|p| p.name == "Pro-C 2")
+        .cloned()
+        .expect("Pro-C 2 is in the example catalog");
+    for n in 1..=20 {
+        let mut plugin = model.clone();
+        plugin.id = format!("{}-{n}", model.id);
+        plugin.name = format!("Zz Comp {n:02}");
+        catalog.plugins.push(plugin);
+    }
+    let first = catalog
+        .plugins
+        .iter()
+        .filter(|p| p.kind == model.kind)
+        .map(|p| p.name.clone())
+        .min_by_key(|name| name.to_lowercase())
+        .expect("a compressor");
+    h.host.catalog = Some(catalog);
+    let _ = open_browser(&mut h);
+    let (list, nav) = (browser_list(&h), browser_nav(&h));
+    wheel(&mut h, list.center(), -5000.0);
+    assert!(!shown(&h, list, &first));
+    // The nav's Dynamics, not a row's type column.
+    let dynamics = h
+        .texts
+        .iter()
+        .find(|(t, rect, _)| t == "Dynamics" && nav.contains_rect(*rect))
+        .map(|(_, rect, _)| rect.center())
+        .expect("Dynamics in the nav");
+    let _ = h.click(dynamics);
+    h.idle(1);
+    assert!(shown(&h, list, &first), "{first} in {:?}", h.drawn());
+}
+
+#[test]
+fn a_panel_s_list_opens_at_its_top_on_any_channel() {
+    let mut h = Harness::new();
+    let (music, browser) = (h.channel(2), h.channel(3));
+    let _ = h.click(h.head(Strip::Channel(music)).center());
+    h.idle(2);
+    let top = h.text_rect("PLAYING NOW").top();
+    let list = h.text_rect("Spotify").center();
+    wheel(&mut h, list, -5000.0);
+    assert!(
+        h.text_rect("PLAYING NOW").top() < top,
+        "the app list scrolled"
+    );
+    let _ = h.key(Key::Escape, Modifiers::NONE);
+    // Another channel's panel, the same list: it starts at its top.
+    let _ = h.click(h.head(Strip::Channel(browser)).center());
+    h.idle(1);
+    assert_eq!(h.text_rect("PLAYING NOW").top(), top);
+}
