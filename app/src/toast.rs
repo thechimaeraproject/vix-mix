@@ -111,6 +111,7 @@ impl Toasts {
         let wrap = (screen.width() - 2.0 * pop::EDGE_MARGIN - left - right).max(0.0);
         Area::new(id)
             .order(Order::Tooltip)
+            .fade_in(false)
             .fixed_pos(at)
             .show(ctx, |ui| {
                 ui.set_opacity(opacity);

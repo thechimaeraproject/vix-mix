@@ -179,18 +179,22 @@ impl Harness {
         }
         self.intents = intents.clone();
         let acted = !intents.is_empty();
+        let asked = output
+            .viewport_output
+            .get(&egui::ViewportId::ROOT)
+            .is_some_and(|v| v.repaint_delay.is_zero());
         self.shell
             .dispatch(&mut self.host, &mut self.editors, intents);
-        if acted {
-            // The window draws again at once after acting, so what it shows (and where a
-            // press lands next) is the setup the command made.
+        if acted || asked {
+            // The window draws again at once after acting or when egui asks, so what it
+            // shows (and where a press lands next) is what the frame made.
             self.again();
         }
         self.host.sent_since(from)
     }
 
-    /// The frame the window draws right after one that acted: no input, its own gestures
-    /// carried out but not followed by another.
+    /// The frame the window draws right after one that acted or asked for it: no input, its
+    /// own gestures carried out but not followed by another.
     fn again(&mut self) {
         let input = egui::RawInput {
             screen_rect: Some(self.screen),
