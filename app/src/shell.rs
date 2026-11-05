@@ -2,8 +2,9 @@
 //! ([`crate::ui::draw`]) reads the host and pushes [`Intent`]s; [`Shell::dispatch`] then
 //! carries them out against the host: commands applied (each refusal a toast, which says
 //! what to do), popovers opened and closed, the toasts a removal or a move earns, Undo,
-//! editors queued to open. Nothing here owns a window or a device, so the headless tests
-//! drive the same `Shell` the window does.
+//! editors queued to open, then opened. Nothing here owns a window or a device (an editor's
+//! window comes from an [`Opener`]), so the headless tests drive the same `Shell` the window
+//! does.
 
 use std::collections::BTreeMap;
 
@@ -11,7 +12,7 @@ use vixmix_host::{BackendState, Host, HostEvent};
 use vixmix_model::{ChannelKind, Command, InstanceId, Setup, Strip};
 
 use crate::console::{Anchor, Gestures};
-use crate::editors::{EditorWindows, MAX_EDITORS};
+use crate::editors::{EditorWindows, MAX_EDITORS, Opener};
 use crate::meters::Meters;
 use crate::popover::{Popover, SourcePanel};
 use crate::theme::pop;
@@ -261,6 +262,22 @@ impl Shell {
             }
         }
         self.toasts.expire(self.now);
+    }
+
+    /// Opens the editors the frame's gestures queued, each in a window from `opener`; a
+    /// refusal goes to the toast line, saying what to do.
+    pub fn open_editors(
+        &mut self,
+        opener: &dyn Opener,
+        host: &mut dyn Host,
+        editors: &mut EditorWindows,
+    ) {
+        for instance in std::mem::take(&mut self.to_open) {
+            if let Err(problem) = editors.open(opener, host, instance) {
+                log::warn!("{problem}");
+                self.toasts.show(problem, None, self.now, pop::TOAST_HOST_S);
+            }
+        }
     }
 
     /// Closes the open popover, sending what it holds (a rename).
