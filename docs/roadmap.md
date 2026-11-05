@@ -19,6 +19,8 @@ the [build map](build-map.md) holds the order and the conflict rules.
 | The engine's graph: chains on every channel and both mixes with each plugin lent once and shared between graphs, the MON/MST split, mix chains, replaced graphs dropped on the host thread (behind the acknowledgement, or at once when nothing ticks), setting instances up again for a new rate or new buses, pass-through problems, no allocation on the tick | [reference/engine.md](reference/engine.md) | 2026-11-04 |
 | The PipeWire backend: the streams, the rings and their latency governor, the tick in the first output to run, the registry with app identity, routing by serial through the `default` metadata, `apply` diffing, reconnect; integration tests against a headless daemon; the two-minute run at 256 with zero xruns passes on a quiet machine and waits for a shell with realtime scheduling to be called met | [reference/pipewire.md](reference/pipewire.md) | 2026-11-04 |
 | The cookbook for a headless PipeWire in CI, WSL2, a VM or a container | [cookbook/run-headless-pipewire.md](cookbook/run-headless-pipewire.md) | 2026-11-04 |
+| The host: boot in order, PipeWire kept on Linux with every app routed as it appears, `Applied` acted on part by part, the debounced save, undo of a removed channel or insert (the model's restore commands, change request 2), pass-throughs and notices surfaced, shutdown in the kit's order; proven on the null backend with a real plugin on both legs and against the headless daemon on Linux | [reference/host.md](reference/host.md) | 2026-11-04 |
+| The by-hand pass for the first real test on Fedora, waiting for handoff 08 to run it | [cookbook/by-hand-pass.md](cookbook/by-hand-pass.md) | 2026-11-04 |
 
 ## Next
 
@@ -32,14 +34,13 @@ Wave 2, in parallel, each in its own worktree ([build map](build-map.md) § Wave
 | [04 — Plugins](handoffs/04-plugins.md) | scan and cache, instances, the rack, state, editor sessions, tested with the kit's test plugin | shipped 2026-11-04 (see Built) |
 | [05 — App](handoffs/05-app.md) | the look gate, then the console exactly as prototype v5 against `FakeHost` | look gate rendered, awaiting the user's verdict; steps 2–9 not started |
 
-Then wave 3: [06 — Host and integration](handoffs/06-host-and-integration.md) once 01–04 have
-merged; then [07 — Kit lifts](handoffs/07-kit-lifts.md) and
+Then wave 3: [06 — Host and integration](handoffs/06-host-and-integration.md), shipped
+2026-11-04 (see Built; the acceptance's Fedora bullet waits for the by-hand pass); then
+[07 — Kit lifts](handoffs/07-kit-lifts.md) and
 [08 — Packaging and the first real test](handoffs/08-packaging-and-first-real-test.md).
 
 ## Named but not built
 
-- **Cookbooks.** `cookbook/by-hand-pass.md` (the first real test on Fedora; handoff 06 writes
-  it, handoff 08 runs it).
 - **A Windows backend**, `vixmix-cpal`, over the kit's `audio-io` crate once handoff 07 lifts it.
 - **Plugin isolation**: plugins out of process (v2), over the kit's planned `proc` crate.
 - **Chain import and export**, a presets browser, MIDI and instruments.

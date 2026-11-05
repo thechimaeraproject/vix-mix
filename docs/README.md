@@ -6,7 +6,7 @@ Every doc belongs to one class, and the class says how much to trust it:
 |---|---|---|---|
 | **Start here** | `charter.md`, `build-map.md`, `roadmap.md` | The premise and the settled decisions, the plan of record for the lanes, and the status. | The charter is a decision, not an edit; the build map and the roadmap are true as of their date and are updated in the commit that changes them. |
 | **Reference** | `reference/` | What one crate (or the app) does and requires today. Each owns the source files it explains, on an `Owns:` line, and the references together partition `crates/*` and `app`. | Code depends on it; keep it exact. |
-| **Cookbook** | `cookbook/` | A numbered procedure for one task, ending in *How you know it worked*. Lane 03 wrote the first; lane 06 writes the next. | Follow it literally; if a step is wrong, fix the doc in the same commit. |
+| **Cookbook** | `cookbook/` | A numbered procedure for one task, ending in *How you know it worked*. Lane 03 wrote the first; lane 06 the by-hand pass. | Follow it literally; if a step is wrong, fix the doc in the same commit. |
 | **Record** | `design/`, `handoffs/`, the `kit-*.md` adoption records | What was decided and why — the product design, one lane of work, what was taken from the kit — and its acceptance evidence once shipped. | History once shipped, intention before; the first paragraph says which. Never an API reference; the reference it produced is. |
 | **Postmortem** | `postmortem/` (none yet) | A shipped bug or a retired idea, kept for the lesson. Numbered, immutable. | History, not guidance. |
 
@@ -35,7 +35,8 @@ on every push and in CI.
 - [reference/engine.md](reference/engine.md) — the realtime graph: the prepared graph and its
   acknowledged handoff, the allocation-free tick, meters, stats, the null backend.
 - [reference/host.md](reference/host.md) — the orchestrator: the `Host` trait the window
-  drives, `RealHost`'s boot and save, `FakeHost`'s example console and simulated meters.
+  drives, `RealHost`'s boot, routing, autosave, undo and shutdown order, `FakeHost`'s example
+  console and simulated meters.
 - [reference/model.md](reference/model.md) — the setup as data: the types, the commands and
   their validation, the fader taper, `setup.ron`, the engine snapshot.
 - [reference/pipewire.md](reference/pipewire.md) — the Linux backend's contract: the config,
@@ -45,6 +46,9 @@ on every push and in CI.
 
 ## Cookbook
 
+- [cookbook/by-hand-pass.md](cookbook/by-hand-pass.md) — the first real test on Fedora: the Wave
+  Link scene on real devices and apps, checked by ear and with PipeWire's tools, the latency
+  measured.
 - [cookbook/run-headless-pipewire.md](cookbook/run-headless-pipewire.md) — a PipeWire and
   WirePlumber daemon with a null sink and a null source in CI, WSL2, a VM or a container, and
   the backend's tests against it.

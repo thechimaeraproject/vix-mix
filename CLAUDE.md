@@ -84,6 +84,21 @@ keeps the two-minute acceptance open until a shell with realtime scheduling. Cha
 (the backend's additions) and 7 (the host reports `Absent` with a banner until 06 keeps the
 backend) are agreed and applied.
 
+**The host is implemented (2026-11-04):** `vixmix-host` owns the orchestration: boot in order
+(setup, plugins rescanned against their cache, instances with their state, the engine prepared,
+then the backend), PipeWire kept for the whole run on Linux with every app routed the moment it
+appears and again when the setup moves it, each command's `Applied` acted on, the save debounced
+500 ms, a removed channel's or insert's instances kept for its undo (handed out as
+`HostEvent::Removed`; the model's `RestoreChannel` and `RestoreInsert`, change request 2),
+pass-throughs and notices surfaced, and shutdown in the kit's order (routings cleared, the
+backend gone, the final save, every instance home and retired on the UI thread); the window
+polls it when it asks and shows its notes in the banner line. It does not own what a command
+means (01), the tick (02), the streams and routing writes (03), how instances are made (04) or
+how anything is drawn (05). Proven on the null backend with a real plugin on both legs and
+against the headless daemon on Linux; the Fedora pass waits for the user. See
+`docs/reference/host.md`, `docs/cookbook/by-hand-pass.md` and
+[handoff 06](docs/handoffs/06-host-and-integration.md).
+
 ## Git workflow (read first)
 
 **Work on a branch, never on `master`/`main`.** Every change is a PR: `kit push --yes` runs
