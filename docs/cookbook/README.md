@@ -12,6 +12,9 @@ did. If a step turns out to be wrong, fix the doc in the same commit.
 - [by-hand-pass.md](by-hand-pass.md) — the first real test on Fedora: the Wave Link scene on
   real devices, a mic through a plugin, apps back in their channels, Master recorded by Discord
   and OBS, save and restore, xruns and the latency measured (handoff 06; handoff 08 runs it).
+- [install-on-fedora.md](install-on-fedora.md) — Vix Mix as a desktop app on Fedora: the build
+  prerequisites, `cargo install` or the release tarball, `install.sh` putting the desktop
+  entry, the icon and the metadata where the launcher finds them (handoff 08).
 - [run-headless-pipewire.md](run-headless-pipewire.md) — a headless PipeWire and WirePlumber
   with null devices in CI, WSL2, a VM or a container, and the backend's tests against it
   (handoff 03).

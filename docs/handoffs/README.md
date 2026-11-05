@@ -26,3 +26,5 @@ doc it names.
   taken back by Vix and Vix Mix.
 - [08-packaging-and-first-real-test.md](08-packaging-and-first-real-test.md) — the desktop
   entry and metainfo, an install path, Flatpak investigated, the first real test on Fedora.
+- [09-round-1-fixes.md](09-round-1-fixes.md) — what the first by-hand pass on Fedora finds,
+  fixed; seeded with the items the earlier lanes left open for it.

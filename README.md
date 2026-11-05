@@ -42,6 +42,13 @@ cargo run -p vix-mix -- --quit-after-frames 3   # draws three frames and exits 0
 kit doctor                                   # what is off in this checkout, and the fix for each
 ```
 
+## Install
+
+On Fedora, as a desktop app in the KDE launcher with its icon:
+[docs/cookbook/install-on-fedora.md](docs/cookbook/install-on-fedora.md) — the build
+prerequisites, then `cargo install --path app --locked` and `packaging/linux/install.sh`, or
+the release tarball `scripts/package/linux-tarball.sh` builds.
+
 ## Docs
 
 [docs/README.md](docs/README.md) is the index; its trust table says how much to believe each
