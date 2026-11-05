@@ -1558,3 +1558,180 @@ fn a_panel_s_list_opens_at_its_top_on_any_channel() {
     h.idle(1);
     assert_eq!(h.text_rect("PLAYING NOW").top(), top);
 }
+
+/// Whether the last frame drew `text` whole in the open popover, inside what clips it: a row
+/// its scrolled list shows.
+fn in_view(h: &Harness, text: &str) -> bool {
+    let popover = h.shell.popover.as_ref().expect("a popover is open");
+    let area = h
+        .ctx
+        .memory(|m| m.area_rect(popover.area_id()))
+        .expect("the popover was drawn");
+    h.whole
+        .iter()
+        .any(|(t, rect)| t == text && area.contains_rect(*rect))
+}
+
+/// The example's devices and `extra` more inputs and outputs after them ("Line in 1",
+/// "Line out 1" and on), as a machine with many answers: more than a panel's list shows.
+/// Answers the inputs and the outputs, in the order the panels list them.
+fn many_devices(h: &mut Harness, extra: usize) -> (Vec<DeviceRef>, Vec<DeviceRef>) {
+    use vixmix_model::{DeviceDirection, DeviceInfo};
+    let mut devices = h.host.inner.devices().to_vec();
+    for n in 1..=extra {
+        for (name, direction, input) in [
+            (format!("Line in {n}"), DeviceDirection::Input, true),
+            (format!("Line out {n}"), DeviceDirection::Output, false),
+        ] {
+            devices.push(DeviceInfo {
+                device: example::device(&name, input),
+                direction,
+            });
+        }
+    }
+    let of = |direction| {
+        devices
+            .iter()
+            .filter(|d| d.direction == direction)
+            .map(|d| d.device.clone())
+            .collect::<Vec<_>>()
+    };
+    let lists = (of(DeviceDirection::Input), of(DeviceDirection::Output));
+    h.host.devices = Some(devices);
+    lists
+}
+
+#[test]
+fn a_panel_shows_the_radio_it_opens_on_and_each_row_the_keys_reach() {
+    let mut h = Harness::new();
+    let (inputs, outputs) = many_devices(&mut h, 30);
+    let focused = |h: &Harness| h.ctx.memory(|m| m.focused());
+    // Synth plays the last input, far below the twelve rows its panel's list shows.
+    let synth = h.channel(5);
+    let pick = |device: &DeviceRef| Command::SetSource {
+        ch: synth,
+        source: Source::Hardware(Some(device.clone())),
+    };
+    let last = inputs.len() - 1;
+    assert!(h.host.inner.apply(pick(&inputs[last])).unwrap().changed());
+    let _ = h.click(h.head(Strip::Channel(synth)).center());
+    h.idle(2);
+    let row = |i: usize| popover::input_id(&inputs[i]);
+    let name = |i: usize| inputs[i].description.as_str();
+    assert_eq!(focused(&h), Some(row(last)));
+    assert!(in_view(&h, name(last)), "the checked radio shows");
+    // Up picks the row before it, shown; Down twice comes back and goes round to the first,
+    // and the list scrolls up to it; Up goes round to the last, and the list scrolls down.
+    assert_eq!(
+        h.key(Key::ArrowUp, Modifiers::NONE),
+        vec![pick(&inputs[last - 1])]
+    );
+    assert!(in_view(&h, name(last - 1)));
+    assert_eq!(
+        h.key(Key::ArrowDown, Modifiers::NONE),
+        vec![pick(&inputs[last])]
+    );
+    assert_eq!(
+        h.key(Key::ArrowDown, Modifiers::NONE),
+        vec![pick(&inputs[0])]
+    );
+    assert_eq!(focused(&h), Some(row(0)));
+    assert!(in_view(&h, name(0)), "round to the first, shown");
+    assert!(!in_view(&h, name(last)));
+    assert_eq!(
+        h.key(Key::ArrowUp, Modifiers::NONE),
+        vec![pick(&inputs[last])]
+    );
+    assert!(in_view(&h, name(last)), "round to the last, shown");
+    // Tab walks the list from its first row, each row it reaches shown.
+    assert_eq!(
+        h.key(Key::ArrowDown, Modifiers::NONE),
+        vec![pick(&inputs[0])]
+    );
+    for i in 1..=last {
+        assert!(h.key(Key::Tab, Modifiers::NONE).is_empty());
+        assert_eq!(focused(&h), Some(row(i)));
+        assert!(in_view(&h, name(i)), "Tab to row {i}, shown");
+    }
+    let _ = h.key(Key::Escape, Modifiers::NONE);
+
+    // Master's output panel, on its last output: shown, and Up picks the one before, shown.
+    let set = |device: Option<&DeviceRef>| Command::SetMixDevice {
+        mix: MixId::Master,
+        device: device.cloned(),
+    };
+    let last = outputs.len() - 1;
+    let name = |i: usize| outputs[i].description.as_str();
+    assert!(
+        h.host
+            .inner
+            .apply(set(Some(&outputs[last])))
+            .unwrap()
+            .changed()
+    );
+    let _ = h.click(h.head(Strip::Mix(MixId::Master)).center());
+    h.idle(2);
+    assert_eq!(focused(&h), Some(popover::output_id(Some(&outputs[last]))));
+    assert!(in_view(&h, name(last)), "the checked output shows");
+    assert_eq!(
+        h.key(Key::ArrowUp, Modifiers::NONE),
+        vec![set(Some(&outputs[last - 1]))]
+    );
+    assert!(in_view(&h, name(last - 1)));
+    // Down goes back, then round to "No device", first, and the list scrolls up to it.
+    let _ = h.key(Key::ArrowDown, Modifiers::NONE);
+    assert_eq!(h.key(Key::ArrowDown, Modifiers::NONE), vec![set(None)]);
+    assert!(in_view(&h, "No device"), "round to No device, shown");
+}
+
+#[test]
+fn shift_tab_through_sixteen_plugin_folders_shows_each() {
+    let mut h = Harness::new();
+    let folder = |i: usize| format!("D:/VST3/{i}");
+    let prefs = vixmix_model::Prefs {
+        plugin_dirs: (0..MAX_PLUGIN_DIRS)
+            .map(|i| std::path::PathBuf::from(folder(i)))
+            .collect(),
+        ..h.setup().prefs.clone()
+    };
+    assert!(h.host.apply(Command::SetPrefs(prefs)).unwrap().changed());
+    let menu = Pos2::new(
+        size::HEADER_PAD_X + size::MENU_BUTTON[0] / 2.0,
+        size::HEADER / 2.0,
+    );
+    let _ = h.click(menu);
+    h.idle(2);
+    let _ = h.click(h.text("Preferences"));
+    h.idle(2);
+    // From the field under the list, Shift+Tab goes back to the folders' bins, the last
+    // first; each one it reaches shows, though the list holds more than it shows.
+    let _ = h.click(h.text("Another folder to scan"));
+    let focused = |h: &Harness| h.ctx.memory(|m| m.focused());
+    let bin = |i: usize| egui::Id::new(("folder", folder(i).as_str()));
+    let last = MAX_PLUGIN_DIRS - 1;
+    assert!(
+        !in_view(&h, &folder(last)),
+        "the last folder starts out of view"
+    );
+    let mut tabs = 0;
+    while focused(&h) != Some(bin(last)) {
+        assert!(
+            tabs < 4,
+            "Shift+Tab never reached the last folder: {:?}",
+            focused(&h)
+        );
+        let _ = h.key(Key::Tab, Modifiers::SHIFT);
+        h.idle(1);
+        tabs += 1;
+    }
+    assert!(
+        in_view(&h, &folder(last)),
+        "Shift+Tab to the last folder, shown"
+    );
+    for i in (0..last).rev() {
+        let _ = h.key(Key::Tab, Modifiers::SHIFT);
+        h.idle(1);
+        assert_eq!(focused(&h), Some(bin(i)));
+        assert!(in_view(&h, &folder(i)), "Shift+Tab to folder {i}, shown");
+    }
+}

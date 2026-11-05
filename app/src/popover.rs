@@ -18,7 +18,9 @@
 //! outputs (the first row when none is checked), so the keys work at once; its list starts at
 //! its top, wherever the last panel left it. A list of radios answers the keys as a browser's
 //! radio group does: Up and Down move to the row before or after, round the ends, and pick it;
-//! Space picks the focused row.
+//! Space picks the focused row. A row the focus reaches (the checked radio as a panel opens,
+//! the arrows' pick, Tab) scrolls into view at once, as the prototype's `focus()` scrolls it,
+//! so the focus and a pick are always on a row the list shows.
 
 use egui::text::{CCursor, CCursorRange};
 use egui::{
@@ -67,7 +69,7 @@ pub struct SourcePanel {
     pub query: String,
     /// Put the focus in the name field with its text selected (a channel just added).
     pub focus_name: bool,
-    /// Its first frame: the focus goes in.
+    /// Its first frame is still to come: the focus goes in (`opening`).
     pub fresh: bool,
 }
 
@@ -75,7 +77,7 @@ pub struct SourcePanel {
 #[derive(Clone, Debug, PartialEq)]
 pub struct OutputPanel {
     pub mix: MixId,
-    /// Its first frame: the focus goes to the checked output.
+    /// Its first frame is still to come: the focus goes to the checked output (`opening`).
     pub fresh: bool,
 }
 
@@ -420,6 +422,11 @@ fn list_row(
 ) -> bool {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), pop::ROW), Sense::hover());
     let response = widgets::press(ui, rect, id);
+    // The focus reaching a row out of view scrolls it in; the panels move the focus before
+    // their rows are drawn, so the row gains it on the frame it is drawn.
+    if response.gained_focus() {
+        ui.scroll_to_rect(rect, None);
+    }
     let painter = ui.painter();
     if response.hovered() {
         painter.rect_filled(rect, size::CORNER, colour::CTL);
@@ -548,7 +555,8 @@ fn focus_row(rows: &[(Id, bool)]) -> Option<Id> {
 /// A radio group's keys, a browser's: with one of `rows` focused, Up and Down move the focus
 /// to the row before or after it, round the ends, and answer that row, which the caller
 /// picks. The arrows are the group's while it has the focus, so egui does not move the focus
-/// out of the popover with them.
+/// out of the popover with them. Called before the rows are drawn, so the row it moves the
+/// focus to scrolls in on this frame.
 fn radio_keys(ui: &Ui, rows: &[Id]) -> Option<usize> {
     let at = rows.iter().position(|id| ui.memory(|m| m.has_focus(*id)))?;
     ui.memory_mut(|m| {
@@ -570,6 +578,15 @@ fn radio_keys(ui: &Ui, rows: &[Id]) -> Option<usize> {
     Some(to)
 }
 
+/// Whether this frame opens a panel still `fresh`, which it then no longer is. A kind's first
+/// appearance is a sizing pass, drawn unseen with its controls disabled, and a disabled row
+/// gives up a focus it is given before it is drawn: the panel opens on the frame after.
+fn opening(ui: &Ui, fresh: &mut bool) -> bool {
+    let opening = *fresh && !ui.is_sizing_pass();
+    *fresh &= !opening;
+    opening
+}
+
 /// Puts the focus in `id` on a popover's first frame; with `select`, its text selected.
 fn focus_first(ui: &Ui, id: Id, select: Option<usize>) {
     ui.memory_mut(|m| m.request_focus(id));
@@ -588,7 +605,7 @@ fn source_panel(ui: &mut Ui, panel: &mut SourcePanel, cx: &mut PopCx<'_>) -> Out
     let Some(channel) = setup.channel(panel.ch) else {
         return Outcome::Drop;
     };
-    let fresh = std::mem::take(&mut panel.fresh);
+    let fresh = opening(ui, &mut panel.fresh);
     let name = name_row(
         ui,
         NameRow::Field {
@@ -673,6 +690,25 @@ fn source_panel(ui: &mut Ui, panel: &mut SourcePanel, cx: &mut PopCx<'_>) -> Out
             let checked =
                 |device: &DeviceRef| current.as_ref().is_some_and(|c| c.name == device.name);
             let mut send = None;
+            // The focus moves before the rows are drawn, so the row it reaches scrolls in.
+            let ids: Vec<_> = rows.iter().map(|(device, _)| input_id(device)).collect();
+            if fresh && !panel.focus_name {
+                let marked: Vec<_> = rows
+                    .iter()
+                    .map(|(device, _)| (input_id(device), checked(device)))
+                    .collect();
+                if let Some(id) = focus_row(&marked) {
+                    focus_first(ui, id, None);
+                }
+            }
+            if let Some(to) = radio_keys(ui, &ids)
+                && !checked(&rows[to].0)
+            {
+                send = Some(Command::SetSource {
+                    ch: panel.ch,
+                    source: Source::Hardware(Some(rows[to].0.clone())),
+                });
+            }
             list(ui, "input list", fresh, |ui| {
                 if rows.is_empty() {
                     empty_row(ui, "No input is present: connect one and it shows here.");
@@ -697,24 +733,6 @@ fn source_panel(ui: &mut Ui, panel: &mut SourcePanel, cx: &mut PopCx<'_>) -> Out
                     }
                 }
             });
-            let ids: Vec<_> = rows.iter().map(|(device, _)| input_id(device)).collect();
-            if fresh && !panel.focus_name {
-                let marked: Vec<_> = rows
-                    .iter()
-                    .map(|(device, _)| (input_id(device), checked(device)))
-                    .collect();
-                if let Some(id) = focus_row(&marked) {
-                    focus_first(ui, id, None);
-                }
-            }
-            if let Some(to) = radio_keys(ui, &ids)
-                && !checked(&rows[to].0)
-            {
-                send = Some(Command::SetSource {
-                    ch: panel.ch,
-                    source: Source::Hardware(Some(rows[to].0.clone())),
-                });
-            }
             if let Some(command) = send {
                 cx.out.push(Intent::Apply(command));
             }
@@ -778,13 +796,15 @@ fn devices(
 
 /// A panel's scrolling list (`.ap-list`): padded, at most 300 points tall; from its top when
 /// the panel opens (`top`), because every channel's panel shows the same list, which would
-/// otherwise keep where the last one was scrolled.
+/// otherwise keep where the last one was scrolled. It scrolls to a row the focus reaches at
+/// once rather than eased, as the prototype's `focus()` does, so held arrows keep up.
 fn list(ui: &mut Ui, salt: &str, top: bool, add: impl FnOnce(&mut Ui)) {
     let width = ui.available_width();
     let area = ScrollArea::vertical()
         .id_salt(salt)
         .max_height(pop::LIST_MAX)
-        .auto_shrink([false, true]);
+        .auto_shrink([false, true])
+        .animated(false);
     let area = if top {
         area.vertical_scroll_offset(0.0)
     } else {
@@ -827,7 +847,7 @@ fn empty_row(ui: &mut Ui, text: &str) {
 /// A mix's output panel.
 fn output_panel(ui: &mut Ui, panel: &mut OutputPanel, cx: &mut PopCx<'_>) -> Outcome {
     let mix = panel.mix;
-    let fresh = std::mem::take(&mut panel.fresh);
+    let fresh = opening(ui, &mut panel.fresh);
     let setup = cx.host.setup();
     let current = setup.mix(mix).device.as_ref();
     name_row(ui, NameRow::Fixed(mix.name()));
@@ -835,6 +855,35 @@ fn output_panel(ui: &mut Ui, panel: &mut OutputPanel, cx: &mut PopCx<'_>) -> Out
     let rows = devices(cx.host, DeviceDirection::Output, current);
     let checked = |device: &DeviceRef| current.is_some_and(|c| c.name == device.name);
     let mut send = None;
+    // The radios in order, "No device" first on Master, each with whether it is checked. The
+    // focus moves before the rows are drawn, so the row it reaches scrolls in.
+    let choices: Vec<(Option<&DeviceRef>, bool)> = (mix == MixId::Master)
+        .then_some((None, current.is_none()))
+        .into_iter()
+        .chain(
+            rows.iter()
+                .map(|(device, _)| (Some(device), checked(device))),
+        )
+        .collect();
+    let ids: Vec<_> = choices.iter().map(|(d, _)| output_id(*d)).collect();
+    if fresh {
+        let marked: Vec<_> = ids
+            .iter()
+            .zip(&choices)
+            .map(|(id, (_, on))| (*id, *on))
+            .collect();
+        if let Some(id) = focus_row(&marked) {
+            focus_first(ui, id, None);
+        }
+    }
+    if let Some(to) = radio_keys(ui, &ids)
+        && !choices[to].1
+    {
+        send = Some(Command::SetMixDevice {
+            mix,
+            device: choices[to].0.cloned(),
+        });
+    }
     list(ui, "output list", fresh, |ui| {
         if mix == MixId::Master
             && list_row(
@@ -874,34 +923,6 @@ fn output_panel(ui: &mut Ui, panel: &mut OutputPanel, cx: &mut PopCx<'_>) -> Out
             }
         }
     });
-    // The radios in order, "No device" first on Master, each with whether it is checked.
-    let choices: Vec<(Option<&DeviceRef>, bool)> = (mix == MixId::Master)
-        .then_some((None, current.is_none()))
-        .into_iter()
-        .chain(
-            rows.iter()
-                .map(|(device, _)| (Some(device), checked(device))),
-        )
-        .collect();
-    let ids: Vec<_> = choices.iter().map(|(d, _)| output_id(*d)).collect();
-    if fresh {
-        let marked: Vec<_> = ids
-            .iter()
-            .zip(&choices)
-            .map(|(id, (_, on))| (*id, *on))
-            .collect();
-        if let Some(id) = focus_row(&marked) {
-            focus_first(ui, id, None);
-        }
-    }
-    if let Some(to) = radio_keys(ui, &ids)
-        && !choices[to].1
-    {
-        send = Some(Command::SetMixDevice {
-            mix,
-            device: choices[to].0.cloned(),
-        });
-    }
     if mix == MixId::Master {
         note_row(ui, "Apps can also record Master as an input.");
     }
@@ -1004,6 +1025,15 @@ fn prefs_panel(ui: &mut Ui, panel: &mut PrefsPanel, cx: &mut PopCx<'_>) -> Outco
     name_row(ui, NameRow::Fixed("Preferences"));
     heading_row(ui, "Quantum", false);
     let mut send = None;
+    let ids = Prefs::QUANTA.map(|quantum| Id::new(("quantum", quantum)));
+    if let Some(to) = radio_keys(ui, &ids)
+        && Prefs::QUANTA[to] != prefs.quantum
+    {
+        send = Some(Prefs {
+            quantum: Prefs::QUANTA[to],
+            ..prefs.clone()
+        });
+    }
     list(ui, "quantum list", false, |ui| {
         for quantum in Prefs::QUANTA {
             let on = prefs.quantum == quantum;
@@ -1025,15 +1055,6 @@ fn prefs_panel(ui: &mut Ui, panel: &mut PrefsPanel, cx: &mut PopCx<'_>) -> Outco
             }
         }
     });
-    let ids = Prefs::QUANTA.map(|quantum| Id::new(("quantum", quantum)));
-    if let Some(to) = radio_keys(ui, &ids)
-        && Prefs::QUANTA[to] != prefs.quantum
-    {
-        send = Some(Prefs {
-            quantum: Prefs::QUANTA[to],
-            ..prefs.clone()
-        });
-    }
     note_row(
         ui,
         "Asked of PipeWire at 48 kHz; the graph has the last word.",
@@ -1098,6 +1119,10 @@ fn folder_row(ui: &mut Ui, path: &str, keyboard: bool) -> bool {
         vec2(size::HOVER_BUTTON, size::HOVER_BUTTON),
     );
     let response = widgets::press(ui, bin, Id::new(("folder", path))).on_hover_text("Remove");
+    // Tab reaching a folder out of view scrolls it in.
+    if response.gained_focus() {
+        ui.scroll_to_rect(rect, None);
+    }
     let ink = if response.hovered() {
         painter.rect_filled(bin, size::CORNER, colour::CTL_HI);
         colour::TEXT

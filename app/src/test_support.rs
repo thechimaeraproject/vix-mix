@@ -58,6 +58,8 @@ pub struct Recorder {
     pub busy: bool,
     /// A catalog in place of `FakeHost`'s: what a rescan found.
     pub catalog: Option<Catalog>,
+    /// Devices in place of `FakeHost`'s: a machine with more than a panel's list shows.
+    pub devices: Option<Vec<DeviceInfo>>,
 }
 
 impl Recorder {
@@ -78,6 +80,7 @@ impl Recorder {
             news: Vec::new(),
             busy: false,
             catalog: None,
+            devices: None,
         }
     }
 
@@ -133,6 +136,9 @@ impl Host for Recorder {
         self.inner.apps()
     }
     fn devices(&self) -> &[DeviceInfo] {
+        if let Some(devices) = &self.devices {
+            return devices;
+        }
         self.inner.devices()
     }
     fn open_editor(
@@ -191,6 +197,9 @@ pub struct Harness {
     time: f64,
     /// Every text the last frame painted: what it says, where, in which colour.
     pub texts: Vec<(String, Rect, Color32)>,
+    /// Every text the last frame painted whole inside what clips it (a scrolled list's view),
+    /// and where: what a user sees whole.
+    pub whole: Vec<(String, Rect)>,
     /// What the last frame's gestures asked.
     pub intents: Vec<Intent>,
 }
@@ -214,6 +223,7 @@ impl Harness {
             screen: Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 700.0)),
             time: 1.0,
             texts: Vec::new(),
+            whole: Vec::new(),
             intents: Vec::new(),
         };
         harness.idle(1);
@@ -242,10 +252,7 @@ impl Harness {
         });
         // Nothing uploads the font atlas here, and egui asserts a delta was handled.
         output.textures_delta.clear();
-        self.texts.clear();
-        for clipped in &output.shapes {
-            collect(&clipped.shape, &mut self.texts);
-        }
+        self.read(&output.shapes);
         self.intents = intents.clone();
         let acted = !intents.is_empty();
         let asked = output
@@ -278,12 +285,25 @@ impl Harness {
             intents = ui::draw(root, shell, host);
         });
         output.textures_delta.clear();
-        self.texts.clear();
-        for clipped in &output.shapes {
-            collect(&clipped.shape, &mut self.texts);
-        }
+        self.read(&output.shapes);
         self.shell
             .dispatch(&mut self.host, &mut self.editors, intents);
+    }
+
+    /// Keeps the texts a frame painted, and those it painted whole inside their clip.
+    fn read(&mut self, shapes: &[egui::epaint::ClippedShape]) {
+        self.texts.clear();
+        self.whole.clear();
+        for clipped in shapes {
+            let from = self.texts.len();
+            collect(&clipped.shape, &mut self.texts);
+            self.whole.extend(
+                self.texts[from..]
+                    .iter()
+                    .filter(|(_, rect, _)| clipped.clip_rect.contains_rect(*rect))
+                    .map(|(text, rect, _)| (text.clone(), *rect)),
+            );
+        }
     }
 
     /// What the window does before each frame: takes in what the host reported, stamped with
