@@ -7,12 +7,13 @@ reference" — so egui stays and Slint is not needed. Then the console became th
 interactive, over the `Host` trait: every gesture the acceptance lists sends its command
 (asserted headless in `app/src/acceptance.rs` on both CI legs), the popovers, the plugin
 browser, the toasts with Undo, the header's menu and preferences, editor windows (proven by
-hand on Windows with Goodhertz's Tone Control 3), 60 Hz pacing (1200 frames in 19.99 s on
-`FakeHost`, 0.32 % of a 24-core machine's CPU, 7.6 % of one core). [reference/app.md](../reference/app.md)
-is the contract as built. Nothing outside `app/` changed: `crates/vixmix-host/src/fake.rs`
-is unchanged, because the example data held everything the window shows. The build map's
-change request 8 proposes what the window needs from the host. Deviations, each with its
-reason:
+hand on Windows with Goodhertz's Tone Control 3, before and after they moved behind a trait the
+tests fake), 60 Hz pacing while the window can be seen and no frame while it is hidden (600
+frames in 9.99 s on `FakeHost`; 0.00 % of a core minimised). The CPU acceptance is open: see
+its deviation below. [reference/app.md](../reference/app.md) is the contract as built.
+Nothing outside `app/` changed: `crates/vixmix-host/src/fake.rs` is unchanged, because the
+example data held everything the window shows. The build map's change request 8 proposes
+what the window needs from the host. Deviations, each with its reason:
 
 - **The capture is the whole console, not one strip of each.** Every channel strip is the
   one `strip::channel` and both mixes the one `strip::mix`, so six and two cost nothing more,
@@ -32,8 +33,9 @@ reason:
 - **The header** says "Vix Mix" (the charter's name), not the prototype's "Mixer", draws no
   in-app window buttons (step 6: the desktop's decorations), and the display is the
   prototype's cells. Its menu button opens a menu (Preferences, Rescan plugins) where the
-  prototype showed a toast naming them; the preferences panel (the quantum, the extra plugin
-  folders) is drawn in the source panel's style, the prototype having none.
+  prototype showed a toast naming them; the preferences panel (the quantum, at most 16 extra
+  plugin folders, because every list is bounded) is drawn in the source panel's style, the
+  prototype having none.
 - **A rename is sent once, when the source panel closes**, not on every keystroke as the
   prototype's input handler renames: a rename re-describes the channel's PipeWire node, and
   the header already follows the field as it is typed.
@@ -54,12 +56,35 @@ reason:
 - **The window opens at the console's size**, not lane 00's 1280 × 720, as the prototype's
   app box is the console's, and its least size follows the content (the banner, the header's
   display beside the title on a one-channel console).
-- **Pacing is a 60 Hz grid, presented by mailbox**: lane 00's rule timed the next frame from
-  the end of the last, and measured 54 frames a second; frames now count from start to start
-  (a timer frame from when it was due), and input frames wait for the same cap. Lane 00's FIFO
-  present stalled for up to 80 ms behind Windows' compositor (39 to 57 frames a second), so
-  the surface presents by mailbox where it offers it, FIFO otherwise; the pacing, not vsync,
-  holds the rate.
+- **Pacing is a 60 Hz grid while the window can be seen, presented by mailbox**: lane 00's
+  rule timed the next frame from the end of the last, and measured 54 frames a second; frames
+  now count from start to start (a timer frame from when it was due), and input frames wait
+  for the same cap. Lane 00's FIFO present stalled for up to 80 ms behind Windows' compositor
+  (39 to 57 frames a second), so the surface presents by mailbox where it offers it, FIFO
+  otherwise; the pacing, not vsync, holds the rate. Step 8's "while the window is visible" is
+  the `Pacer`'s: minimised, zero-sized or covered the window draws nothing and serves the host
+  four times a second (an editor's rate while one is open), and a frame the surface refuses
+  still takes its slot, so a refusing surface cannot spin the loop. egui's viewport facts are
+  asked of the desktop when an event may have changed them, not every frame as egui-winit's
+  `update_viewport_info` would (a round trip each on X11).
+- **The CPU acceptance, "under 5 % CPU", has two readings, and the user has not said which.**
+  On the 24-core machine it was measured on, `--fake` at 60 frames a second takes 0.19 to
+  0.31 % of the machine, more than fifteen times under. Of one core it takes 4.6 to 4.8 % in a release
+  build on Vulkan (4.8 to 5.8 % on DX12) and 5.5 to 7.5 % in the debug build `cargo run`
+  makes, so per core a release build passes and a debug build does not. The first record here
+  said "7.6 % of one core, most of it in the GPU driver and the Vulkan overlay layers": that
+  was wrong (DX12 loads no Vulkan layer and cost the same). Timed in place, a frame is egui's
+  pass and the tessellation of the whole console (about half a millisecond in release), then
+  encoding and the driver's submit and present; an empty egui frame presented at 60 Hz costs
+  2.1 % of a core by itself. Cut so far, with no difference measurable over the noise on
+  Windows: egui's viewport facts asked only when they may have changed, which matters on X11,
+  where each is a round trip, and no scroll area for a well whose chain fits. (The branch's
+  previous head measured 4.1 to 5.2 % in release and 5.9 to 7.4 % in debug in the same hour,
+  and 8.1 to 12.3 % when its verifier measured it on a busier machine: the figure moves with
+  what else runs.) What would bring a debug build under 5 % of a core is not built, because
+  each changes how the window works and is the user's to choose: draw the meters alone on a
+  frame where nothing else changed and keep the rest of the console's tessellation, cache each
+  icon's mesh (about 1 % of a core), or move the meters at a lower rate than 60 Hz.
 - **What the prototype does not have**: an input or output that is in use but absent is listed
   first, marked "not connected"; a new hardware channel starts with no input picked (the
   model's `AddChannel`; the prototype picked one); the keyboard focus ring follows a Tab, for
@@ -169,7 +194,8 @@ the root `Cargo.toml`.
   keyboard, mute, MON/MST, bypass, a drag within and between strips with and without Ctrl,
   browser search + Enter, an app tick that moves an app between channels, remove + undo.
 - `cargo run -p vix-mix -- --fake` on Windows runs against `FakeHost` with simulated meters at 60 fps
-  under 5 % CPU.
+  under 5 % CPU. *(Open: of the machine or of one core is the user's to say; both readings
+  are measured in the record above.)*
 - `reference/app.md` complete; `dev check` green.
 
 ## Out of scope

@@ -69,8 +69,9 @@ winit and egui-wgpu window over the `Host` trait — the look the user passed at
 theme, the embedded Plex fonts, `--dump-png`), every gesture as the command it sends (faders,
 mutes, link, the ear, MON/MST, bypass, inserts dragged within and between strips), the source
 and output panels, the add-channel menu, the plugin browser, the menu and preferences, toasts
-with Undo, plugin editor windows on X11 on Linux, and 60 Hz pacing; each gesture is asserted
-headless against `FakeHost`. It owns no setup, audio or plugin (the host does), and waits on
+with Undo, plugin editor windows on X11 on Linux, and 60 Hz pacing while the window can be
+seen (nothing drawn while it is hidden); each gesture, the pacing and the editor windows'
+lifecycle are asserted headless against `FakeHost`. It owns no setup, audio or plugin (the host does), and waits on
 the host for a saved favourite, a rescan and telling an editor its size (change request 8) and
 on the model for an Undo that restores place and state (change request 2). See
 [docs/reference/app.md](docs/reference/app.md) and
