@@ -313,7 +313,10 @@ impl Backend {
         self.shared.stats()
     }
 
-    /// Destroys every stream and leaves the daemon. Routings are left as they are.
+    /// Destroys every stream and leaves the daemon. Routings are left as they are, except that
+    /// the ones posted before this call are written first: the backend leaves once the daemon
+    /// has answered a roundtrip behind them (at most a second), so a host may clear its
+    /// routings and disconnect at once.
     pub fn disconnect(mut self) {
         self.stop();
     }

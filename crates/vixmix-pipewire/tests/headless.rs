@@ -734,6 +734,46 @@ fn routed_in_metadata(subject: u32) -> bool {
         .any(|line| line.trim_start_matches("update: ").starts_with(&prefix))
 }
 
+/// The `target.object` the `default` metadata holds for `subject`, as `pw-metadata` prints it.
+fn metadata_target(subject: u32) -> Option<String> {
+    let prefix = format!("id:{subject} key:'target.object' value:'");
+    run("pw-metadata", &["-n", "default"])
+        .lines()
+        .find_map(|line| {
+            let rest = line.trim_start_matches("update: ").strip_prefix(&prefix)?;
+            Some(rest.split('\'').next()?.to_string())
+        })
+}
+
+#[test]
+fn routings_posted_just_before_disconnect_reach_the_daemon() {
+    let Some(_daemon) = headless() else {
+        return;
+    };
+    let dir = scratch("leave");
+    let mut rig = Rig::new("vixmix-leave");
+    rig.start(&rig.graph("Test", Some(NULL_SINK), None, false));
+    let name = "vixmix-leave-app";
+    let _app = play(&sine_wav(&dir, 8.0), name);
+    let node = rig.app_stream(name);
+    let sink = rig.sink("Test");
+    rig.backend().route(node, Some(&sink));
+    assert!(eventually(Duration::from_secs(3), || linked(name, &sink)));
+    // A host's shutdown: its last routings, then disconnect at once. The routing names a
+    // node that outlives us, so only our write can have put its serial there.
+    let null_sink = node_serial(NULL_SINK).expect("the null sink has a serial");
+    let backend = rig.backend.take().unwrap();
+    backend.route(node, Some(NULL_SINK));
+    backend.disconnect();
+    assert!(
+        eventually(Duration::from_secs(2), || metadata_target(node)
+            == Some(null_sink.to_string())),
+        "the routing posted with the disconnect never reached the daemon: {:?}\n{}",
+        metadata_target(node),
+        run("pw-metadata", &["-n", "default"])
+    );
+}
+
 #[test]
 fn a_renamed_channel_keeps_its_apps_after_another_has_quit() {
     let Some(_daemon) = headless() else {
