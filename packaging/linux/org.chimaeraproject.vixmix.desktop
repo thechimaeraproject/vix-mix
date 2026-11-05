@@ -1,0 +1,19 @@
+# Vix Mix's desktop entry. Its file name is the AppStream id and the icon's name, so the
+# launcher, the software centre and the icon theme agree on one id. install.sh writes Exec and
+# TryExec as the absolute path of the vix-mix it installed or found, so the launcher starts it
+# whatever the session's PATH is; StartupWMClass is the X11 class winit gives the window (the
+# binary's name), which ties the running window to this entry in the task manager.
+[Desktop Entry]
+Type=Application
+Name=Vix Mix
+GenericName=Audio Mixer
+Comment=Mix your microphones and apps through VST3 plugins into a Monitor and a Master mix
+Exec=vix-mix
+TryExec=vix-mix
+Icon=org.chimaeraproject.vixmix
+Terminal=false
+Categories=AudioVideo;Audio;Mixer;
+Keywords=mixer;PipeWire;VST3;microphone;streaming;virtual microphone;Wave Link;
+StartupNotify=true
+StartupWMClass=vix-mix
+SingleMainWindow=true

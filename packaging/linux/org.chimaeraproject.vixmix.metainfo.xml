@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Vix Mix's AppStream metadata (https://www.freedesktop.org/software/appstream/docs/), installed
+     as share/metainfo/org.chimaeraproject.vixmix.metainfo.xml. The newest <release> names the
+     workspace's version (Cargo.toml): scripts/package/linux-tarball.sh refuses a tarball while
+     they differ. -->
+<component type="desktop-application">
+  <id>org.chimaeraproject.vixmix</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT AND OFL-1.1</project_license>
+  <name>Vix Mix</name>
+  <summary>Mix microphones and apps through VST3 plugins on PipeWire</summary>
+  <developer id="org.chimaeraproject">
+    <name>The Chimaera Project</name>
+  </developer>
+  <description>
+    <p>
+      Vix Mix is a desktop mixer for streaming and calls. Up to eight input channels, each a
+      microphone or a group of apps, run through their own chain of VST3 plugins into two mixes:
+      Monitor, which you hear, and Master, which plays to your main output and is also a virtual
+      microphone other apps record.
+    </p>
+    <ul>
+      <li>An app is routed to its channel the moment it starts, and back when Vix Mix quits</li>
+      <li>Two sends per channel, each with its own level and mute</li>
+      <li>A plugin chain on every channel and on both mixes</li>
+      <li>Master as a virtual microphone named Vix Mix Master for calls and recording</li>
+      <li>The whole setup, plugin settings included, saved as you go</li>
+    </ul>
+    <p>
+      It uses PipeWire's native API and loads the VST3 plugins installed on the machine,
+      Windows plugins bridged by yabridge included.
+    </p>
+  </description>
+  <launchable type="desktop-id">org.chimaeraproject.vixmix.desktop</launchable>
+  <url type="homepage">https://github.com/thechimaeraproject/vix-mix</url>
+  <url type="bugtracker">https://github.com/thechimaeraproject/vix-mix/issues</url>
+  <categories>
+    <category>AudioVideo</category>
+    <category>Audio</category>
+    <category>Mixer</category>
+  </categories>
+  <keywords>
+    <keyword>mixer</keyword>
+    <keyword>PipeWire</keyword>
+    <keyword>VST3</keyword>
+    <keyword>microphone</keyword>
+    <keyword>streaming</keyword>
+  </keywords>
+  <provides>
+    <binary>vix-mix</binary>
+  </provides>
+  <requires>
+    <display_length compare="ge">768</display_length>
+  </requires>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-11-04">
+      <description>
+        <p>The first build: the console, PipeWire routing and VST3 chains, before the first
+        test on a real Fedora desktop.</p>
+      </description>
+    </release>
+  </releases>
+</component>
