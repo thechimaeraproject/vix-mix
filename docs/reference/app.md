@@ -21,8 +21,9 @@ hand back; on `png` for the capture. Its tests also take `vixmix-plugins`, becau
 | File | What it is |
 |---|---|
 | `main.rs` | the command line, the event loop (X11 on Linux), or the capture |
-| `app.rs` | the winit `ApplicationHandler`: the host, the window, the editor windows, one frame at a time, pacing, the window's least size |
-| `shell.rs` | the window's state between frames (`Shell`) and what it does with a frame's `Intent`s: commands applied, refusals and notes to the toast line, popovers opened and closed, Undo, editors queued |
+| `app.rs` | the winit `ApplicationHandler`: the host, the window, the editor windows, one frame (or, hidden, one tick without a frame) at a time, what the window's events say of whether it can be seen, egui's viewport facts, the window's least size |
+| `pacing.rs` | when the next frame comes (`Pacer`, `pacing::next`): the 60 Hz grid, input under the same cap, a refused frame's slot, the hidden window's ticks |
+| `shell.rs` | the window's state between frames (`Shell`) and what it does with a frame's `Intent`s: commands applied, refusals and notes to the toast line, popovers opened and closed, Undo, editors queued and then opened (`open_editors`) |
 | `ui.rs` | what a frame draws and senses: the header and its display, the banner, the console, the open popover, the toast line |
 | `console.rs` | the console row: where each strip goes, the rects a popover hangs from and a drag lands in, the insert drag resolved after the last strip |
 | `strip.rs` | a channel strip and a mix strip: rows, header, scale, readouts, mute, link and ear, the add-channel column, the text helpers |
@@ -32,14 +33,14 @@ hand back; on `png` for the capture. Its tests also take `vixmix-plugins`, becau
 | `popover.rs` | the popovers: the source panel, the output panel, the add-channel menu, the menu and the preferences; where a popover goes |
 | `browser.rs` | the plugin browser: the search, the nav and its counts, the list grouped A to Z, stars, the footer |
 | `toast.rs` | the toast line and Undo: what a removal keeps, and how Undo puts it back |
-| `editors.rs` | the plugin editor windows: open, resize, close through the host, titles |
+| `editors.rs` | the plugin editor windows, made by an `Opener` and driven through `EditorWindow` (winit's in the app, a fake in the tests): open, resize, close through the host, titles |
 | `widgets.rs` | what every surface shares: hover, the focus ring, the text button, tick box and radio, headings, the text field, a popover's frame |
 | `meters.rs` | a linear peak read on the fader's taper, the peak-hold line |
 | `icons.rs` | prototype v5's SVG icons, read once and followed with egui's painter, stroked or filled |
 | `theme.rs` | the look as constants: colours, gradient, sizes (`size`, `pop`), fonts and their sizes |
 | `gpu.rs` | the surface, and the one paint path: `upload` (egui's textures) and `encode` (egui's frame into a target) |
 | `capture.rs` | `--dump-png`: one frame offscreen, read back, written as a PNG |
-| `test_support.rs` | tests only: the headless `Harness` and the `Recorder` host |
+| `test_support.rs` | tests only: the headless `Harness`, the `Recorder` host (which can open editors and answer `tick_editors`), and `FakeWindows`, editor windows with no event loop |
 | `acceptance.rs` | tests only: every gesture the handoff lists, with the command it sends |
 | `assets/fonts/` | IBM Plex Sans Condensed (400, 500, 600) and IBM Plex Mono (400, 500), with `OFL.txt`, the SIL Open Font License they come under |
 
@@ -48,9 +49,11 @@ hand back; on `png` for the capture. Its tests also take `vixmix-plugins`, becau
 `main.rs` parses the command line and runs the winit event loop; `app.rs` is the
 `ApplicationHandler`. On `resumed` it boots the host, makes the window (titled "Vix Mix",
 dark, at the console's natural size), the surface and the egui context. On `RedrawRequested`
-it draws a frame. Events for an editor's window go to its editor ([Editor
-windows](#editor-windows)). On `CloseRequested` it exits; on `exiting` every editor closes
-through the host, then the host goes (its instances after their editors), then the window.
+it draws a frame, or, while the window is hidden, serves the host without one; the pacer's
+timer wakes either ([Pacing](#pacing)). Events for an editor's window go to its editor
+([Editor windows](#editor-windows)). On `CloseRequested` it exits; on `exiting` every editor closes
+through the host (`Running::close_editors`, one call a shutdown order can place), then the
+host goes (its instances after their editors), then the window.
 `gpu.rs` is the surface (a non-sRGB format, as egui-wgpu prefers; mailbox present where the
 surface offers it, FIFO otherwise, because the window paces itself and FIFO's acquire stalled
 for tens of milliseconds behind Windows' compositor) and the egui renderer, cleared to the window colour (`#131416`); a lost or outdated surface is reconfigured
@@ -73,14 +76,23 @@ on Wayland, is the charter's open point.
 
 ## A frame
 
-`Running::frame`, in order: the host's events (`Shell::event`: the backend's state, a toast,
-an editor the host closed); the host's meters into the window's `Meters`; the open editors
-served (`EditorWindows::tick`); then egui runs `ui::draw`, which reads the host and the shell
-and returns the frame's `Intent`s; `Shell::dispatch` carries them out against the host; the
-editors it queued open in windows of their own; open editors follow their insert (a new title
-when it moved or its strip was renamed, closed when it left the setup); the window's least size
-follows the content. egui runs one pass a frame, so a gesture is sensed once and its command
-sent once.
+`Running::frame`, while the window can be seen ([Pacing](#pacing)), in order: the host's
+events (`Shell::event`: the backend's state, a toast, an editor the host closed); the host's
+meters into the window's `Meters`; the open editors served (`EditorWindows::tick`); then egui
+runs `ui::draw`, which reads the host and the shell and returns the frame's `Intent`s;
+`Shell::dispatch` carries them out against the host; the editors it queued open in windows of
+their own (`Shell::open_editors`, each refusal to the toast line); open editors follow their
+insert (a new title when it moved or its strip was renamed, closed when it left the setup); the
+window's least size follows the content. egui runs one pass a frame, so a gesture is sensed
+once and its command sent once.
+
+**egui's viewport facts** (where the window is, its monitor, its title, whether it is
+minimised, maximised or focused) are asked of the desktop when one of the window's events may
+have changed them (resized, moved, focused, occluded, a new scale) and otherwise at most every
+`VIEWPORT_CHECK` (500 ms), and kept in egui-winit's input between frames. egui-winit's
+`update_viewport_info` asks each one, and the frame used to call it every frame: on X11 that is
+a round trip to the X server per fact; on Windows, taking the input with the facts took 0.07
+to 0.1 ms of every frame.
 
 **An `Intent`** is what a gesture asks: `Apply(Command)`, `OpenEditor(instance)`,
 `Toggle(anchor)` (open the popover that hangs from it, or close it), `AddChannel(kind)`,
@@ -96,16 +108,34 @@ and "Monitor output back to the Monitor mix" (2.4 s). A host's `Toast` shows 8 s
 
 ## Pacing
 
-The loop is `ControlFlow::Wait`. A frame is drawn when egui wants one (input, or its
-`repaint_delay` coming due: a tooltip, the toast's fade, a text cursor), straight after a
-frame that acted or opened or closed a popover (what changed shows at once, even with no
-backend), and — while the host's `BackendState::live()` (running or simulated) or a
-`--quit-after-frames` count is running — on a 60 Hz grid: a frame the timer wakes counts from
-when it was due, and the interval from frame start to frame start, so neither drawing nor the
-timer's lateness stretches it. No frame, input's included, is due sooner than
-`FRAME_INTERVAL` (16.667 ms) after the last was due, so the window never draws more than 60
-frames a second. While a plugin editor is open it draws at least every `EDITOR_POLL` (33 ms),
-which serves the editors. With no backend, no editor and nothing to animate it is idle.
+`pacing.rs`'s `Pacer` says what comes next, as a plain function of what the last frame left
+(`pacing::next`, pinned by its tests), and `app.rs` sleeps the loop until then
+(`ControlFlow::WaitUntil`, or `Wait` when nothing is due): a frame, or, while the window is
+hidden, a tick that serves the host without one.
+
+- **Seen**: a frame when egui wants one (input, or its `repaint_delay` coming due: a tooltip,
+  the toast's fade, a text cursor), straight after a frame that acted or opened or closed a
+  popover (what changed shows at once, even with no backend), on a 60 Hz grid while the host's
+  `BackendState::live()` (running or simulated) or a `--quit-after-frames` count runs, and at
+  least every `EDITOR_POLL` (33 ms) while a plugin editor is open, which serves the editors. A
+  frame's slot is when it began, or when it was due if the timer woke it within an interval of
+  that, so neither drawing nor the timer's lateness stretches the grid. No frame, input's
+  included, comes sooner than `FRAME_INTERVAL` (16.667 ms) after the last slot, so the window
+  never draws more than 60 frames a second.
+- **Refused**: a frame the surface does not take (lost, outdated, occluded, timed out) still
+  takes its slot, so the next waits its interval rather than coming at once, and is tried
+  again so what it held reaches the screen; after three refusals in a row the surface is tried
+  every `HIDDEN_POLL` (250 ms). Only a frame that reached the screen counts towards
+  `--quit-after-frames`.
+- **Hidden**: minimised (Windows sends a 0 × 0 `Resized`; the desktop's `is_minimized`, asked
+  with the viewport facts) or `Occluded`, the window draws nothing, as the prototype's
+  `requestAnimationFrame` stops. The host's events and the open editors are still served,
+  without a frame: every `EDITOR_POLL` while an editor is open (its own window may be in view),
+  every `HIDDEN_POLL` while the meters would move, so the host's bounded queues keep draining,
+  otherwise not until an event. Input does not wake it. Each hidden tick asks the desktop again
+  whether the window is minimised, so a window back in view with no event that says so (an
+  X11 window under a compositor) draws within a tick; one whose event says so draws at once.
+- With no backend, no editor and nothing to animate it is idle.
 
 ## The command line
 
@@ -244,7 +274,8 @@ before the first insert whose middle is below the pointer, or before "+ Add plug
 outside every strip does nothing. Starting a drag closes the open popover.
 
 **The well** scrolls with the wheel when its inserts are more than it holds (the charter: no
-cap on plugins per strip); a slot under the pointer, or with the focus inside it, shows its
+cap on plugins per strip); a chain that fits is laid out without a scroll area, which would
+cost every frame for nothing. A slot under the pointer, or with the focus inside it, shows its
 gear and bin over its right end.
 
 ## Popovers
@@ -257,6 +288,14 @@ pressed; Escape closes it and gives the focus back to what it hangs from; its ow
 toggles it. Popovers show at once (no fade), with the prototype's face, outline, 3-point
 corner and shadow. Each kind's first appearance is drawn unseen for one frame (egui sizes a
 new area first).
+
+A panel opens with the focus on its first control, as the prototype's `openSource` puts it: the
+name field of a channel just added, an app channel's search field, or the checked radio of a
+list of inputs or outputs (the first row when none is checked). A list of radios (the inputs,
+the outputs, the quanta) answers the keys as a browser's radio group does: Up and Down move to
+the row before or after, round the ends, and pick it (the command a press of it sends); Space
+picks the focused row; the arrows stay in the group rather than moving the focus to the console
+under the popover.
 
 - **The source panel** (270 wide), under a channel's header: the name field (the header shows
   what it holds as it is typed; `Rename` is sent once, when the panel closes, and not at all
@@ -282,7 +321,8 @@ new area first).
 - **The preferences** (270 wide): the quantum asked of PipeWire as radios (128, 256, 512
   samples; `SetPrefs`), the extra plugin folders each with its bin, a field and Add for
   another (`SetPrefs` with the folder added or removed, the rest kept; a folder takes at most
-  1024 characters), Done.
+  1024 characters), Done. It holds at most 16 folders (`MAX_PLUGIN_DIRS`): an Add past that
+  sends nothing, keeps the folder in the field, and says on the toast line to remove one first.
 
 ## The plugin browser
 
@@ -330,14 +370,18 @@ slot N".
   shows. Opening an editor that is open raises its window. A refusal (no editor, `FakeHost`'s
   "run with the real host to open a plugin's editor", a Wayland handle on Linux) drops the
   window and goes to the toast line. At most 16 are open at once.
-- **Resize**: `Host::tick_editors`, every frame while one is open, names the instance that
-  asked; its window takes the size. (Telling the plugin its new size waits for the host; see
+- **Resize**: `Host::tick_editors`, every frame or hidden tick while one is open (at least
+  every 33 ms), names the instance that asked; its window takes the size. (Telling the plugin its new size waits for the host; see
   below.)
 - **Close**: always through `Host::close_editor` before the window goes — the window's close
   button, the insert's removal (the shell closes it before the command), the insert leaving the
   setup any other way, the window closing at exit — and an editor the host closed itself
   (`HostEvent::EditorClosed`) loses its window.
 - Each opens, resizes and closes with an `info` log line, which a by-hand pass reads.
+- **Made by an `Opener`, driven through `EditorWindow`**: the event loop makes winit windows in
+  the app, and `EditorWindow` is what the editors ask of one (its id, its raw handle, a size,
+  show, a title, raise), so the tests open, resize, follow and close editors with no event loop
+  (`test_support::FakeWindows`, against a `Recorder` that opens editors as a real host does).
 
 ## What the window needs from the host
 
@@ -348,7 +392,12 @@ does not have yet, proposed as the build map's change request 8 for lane 06:
 menu's Rescan plugins, inert until then), and `resize_editor(instance, size)` (the kit's
 resize is asynchronous: after the window has taken the size, `EditorSession::resize` must tell
 the plugin). Undo waits on change request 2's `RestoreChannel` and `RestoreInsert` in the
-model, after which it sends one command.
+model, after which it sends one command; the host keeps a removed instance by a rule of its
+own, with no call from the window: at least as long as the toast's 5 s Undo, and a little more
+(the toast dies sooner when the next toast takes its place, never later). The browser's Recent
+changes only when the host's `apply(AddInsert)` puts the plugin at the front of the catalog's
+recent list (`Catalog::used`) and saves it, as the prototype's add does. The model does not
+bound the extra plugin folders yet; the window holds at most 16.
 
 ## The capture
 
@@ -399,7 +448,12 @@ recorded; each test asserts the command its gesture sent):
   `the_gear_or_a_double_click_asks_for_the_insert_s_editor`,
   `a_refusal_reaches_the_toast_line_with_its_fix`, `a_long_chain_scrolls_in_its_well`,
   `the_preferences_ask_for_a_quantum_and_take_plugin_folders`,
-  `the_window_keeps_room_for_the_header_over_a_narrow_console`.
+  `the_preferences_hold_at_most_sixteen_plugin_folders`,
+  `the_window_keeps_room_for_the_header_over_a_narrow_console`,
+  `an_editor_the_host_refuses_says_why_on_the_toast_line_and_keeps_no_window` (`FakeHost`'s
+  refusal, word for word),
+  `a_panel_opens_with_the_focus_on_its_checked_radio_and_the_arrows_pick` (an input panel and
+  Master's output panel: Down, round the end, Space, Up to "No device").
 
 **The parts:**
 
@@ -424,7 +478,19 @@ recorded; each test asserts the command its gesture sent):
   counts favourites, recent, types and makers in order; All plugins group by their first
   letter.
 - `toast.rs`: a toast shows for its time and its Undo goes with it.
-- `editors.rs`: an editor window is titled plugin, strip and slot.
+- `editors.rs`: an editor window is titled plugin, strip and slot; it opens hidden at 640 ×
+  480, takes the size its plugin asks for and shows, and opened again is raised; a refusal
+  (the host's, no window, no handle, an insert gone) keeps no window and says what to do; at
+  most sixteen open; a resize request goes to the window of the editor that asked; its close
+  button closes the editor through the host first; one the host closed loses its window without
+  a second close; renamed with its strip, and closed through the host once its insert leaves
+  the setup; at exit each closes through the host in the order it opened.
+- `pacing.rs`: a seen window with moving meters draws on a 60 Hz grid (a late timer counts from
+  when it was due); a refused frame takes its slot, so the next waits an interval; a surface
+  that keeps refusing is tried four times a second; a hidden window draws nothing and serves
+  the host slowly (an editor's rate while one is open; nothing at all with nothing to serve;
+  input does not wake it); minimised, zero-sized or covered is hidden; an idle window waits,
+  and egui or an act wakes it no faster than 60 Hz; input draws as soon as the cap allows.
 - `meters.rs`: a level reads on the fader's taper; a peak holds 900 ms then falls 0.006 a
   frame to the level; the console's meters follow the host's frame by position.
 - `ui.rs`, headless frames of `ui::draw` that press nothing and ask nothing: the header names
@@ -437,16 +503,32 @@ recorded; each test asserts the command its gesture sent):
 
 **By hand** (a GPU and a desktop, so not in CI):
 
-- `cargo run -p vix-mix -- --fake --quit-after-frames 1200` on Windows logs "drew 1200 frames
-  in 19.99 s after the first (60.0 a second)"; over 20 s of `--fake` at 60 frames a second the
-  process used 0.32 % of the machine's CPU (24 logical cores; 7.6 % of one core, most of it in
-  the GPU driver and the Vulkan overlay layers installed on that machine; drawing and
-  tessellating a frame takes about 0.5 ms), measured from the process's CPU time in
-  PowerShell. With FIFO present the same machine drew 39 to 57 frames a second, its acquire
-  stalling up to 80 ms; mailbox holds 60.
+- `cargo run -p vix-mix -- --fake --quit-after-frames 600` on Windows logs "drew 600 frames
+  in 9.99 s after the first (60.0 a second)". With FIFO present the same machine drew 39 to 57
+  frames a second, its acquire stalling up to 80 ms; mailbox holds 60.
+- **CPU**, `--fake` at 60 frames a second on an RTX 3090 with 24 logical cores: the process's
+  CPU time over 20 s after 4 s of warm-up, read per thread from PowerShell's `Get-Process`
+  (all of it is the main thread's). Of one core: 5.5 to 7.5 % in the debug build `cargo run`
+  makes, on Vulkan; 4.6 to 4.8 % in a release build on Vulkan and 4.8 to 5.8 % on DX12. Of the
+  machine: 0.19 to 0.31 %. A release frame, timed in place: egui's pass 0.25 to 0.3 ms,
+  tessellating the whole console 0.23 to 0.3 ms, encoding and upload 0.1 ms, then the driver's
+  submit and present (0.2 and 0.3 ms of wall time, part of it waiting). An empty egui frame
+  presented at 60 Hz costs 2.1 % of one core by itself, the floor for any frame at this rate;
+  the console's own drawing is the rest, because egui draws all of it every frame. Debug on
+  DX12 costs 9 to 10.6 %, because wgpu turns on the backend's validation in a debug build
+  and the D3D12 debug layer answers here (`WGPU_VALIDATION=0` brings it to 6.9 %); on Vulkan
+  turning it off changes nothing measurable (5.8 %), so a debug build's extra cost there is
+  the app's own code, unoptimised. Minimised, 0.00 %: no frame, the host served four times a
+  second. The figures move with what else the machine runs: the branch's previous head, which
+  measures the same as this one side by side, measured 8.1 to 8.4 % in release on a busier
+  afternoon.
+- Minimised and restored (`ShowWindowAsync` from PowerShell, with the window's handle taken
+  before it was minimised): no frame while minimised, drawing again at once when restored.
 - `cargo run -p vix-mix -- --quit-after-frames 3` runs on the real host and exits 0.
 - The capture command above writes the 1800 × 976 PNG, byte for byte the look gate's.
 - An editor: a scratch profile (`CHIMAERA_CONFIG_DIR`) with Goodhertz's Tone Control 3 on Mic
   opened it in a window titled "Ghz Tone Control 3 · Mic · slot 1" at the 552 × 404 it asked
-  for, drawn by the plugin, and closed it through the host when its window closed.
+  for, drawn by the plugin, and closed it through the host when its window closed (again
+  after the windows moved behind `Opener` and `EditorWindow`: client area 552 × 404, "closed
+  the editor of Ghz Tone Control 3 · Mic · slot 1" on the window's close message).
 - The look itself was the user's verdict on the PNG beside the screenshot, not a pixel diff.
