@@ -500,7 +500,7 @@ mod tests {
     }
 
     #[test]
-    fn the_banner_shows_only_when_there_is_no_backend() {
+    fn the_banner_shows_for_no_backend_and_not_while_running() {
         let absent = drawn(BackendState::Absent {
             reason: BackendState::NO_BACKEND.to_string(),
         });
