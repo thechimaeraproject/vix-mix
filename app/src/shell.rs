@@ -33,6 +33,8 @@ pub enum Intent {
     Undo,
     /// A star in the plugin browser.
     Favorite { id: String, on: bool },
+    /// A message for the toast line: a control refused something itself, and says what to do.
+    Notice(String),
 }
 
 /// The window's state between frames.
@@ -259,6 +261,9 @@ impl Shell {
                     }
                 }
                 Intent::Favorite { id, on } => self.favorites.set(host, id, on),
+                Intent::Notice(message) => {
+                    self.toasts.show(message, None, self.now, pop::TOAST_HOST_S);
+                }
             }
         }
         self.toasts.expire(self.now);
