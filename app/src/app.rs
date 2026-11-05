@@ -108,8 +108,10 @@ impl ApplicationHandler for App {
             return;
         };
         match running.pacer.next() {
-            Next::Draw(_) => running.window.request_redraw(),
             Next::Serve(_) => running.serve(event_loop),
+            // Hidden since the frame was asked for: a tick without one.
+            Next::Draw(_) if running.pacer.seen.hidden() => running.serve(event_loop),
+            Next::Draw(_) => running.redraw_soon(event_loop),
             Next::Wait => {}
         }
     }
@@ -293,10 +295,17 @@ impl Running {
         let slot = self.pacer.begin(Instant::now());
         self.pacer.seen.minimized = self.window.is_minimized() == Some(true);
         if !self.pacer.seen.hidden() {
-            self.window.request_redraw();
+            self.redraw_soon(event_loop);
             return;
         }
         self.serve_hidden(event_loop, slot);
+    }
+
+    /// Asks for a frame; the loop waits for it, rather than waking again for a time already
+    /// past, and the frame says when the next comes.
+    fn redraw_soon(&self, event_loop: &ActiveEventLoop) {
+        self.window.request_redraw();
+        event_loop.set_control_flow(ControlFlow::Wait);
     }
 
     fn serve_hidden(&mut self, event_loop: &ActiveEventLoop, slot: Instant) {
