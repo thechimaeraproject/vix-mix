@@ -222,9 +222,13 @@ and `open_editor` answers `HostError::Simulated`.
   command changes nothing; a missing plugin is said once and listed as a problem; scan failures
   make one toast. `autosave`: 500 ms of quiet, never longer than 5 s. `apps`: playing first,
   then the setup's, then those seen before, each once, and the seen list bounded. `undo`: a
-  removal's undo puts back exactly what it took. `audio::linux` (Linux): the graph is the
-  setup's channels in order with the Master source; an app goes to its channel's sink, follows a
-  rename, and goes home when its channel is removed. `fake`: the first poll reports a simulated
+  removal's undo puts back exactly what it took. `audio::linux` (Linux, no daemon): the graph
+  is the setup's channels in order with the Master source; an app goes to its channel's sink,
+  follows a rename, and goes home when its channel is removed; the state follows what the
+  backend says (connecting, idle while only an unrecorded Master source could drive the mixer,
+  running at the quantum it reports, a toast when Monitor's device goes, disconnected until the
+  daemon is back, idle when nothing drives it); every app is routed the moment it appears, to
+  its channel or home, follows a rename and is forgotten when it goes. `fake`: the first poll reports a simulated
   backend with the example's apps and devices; meters move, a muted send and a muted mix read
   zero, the same seed gives the same frames; previewing shows the Master sum on Monitor; a
   removal hands out the undo that puts it back.
