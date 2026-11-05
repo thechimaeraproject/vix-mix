@@ -51,8 +51,9 @@ dark, at the console's natural size), the surface and the egui context. On `Redr
 it draws a frame. Events for an editor's window go to its editor ([Editor
 windows](#editor-windows)). On `CloseRequested` it exits; on `exiting` every editor closes
 through the host, then the host goes (its instances after their editors), then the window.
-`gpu.rs` is the surface (a non-sRGB format, as egui-wgpu prefers, FIFO present) and the egui
-renderer, cleared to the window colour (`#131416`); a lost or outdated surface is reconfigured
+`gpu.rs` is the surface (a non-sRGB format, as egui-wgpu prefers; mailbox present where the
+surface offers it, FIFO otherwise, because the window paces itself and FIFO's acquire stalled
+for tens of milliseconds behind Windows' compositor) and the egui renderer, cleared to the window colour (`#131416`); a lost or outdated surface is reconfigured
 and the frame skipped. Its `upload` and `encode` are shared with the capture, so the PNG is
 drawn exactly as the window draws. Every GPU failure says what to do (update the driver, or
 set `WGPU_BACKEND` to another backend).
@@ -437,10 +438,12 @@ recorded; each test asserts the command its gesture sent):
 **By hand** (a GPU and a desktop, so not in CI):
 
 - `cargo run -p vix-mix -- --fake --quit-after-frames 1200` on Windows logs "drew 1200 frames
-  in 19.99 s after the first (60.0 a second)"; over 20 s of `--fake` the process used 0.3 to
-  0.7 % of the machine's CPU (24 logical cores; 7.5 to 16.5 % of one core, most of it in the
-  GPU driver and the overlay layers installed on that machine), measured from the process's
-  CPU time in PowerShell.
+  in 19.99 s after the first (60.0 a second)"; over 20 s of `--fake` at 60 frames a second the
+  process used 0.32 % of the machine's CPU (24 logical cores; 7.6 % of one core, most of it in
+  the GPU driver and the Vulkan overlay layers installed on that machine; drawing and
+  tessellating a frame takes about 0.5 ms), measured from the process's CPU time in
+  PowerShell. With FIFO present the same machine drew 39 to 57 frames a second, its acquire
+  stalling up to 80 ms; mailbox holds 60.
 - `cargo run -p vix-mix -- --quit-after-frames 3` runs on the real host and exits 0.
 - The capture command above writes the 1800 × 976 PNG, byte for byte the look gate's.
 - An editor: a scratch profile (`CHIMAERA_CONFIG_DIR`) with Goodhertz's Tone Control 3 on Mic
