@@ -45,7 +45,10 @@ a daemon to try it against is [Run a headless PipeWire](../cookbook/run-headless
   graph and per app node; the control thread applies a waiting graph before the routings that
   wait with it, so a routing names a sink of the newest graph); `stats(&self) ->
   BackendStats`; `disconnect(self)` (also on drop) destroys every stream and leaves the daemon,
-  leaving routings as they are. `Backend` is `Send + Sync`.
+  leaving routings as they are. The routings posted before `disconnect` are written first, and
+  the backend leaves only once a core roundtrip has come back (at most a second), so a host
+  that clears its routings and disconnects at once loses none of them (change request 8).
+  `Backend` is `Send + Sync`.
 - `BackendStats`: `tick_source`, `ticks`, `rate`, `quantum`, `xruns`, `underruns`,
   `overflows`, `ring_checks` and `ring_off` (§ The rings), `monitor_cycles`,
   `master_out_cycles`, `master_source_cycles` (cycles each output wrote the mix of its own
@@ -290,7 +293,9 @@ On Linux, `cargo test -p vixmix-pipewire` (on Windows the crate compiles to noth
   mix of its own cycle, no break in the sine; Monitor out linked to and heard on the null sink;
   a capture channel linked to the null source; an app un-assigned while absent going back to
   the default when it appears, whether the session manager's restore lands before or after the
-  host's routing; a renamed channel keeping its app after another app routed to it quit and an
+  host's routing; a routing posted just before `disconnect` reaching the daemon (its
+  `target.object` names a node that outlives the backend, so only the backend's write can have
+  put it there); a renamed channel keeping its app after another app routed to it quit and an
   unrelated subject's keys were cleared; a rename that keeps the slug (`Test` to `TEST`) making
   the sink again under the same name, with the app routed before it and the app routed in the
   same breath both on the new node and neither on the default; a quantum forced to 512 reported

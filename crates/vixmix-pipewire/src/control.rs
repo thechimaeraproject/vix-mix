@@ -49,6 +49,8 @@ const BACKOFF_FIRST: Duration = Duration::from_millis(250);
 const BACKOFF_MAX: Duration = Duration::from_secs(5);
 /// Connecting a stream the session manager gave up on again, while its device is present.
 const STREAM_RETRY: Duration = Duration::from_secs(1);
+/// How long a quit waits for the daemon to confirm the writes made before it.
+const LEAVE_WAIT: Duration = Duration::from_secs(1);
 
 /// What the control thread is started with.
 pub(crate) struct Start {
@@ -147,6 +149,7 @@ pub(crate) fn run(start: Start) {
             slots: [None; MAX_CHANNELS],
             pending: Pending::default(),
             seen: Seen::default(),
+            leaving: None,
         }),
         notes: RefCell::new(VecDeque::new()),
         pumping: Cell::new(false),
@@ -515,6 +518,9 @@ struct Control {
     slots: [Option<ChannelId>; MAX_CHANNELS],
     pending: Pending,
     seen: Seen,
+    /// The host asked to leave: the roundtrip that proves every write before it reached the
+    /// daemon, and when to leave without its answer.
+    leaving: Option<(AsyncSeq, Instant)>,
 }
 
 impl Control {
@@ -522,25 +528,26 @@ impl Control {
         match note {
             Note::Wake => {
                 let mail = self.inbox.take();
-                if mail.quit {
-                    self.close();
-                    if let Some(mainloop) = self.mainloop.upgrade() {
-                        mainloop.quit();
-                    }
-                    return;
-                }
                 // The graph first: a routing names a sink of the newest graph, the way a host
                 // routes its apps again after it applied a setup. Routed first, an app would be
                 // sent to a sink this graph is about to make again, and moved a moment later.
-                if let Some(graph) = mail.graph {
+                // Leaving, no stream is made: only the routings that wait with the quit go out
+                // (a host clears its routings just before it disconnects).
+                if let Some(graph) = mail.graph.filter(|_| !mail.quit) {
                     self.graph = Some(graph);
                     self.apply(ctl);
                 }
                 for (node, to) in mail.routes {
                     self.route(node, to);
                 }
+                if mail.quit {
+                    self.leave();
+                }
             }
             Note::Housekeeping => self.housekeeping(ctl),
+            Note::CoreDone(seq) if self.leaving.is_some_and(|(wanted, _)| wanted == seq) => {
+                self.quit();
+            }
             Note::CoreDone(seq) => {
                 if let Some(conn) = &mut self.conn
                     && !conn.ready
@@ -718,6 +725,28 @@ impl Control {
             core,
         });
         Ok(())
+    }
+
+    /// The host asked to leave. Every metadata write made so far (the routings that came with
+    /// the quit among them) reaches the daemon before the core goes: a roundtrip's `done`
+    /// comes back only after the daemon has handled everything sent before it. Without a
+    /// connection, or past [`LEAVE_WAIT`] without an answer, it leaves at once.
+    fn leave(&mut self) {
+        if self.leaving.is_some() {
+            return;
+        }
+        match self.conn.as_ref().map(|conn| conn.core.sync(0)) {
+            Some(Ok(seq)) => self.leaving = Some((seq, Instant::now() + LEAVE_WAIT)),
+            _ => self.quit(),
+        }
+    }
+
+    /// Closes the connection and stops the main loop: the control thread ends.
+    fn quit(&mut self) {
+        self.close();
+        if let Some(mainloop) = self.mainloop.upgrade() {
+            mainloop.quit();
+        }
     }
 
     /// Tears the connection down: every stream, every proxy, the core.
@@ -1225,6 +1254,13 @@ impl Control {
     }
 
     fn housekeeping(&mut self, ctl: &Rc<Ctl>) {
+        if self.leaving.is_some_and(|(_, by)| Instant::now() >= by) {
+            log::warn!(
+                "vix-mix-pipewire: the daemon did not answer within {LEAVE_WAIT:?} of the quit; leaving anyway"
+            );
+            self.quit();
+            return;
+        }
         if self.conn.is_none()
             && let Some(at) = self.reconnect_at
             && Instant::now() >= at
