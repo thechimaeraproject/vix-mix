@@ -120,10 +120,10 @@ if [ "$uninstall" = 1 ]; then
   exit 0
 fi
 
-# The binary: the tarball's, installed under the prefix; or the one cargo installed.
+# The binary: the tarball's, installed under the prefix once its path is known to fit the
+# desktop entry (below); or the one cargo installed.
 if [ "$layout" = tarball ]; then
   [ -f "$src_bin" ] || die "the tarball has no bin/vix-mix: unpack it again, or build it with scripts/package/linux-tarball.sh"
-  install -Dm755 "$src_bin" "$bindir/vix-mix"
   exe="$bindir/vix-mix"
 else
   exe="$(command -v vix-mix || true)"
@@ -134,13 +134,20 @@ else
   exe="$(cd "$(dirname "$exe")" && pwd)/$(basename "$exe")"
 fi
 
-# Exec takes the absolute path: double-quoted when it has a space, refused when it has a
-# character the desktop entry format would need escaped.
+# Exec takes the absolute path, always double-quoted: inside the quotes every reserved
+# character of the Desktop Entry spec (a space, ( ) ' & ; # | < > ~ * ? and the rest) is plain.
+# The five that would still need escaping there (", `, $, \ and %) are refused, and so is a
+# control character (a tab, a newline), which no value in the file may hold; TryExec takes the
+# path as it is.
 case "$exe" in
+  *[[:cntrl:]]*) die "the path of vix-mix has a control character in it (a tab or a newline), which a desktop entry cannot hold: install to a prefix without one" ;;
   *[\"\`\$\\%]*) die "the path '$exe' has a character a desktop entry cannot hold plainly: install to a prefix without \", \`, \$, \\ or %" ;;
-  *" "*) exec_value="\"$exe\"" ;;
-  *) exec_value="$exe" ;;
 esac
+exec_value="\"$exe\""
+
+if [ "$layout" = tarball ]; then
+  install -Dm755 "$src_bin" "$exe"
+fi
 
 # sed's replacement reads & and the | delimiter specially.
 sed_quote() { printf '%s' "$1" | sed -e 's/[&|]/\\&/g'; }
