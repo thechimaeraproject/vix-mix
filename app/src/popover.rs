@@ -35,6 +35,8 @@ use crate::widgets::{self, ButtonKind};
 
 /// The longest name or search text a field takes.
 pub const FIELD_LIMIT: usize = 64;
+/// The longest plugin folder the preferences take.
+pub const PATH_LIMIT: usize = 1024;
 
 /// The open popover and what it holds between frames.
 #[derive(Clone, Debug, PartialEq)]
@@ -339,7 +341,14 @@ fn search_row(ui: &mut Ui, id: Id, text: &mut String, hint: &str) -> egui::Respo
             y + pop::FIELD_HEIGHT / 2.0,
         ),
     );
-    widgets::text_field(ui, field, id, text, font::sans(font::SEARCH), hint)
+    widgets::text_field(
+        ui,
+        field,
+        id,
+        text,
+        (font::sans(font::SEARCH), FIELD_LIMIT),
+        hint,
+    )
 }
 
 /// The widget id of a popover's search field.
@@ -499,7 +508,7 @@ fn footer(ui: &mut Ui, remove: bool, keyboard: bool) -> (bool, bool) {
         );
         removed = response.clicked();
     }
-    let done_width = widgets::button_width(ui.painter(), "Done");
+    let done_width = widgets::button_width(ui.ctx(), "Done");
     let done = widgets::button(
         ui,
         Id::new("popover done"),
@@ -565,7 +574,14 @@ fn source_panel(ui: &mut Ui, panel: &mut SourcePanel, cx: &mut PopCx<'_>) -> Out
             let mut send = None;
             list(ui, "app list", |ui| {
                 if hits.is_empty() {
-                    empty_row(ui, "No app matches.");
+                    empty_row(
+                        ui,
+                        if query.is_empty() {
+                            "No app has played yet: play one and it shows here."
+                        } else {
+                            "No app matches."
+                        },
+                    );
                 }
                 for (heading, running) in [("Playing now", true), ("Seen before", false)] {
                     let group: Vec<_> = hits.iter().filter(|p| p.running == running).collect();
@@ -609,6 +625,9 @@ fn source_panel(ui: &mut Ui, panel: &mut SourcePanel, cx: &mut PopCx<'_>) -> Out
             let rows = devices(cx.host, DeviceDirection::Input, current.as_ref());
             let mut send = None;
             list(ui, "input list", |ui| {
+                if rows.is_empty() {
+                    empty_row(ui, "No input is present: connect one and it shows here.");
+                }
                 for (device, present) in &rows {
                     let on = current.as_ref().is_some_and(|c| c.name == device.name);
                     let pressed = list_row(
@@ -741,6 +760,9 @@ fn output_panel(ui: &mut Ui, mix: MixId, cx: &mut PopCx<'_>) -> Outcome {
             && current.is_some()
         {
             send = Some(Command::SetMixDevice { mix, device: None });
+        }
+        if rows.is_empty() {
+            empty_row(ui, "No output is present: connect one and it shows here.");
         }
         for (device, present) in &rows {
             let on = current.is_some_and(|c| c.name == device.name);
@@ -1001,7 +1023,7 @@ fn folder_field(ui: &mut Ui, id: Id, text: &mut String) -> bool {
         Sense::hover(),
     );
     let y = rect.top() + pop::FIELD_HEIGHT / 2.0;
-    let add_width = widgets::button_width(ui.painter(), "Add");
+    let add_width = widgets::button_width(ui.ctx(), "Add");
     let add = widgets::button(
         ui,
         Id::new("add folder"),
@@ -1036,7 +1058,7 @@ fn folder_field(ui: &mut Ui, id: Id, text: &mut String) -> bool {
         inner,
         id,
         text,
-        font::mono(font::NOTE),
+        (font::mono(font::NOTE), PATH_LIMIT),
         "Another folder to scan",
     );
     add.clicked() || (response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)))

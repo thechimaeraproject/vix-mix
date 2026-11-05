@@ -977,3 +977,16 @@ fn the_preferences_ask_for_a_quantum_and_take_plugin_folders() {
     assert_eq!(prefs.plugin_dirs, [std::path::PathBuf::from("D:/VST3")]);
     assert_eq!(prefs.quantum, 512, "the quantum stays");
 }
+
+#[test]
+fn an_app_search_that_finds_nothing_says_so() {
+    let mut h = Harness::new();
+    let game = h.channel(1);
+    let _ = h.click(h.head(Strip::Channel(game)).center());
+    h.idle(2);
+    let _ = h.click(h.text("Find an app"));
+    let _ = h.type_text("zzz");
+    h.idle(1);
+    assert!(h.find("No app matches.").is_some(), "{:?}", h.drawn());
+    assert!(h.find("PLAYING NOW").is_none());
+}

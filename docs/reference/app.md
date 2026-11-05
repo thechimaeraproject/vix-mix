@@ -266,7 +266,10 @@ new area first).
   of the other channel) or taken out; for a hardware channel the inputs from `Host::devices`
   as radios (`SetSource { ch, Hardware(Some(device)) }`), the one in use first and marked "not
   connected" when it is absent; then Remove channel (`RemoveChannel`, with Undo) and Done. A
-  channel just added opens its panel with the name selected, ready to type over.
+  channel just added opens its panel with the name selected, ready to type over. An empty
+  list says why ("No app has played yet: play one and it shows here.", "No app matches.",
+  "No input is present: connect one and it shows here."). A name or a search takes at most
+  64 characters.
 - **The output panel**, under a mix's header: its name, the outputs as radios
   (`SetMixDevice`), "No device" first on Master (`SetMixDevice { mix: Master, device: None }`),
   "Apps can also record Master as an input.", Done.
@@ -277,7 +280,8 @@ new area first).
   host](#what-the-window-needs-from-the-host)).
 - **The preferences** (270 wide): the quantum asked of PipeWire as radios (128, 256, 512
   samples; `SetPrefs`), the extra plugin folders each with its bin, a field and Add for
-  another (`SetPrefs` with the folder added or removed, the rest kept), Done.
+  another (`SetPrefs` with the folder added or removed, the rest kept; a folder takes at most
+  1024 characters), Done.
 
 ## The plugin browser
 
@@ -300,7 +304,8 @@ plugin matches “…”."
 
 `toast.rs`: one message at a time at the bottom of the window, centred, on the control face
 with a black outline, fading in and out over 0.15 s; a new message takes the old one's place,
-and the old one's Undo with it. A message wider than the window wraps.
+and the old one's Undo with it. A message wider than the window wraps; each is laid out before
+it is placed, so it is centred from its first frame.
 
 Removing an insert or a channel shows "Removed …" with Undo for 5 s. The window keeps what was
 removed while the toast shows and, on Undo, puts it back through the commands the `Host` trait
@@ -382,7 +387,8 @@ recorded; each test asserts the command its gesture sent):
 - the browser: `the_browser_searches_and_enter_adds_the_first_hit` (type, Down, Enter),
   `the_browser_nav_filters_and_a_star_toggles_a_favourite`;
 - the source panel: `an_app_ticked_in_one_channel_leaves_another`,
-  `a_hardware_channel_picks_its_input`, `the_name_field_renames_once_when_the_panel_closes`;
+  `an_app_search_that_finds_nothing_says_so`, `a_hardware_channel_picks_its_input`,
+  `the_name_field_renames_once_when_the_panel_closes`;
   the output panel: `the_output_panel_picks_a_device_and_master_can_have_none`;
 - remove and Undo: `removing_an_insert_shows_undo_and_undo_puts_it_back` (its editor closed
   through the host first), `a_bypassed_insert_comes_back_bypassed_and_undo_dies_with_its_toast`,

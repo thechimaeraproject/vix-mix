@@ -255,13 +255,12 @@ pub fn show(ui: &mut Ui, browser: &mut Browser, cx: &mut PopCx<'_>) -> Outcome {
         "Search {} plugins by name, maker or type",
         host.catalog().plugins.len()
     );
-    browser.query.truncate(FIELD_LIMIT);
     let response = widgets::text_field(
         ui,
         field,
         field_id,
         &mut browser.query,
-        font::sans(font::SEARCH),
+        (font::sans(font::SEARCH), FIELD_LIMIT),
         &placeholder,
     );
     if fresh {

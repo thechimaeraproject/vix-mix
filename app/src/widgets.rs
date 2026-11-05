@@ -52,20 +52,15 @@ pub enum ButtonKind {
 }
 
 /// The width of a text button reading `label`.
-pub fn button_width(painter: &Painter, label: &str) -> f32 {
-    let text = strip::galley(
-        painter,
-        label,
-        font::sans(font::SMALL),
-        colour::TEXT,
-        Spacing::None,
-    );
+pub fn button_width(ctx: &egui::Context, label: &str) -> f32 {
+    let text = ctx
+        .fonts_mut(|f| f.layout_no_wrap(label.to_owned(), font::sans(font::SMALL), colour::TEXT));
     text.size().x + 2.0 * pop::BUTTON_PAD_X
 }
 
 /// A text button (`.btn`) with its left edge at `left`, centred on `y`.
 pub fn button(ui: &Ui, id: Id, left: f32, y: f32, label: &str, kind: ButtonKind) -> Response {
-    let width = button_width(ui.painter(), label);
+    let width = button_width(ui.ctx(), label);
     let rect = Rect::from_min_size(
         pos2(left, y - pop::BUTTON_HEIGHT / 2.0),
         vec2(width, pop::BUTTON_HEIGHT),
@@ -157,18 +152,18 @@ pub fn heading_height(painter: &Painter) -> f32 {
 }
 
 /// A single-line text field over `rect`: no frame of its own (the caller paints the
-/// prototype's), in `font`, with a faint `hint`, taking at most 64 characters.
+/// prototype's), in `font`, with a faint `hint`, taking at most `limit` characters.
 pub fn text_field(
     ui: &mut Ui,
     rect: Rect,
     id: Id,
     text: &mut String,
-    font: FontId,
+    (font, limit): (FontId, usize),
     hint: &str,
 ) -> Response {
     let edit = egui::TextEdit::singleline(text)
         .id(id)
-        .char_limit(crate::popover::FIELD_LIMIT)
+        .char_limit(limit)
         .frame(egui::Frame::NONE)
         .font(font)
         .text_color(colour::TEXT)
