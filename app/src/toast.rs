@@ -100,16 +100,37 @@ impl Toasts {
         if showing {
             ctx.request_repaint_after_secs((toast.until - now) as f32);
         }
+        // Laid out before its area, so a new message is centred from its first frame.
         let [top, right, bottom, left] = pop::TOAST_PAD;
-        let id = Id::new("toast");
-        let width = ctx.memory(|m| m.area_rect(id)).map_or(0.0, |r| r.width());
-        let height = ctx.memory(|m| m.area_rect(id)).map_or(0.0, |r| r.height());
-        let at = pos2(
-            screen.center().x - width / 2.0,
-            screen.bottom() - pop::TOAST_BOTTOM - height,
-        );
+        let button = toast
+            .undo
+            .as_ref()
+            .map(|_| widgets::button_width(ctx, "Undo"));
         let wrap = (screen.width() - 2.0 * pop::EDGE_MARGIN - left - right).max(0.0);
-        Area::new(id)
+        let room = wrap - button.map_or(0.0, |w| w + pop::TOAST_GAP);
+        let text = ctx.fonts_mut(|f| {
+            f.layout_job(egui::text::LayoutJob::simple(
+                toast.message.clone(),
+                font::sans(font::BODY),
+                colour::TEXT,
+                room,
+            ))
+        });
+        let text_size = text.size();
+        let inner = vec2(
+            text_size.x + button.map_or(0.0, |w| w + pop::TOAST_GAP),
+            text_size.y.max(if button.is_some() {
+                pop::BUTTON_HEIGHT
+            } else {
+                0.0
+            }),
+        );
+        let outer = inner + vec2(left + right, top + bottom) + vec2(2.0, 2.0) * size::HAIRLINE;
+        let at = pos2(
+            screen.center().x - outer.x / 2.0,
+            screen.bottom() - pop::TOAST_BOTTOM - outer.y,
+        );
+        Area::new(Id::new("toast"))
             .order(Order::Tooltip)
             .fade_in(false)
             .fixed_pos(at)
@@ -126,30 +147,9 @@ impl Toasts {
                         bottom: bottom as i8,
                     })
                     .show(ui, |ui| {
-                        let painter = ui.painter().clone();
-                        let button = toast
-                            .undo
-                            .as_ref()
-                            .map(|_| widgets::button_width(&painter, "Undo"));
-                        let room = wrap - button.map_or(0.0, |w| w + pop::TOAST_GAP);
-                        let job = egui::text::LayoutJob::simple(
-                            toast.message.clone(),
-                            font::sans(font::BODY),
-                            colour::TEXT,
-                            room,
-                        );
-                        let text = painter.layout_job(job);
-                        let text_size = text.size();
-                        let height = text_size.y.max(if button.is_some() {
-                            pop::BUTTON_HEIGHT
-                        } else {
-                            0.0
-                        });
-                        let width = text_size.x + button.map_or(0.0, |w| w + pop::TOAST_GAP);
-                        let (rect, _) =
-                            ui.allocate_exact_size(vec2(width, height), egui::Sense::hover());
+                        let (rect, _) = ui.allocate_exact_size(inner, egui::Sense::hover());
                         strip::place(
-                            &painter,
+                            ui.painter(),
                             text,
                             Align2::LEFT_CENTER,
                             pos2(rect.left(), rect.center().y),
