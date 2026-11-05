@@ -6,6 +6,12 @@
 //! reported: its backend's state, its messages, a removal with its Undo, a finished rescan,
 //! an editor it closed. Nothing here owns a window or a device (an editor's window comes
 //! from an [`Opener`]), so the headless tests drive the same `Shell` the window does.
+//!
+//! **The clock.** One clock, the window's, in seconds: the frame reads it from egui's input
+//! ([`Shell::now`]), and the host's messages are stamped with it as they arrive, which may be
+//! long after the last frame (the window draws nothing while the mixer is idle or the daemon
+//! is gone, and a rescan holds the window's thread while it describes new bundles), so each
+//! shows for its whole time from when it came.
 
 use vixmix_host::{BackendState, Host, HostEvent};
 use vixmix_model::{ChannelKind, Command, InstanceId, Setup, Strip};
@@ -49,7 +55,7 @@ pub struct Shell {
     pub toasts: Toasts,
     /// Show the focus ring: true from a Tab until the next press of the pointer.
     pub keyboard: bool,
-    /// The window's clock at the last frame, in seconds.
+    /// The window's clock at the last frame, in seconds (the frame's egui input time).
     pub now: f64,
     /// Editors to open once the frame is done (the window loop has the event loop).
     pub to_open: Vec<InstanceId>,
@@ -144,8 +150,15 @@ impl Shell {
     /// [`UNDO_TOAST`](vixmix_host::UNDO_TOAST), a finished rescan (said only when the host
     /// had nothing to say about it), an editor the host closed itself. The rest (the setup,
     /// the apps, the devices, the inserts playing as pass-throughs) the next frame reads
-    /// from the host.
-    pub fn events(&mut self, events: Vec<HostEvent>, host: &dyn Host, editors: &mut EditorWindows) {
+    /// from the host. `now` is when the poll answered, on the window's clock: each message
+    /// shows for its time from then, however long ago the last frame was.
+    pub fn events(
+        &mut self,
+        events: Vec<HostEvent>,
+        now: f64,
+        host: &dyn Host,
+        editors: &mut EditorWindows,
+    ) {
         let mut told = false;
         let mut rescanned = false;
         for event in events {
@@ -153,13 +166,13 @@ impl Shell {
                 HostEvent::Backend(state) => self.backend = state,
                 HostEvent::Toast(message) => {
                     log::warn!("{message}");
-                    self.toasts.show(message, None, self.now, pop::TOAST_HOST_S);
+                    self.toasts.show(message, None, now, pop::TOAST_HOST_S);
                     told = true;
                 }
                 HostEvent::Removed { message, undo } => {
                     log::info!("{message}");
                     self.toasts
-                        .show(message, Some(undo), self.now, pop::TOAST_WITH_ACTION_S);
+                        .show(message, Some(undo), now, pop::TOAST_WITH_ACTION_S);
                     told = true;
                 }
                 HostEvent::PluginsRescanned => rescanned = true,
@@ -171,7 +184,7 @@ impl Shell {
             }
         }
         if rescanned && !told {
-            self.toasts.info(rescanned_note(host), self.now);
+            self.toasts.info(rescanned_note(host), now);
         }
     }
 

@@ -53,6 +53,9 @@ pub struct Recorder {
     pub problems: Vec<InsertProblem>,
     /// Events to report at the next poll, after `FakeHost`'s own.
     pub news: Vec<HostEvent>,
+    /// Answer no poll while set: what the host has to report waits for the first poll after,
+    /// as a host busy on the window's thread (a rescan describing new bundles) answers late.
+    pub busy: bool,
 }
 
 impl Recorder {
@@ -71,6 +74,7 @@ impl Recorder {
             editor_events: Vec::new(),
             problems: Vec::new(),
             news: Vec::new(),
+            busy: false,
         }
     }
 
@@ -103,6 +107,9 @@ impl Host for Recorder {
         self.inner.apply(cmd)
     }
     fn poll(&mut self) -> Vec<HostEvent> {
+        if self.busy {
+            return Vec::new();
+        }
         let mut events = self.inner.poll();
         events.append(&mut self.news);
         events
@@ -273,10 +280,12 @@ impl Harness {
             .dispatch(&mut self.host, &mut self.editors, intents);
     }
 
-    /// What the window does before each frame: takes in what the host reported.
+    /// What the window does before each frame: takes in what the host reported, stamped with
+    /// the window's clock.
     fn serve(&mut self) {
         let events = self.host.poll();
-        self.shell.events(events, &self.host, &mut self.editors);
+        self.shell
+            .events(events, self.time, &self.host, &mut self.editors);
     }
 
     /// One frame per entry, the commands of all of them in order.
@@ -293,8 +302,15 @@ impl Harness {
 
     /// Lets `seconds` go by on the window's clock, then draws a frame.
     pub fn wait(&mut self, seconds: f64) {
-        self.time += seconds;
+        self.quiet(seconds);
         self.idle(1);
+    }
+
+    /// Lets `seconds` go by on the window's clock with no frame and no poll, as they go by
+    /// while the window draws nothing (the mixer idle, the daemon gone) or the host holds its
+    /// thread; the next pass polls the host, then draws.
+    pub fn quiet(&mut self, seconds: f64) {
+        self.time += seconds;
     }
 
     /// The pointer moves to `at` and stays a frame.

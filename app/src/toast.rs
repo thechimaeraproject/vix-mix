@@ -1,6 +1,7 @@
 //! The toast line (`.toast`): one message at a time at the bottom of the window, centred,
 //! fading in and out. A message with an action (Undo) shows 5 s, one without 2.4 s, and a
-//! message from the host (which says what went wrong and what to do) 8 s. A new message
+//! message from the host (which says what went wrong and what to do) 8 s, each from when it
+//! came (a host's message from the poll that brought it, not the last frame). A new message
 //! takes the old one's place, and the old one's Undo with it.
 //!
 //! **Undo.** Removing an insert or a channel shows the host's "Removed …" with Undo

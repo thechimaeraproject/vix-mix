@@ -1175,3 +1175,55 @@ fn the_banner_says_when_the_mixer_is_idle_or_the_daemon_is_gone() {
     h.idle(1);
     assert!(h.find(vixmix_host::BackendState::DISCONNECTED).is_none());
 }
+
+#[test]
+fn a_host_message_after_a_quiet_spell_shows_for_its_whole_time() {
+    let mut h = Harness::new();
+    // Twenty seconds with no frame (the window draws nothing while the mixer is idle), then
+    // the host says something.
+    h.quiet(20.0);
+    let said = "the plugin list could not be kept in /tmp/vix-mix: check the directory is writable";
+    h.host.news = vec![vixmix_host::HostEvent::Toast(said.to_string())];
+    h.idle(1);
+    assert!(h.find(said).is_some(), "{:?}", h.drawn());
+    // Its eight seconds count from when it came, not from the last frame before it.
+    h.wait(7.0);
+    assert!(
+        h.find(said).is_some(),
+        "still there 7 s on: {:?}",
+        h.drawn()
+    );
+    h.wait(1.5);
+    h.idle(1);
+    assert!(
+        h.find(said).is_none(),
+        "gone after its 8 s: {:?}",
+        h.drawn()
+    );
+}
+
+#[test]
+fn a_rescan_that_holds_the_window_still_says_what_it_found() {
+    let mut h = Harness::new();
+    let menu = Pos2::new(
+        size::HEADER_PAD_X + size::MENU_BUTTON[0] / 2.0,
+        size::HEADER / 2.0,
+    );
+    let _ = h.click(menu);
+    h.idle(2);
+    // The host describes new bundles on the window's thread, and answers five seconds after
+    // the frame that asked.
+    h.host.busy = true;
+    let from = h.host.calls.len();
+    let _ = h.click(h.text("Rescan plugins"));
+    assert_eq!(h.host.calls[from..], [Call::Rescan]);
+    h.host.busy = false;
+    h.quiet(5.0);
+    h.idle(1);
+    let plugins = h.host.catalog().plugins.len();
+    let said = format!("Rescanned the plugin folders: {plugins} plugins");
+    assert!(h.find(&said).is_some(), "{:?}", h.drawn());
+    // Its 2.4 s count from the answer.
+    h.wait(2.0);
+    assert!(h.find(&said).is_some(), "{:?}", h.drawn());
+}
