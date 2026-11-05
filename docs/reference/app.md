@@ -31,7 +31,7 @@ hand back; on `png` for the capture. Its tests also take `vixmix-plugins`, becau
 | `well.rs` | the FX well: MON and MST, the slots with their square, gear and bin, the mark of a slot playing as a pass-through, the slot keys, "+ Add plugin", the scrolling list |
 | `drag.rs` | an insert dragged within or between strips: where it lands, the drop line and outline, the ghost, the command a drop sends |
 | `popover.rs` | the popovers: the source panel, the output panel, the add-channel menu, the menu and the preferences; where a popover goes |
-| `browser.rs` | the plugin browser: the search, the nav and its counts, the list grouped A to Z, stars, the footer |
+| `browser.rs` | the plugin browser: the search, the nav and its counts, the list grouped A to Z, stars, the footer; the list and the nav kept between frames, and only the rows in view drawn |
 | `toast.rs` | the toast line, and the Undo command a toast carries |
 | `editors.rs` | the plugin editor windows, made by an `Opener` and driven through `EditorWindow` (winit's in the app, a fake in the tests): open, resize, close through the host, titles |
 | `widgets.rs` | what every surface shares: hover, the focus ring, the text button, tick box and radio, headings, the text field, a popover's frame |
@@ -369,6 +369,21 @@ at: len }` (the plugin as the catalog names it: id, bundle, name) and closes the
 footer says where it goes: "Adds to **<strip>**, slot N". An empty list says "No installed
 plugin matches “…”."
 
+**A real catalog has hundreds of plugins** (this machine's: 915 from 322 bundles), so the
+browser does not build its list every frame. The list (as indexes into the catalog's plugins)
+and the nav are kept from frame to frame and built again only when the query or the filter
+changes, or the catalog does: a rescan (`HostEvent::PluginsRescanned`, which `Shell::events`
+passes on with `Browser::forget`), a star (the favourites' count), an add (the recent list),
+with the count of plugins kept as a guard. Each name is lower-cased once for the sort, not at
+every comparison. In the nav and the list only the rows in view, and those within
+`pop::LIST_REACH` (a row and a heading) past each edge, are drawn and sensed; the rest only
+take their space. A row or nav item that takes the focus scrolls into view at once, so Tab
+walks the whole list, out of view included; Up and Down scroll the picked row in as before.
+Timed with that catalog in the headless harness (`ui::draw` and `Shell::dispatch`, on Linux),
+a frame with the browser open went from 3.15 ms to 0.48 ms in a debug build (1.14 to 0.16 in
+release), against 0.23 (0.08) with it closed; a keystroke, which builds the list again, 0.94
+(0.41).
+
 ## Toasts and Undo
 
 `toast.rs`: one message at a time at the bottom of the window, centred, on the control face
@@ -455,7 +470,11 @@ gesture sent):
   `a_drag_shows_its_ghost_and_escape_cancels_it`;
 - the browser: `the_browser_searches_and_enter_adds_the_first_hit` (type, Down, Enter),
   `the_browser_nav_filters_and_a_star_toggles_a_favourite` (the star reaches
-  `Host::set_favorite`);
+  `Host::set_favorite`), `the_browser_s_arrows_reach_a_row_out_of_view_and_enter_adds_it`
+  (Down to the last row, which scrolls in; Enter sends its `AddInsert`),
+  `tab_walks_the_browser_s_list_into_rows_out_of_view` (Tab from the search field reaches the
+  last row, and it scrolls in), `an_open_browser_lists_what_a_rescan_found` (a plugin renamed
+  by a rescan, as many as before, takes its new place A to Z);
 - the source panel: `an_app_ticked_in_one_channel_leaves_another`,
   `an_app_search_that_finds_nothing_says_so`, `a_hardware_channel_picks_its_input`,
   `the_name_field_renames_once_when_the_panel_closes`;
@@ -504,8 +523,8 @@ gesture sent):
   adds it once and unticking takes it out; closing the source panel renames only when the name
   changed.
 - `browser.rs`: a search ranks name starts, then contains, then maker, then type; the nav
-  counts favourites, recent, types and makers in order; All plugins group by their first
-  letter.
+  counts favourites, recent, types and makers in order, and All plugins sort by name, case
+  aside; All plugins group by their first letter.
 - `toast.rs`: a toast shows for its time and its Undo goes with it.
 - `editors.rs`: an editor window is titled plugin, strip and slot; it opens hidden at 640 ×
   480, takes the size its plugin asks for and shows, and opened again is raised; a refusal

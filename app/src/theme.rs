@@ -320,6 +320,10 @@ pub mod pop {
     pub const KIND_COLUMN: f32 = 92.0;
     /// An A–Z group heading (`.br-group`): padding above, below and across.
     pub const GROUP: [f32; 3] = [8.0, 3.0, 8.0];
+    /// How far past the top and bottom of the browser's list and nav their rows are still
+    /// drawn and sensed (the rest only take their space): a row and a heading, so Tab
+    /// reaches the next row out of view, which then scrolls in.
+    pub const LIST_REACH: f32 = 2.0 * PLUGIN_ROW;
     /// The browser footer's padding on its left.
     pub const FOOT_PAD_LEFT: f32 = 12.0;
 

@@ -1227,3 +1227,81 @@ fn a_rescan_that_holds_the_window_still_says_what_it_found() {
     h.wait(2.0);
     assert!(h.find(&said).is_some(), "{:?}", h.drawn());
 }
+
+/// Opens the plugin browser from Game's "+ Add plugin", and lets it settle.
+fn open_browser(h: &mut Harness) -> Strip {
+    let game = Strip::Channel(h.channel(1));
+    let _ = h.click(h.slot(game, 0).center());
+    h.idle(2);
+    assert!(matches!(h.shell.popover, Some(Popover::Browser(_))));
+    game
+}
+
+#[test]
+fn the_browser_s_arrows_reach_a_row_out_of_view_and_enter_adds_it() {
+    let mut h = Harness::new();
+    let game = open_browser(&mut h);
+    // All plugins, A to Z: the last is far below the list's bottom, out of view.
+    let last = "Youlean Loudness Meter 2";
+    let list_bottom = h.text_rect("Adds to Game, slot 1").top();
+    assert!(h.find(last).is_none_or(|at| at.y > list_bottom));
+    let rows = h.host.catalog().plugins.len();
+    for _ in 1..rows {
+        let _ = h.key(Key::ArrowDown, Modifiers::NONE);
+    }
+    // Picked, it scrolled into view.
+    h.wait(1.0);
+    assert!(h.text_rect(last).bottom() <= list_bottom, "{:?}", h.drawn());
+    let sent = h.key(Key::Enter, Modifiers::NONE);
+    assert_eq!(
+        sent,
+        vec![Command::AddInsert {
+            strip: game,
+            plugin: example::plugin(last),
+            at: 0
+        }]
+    );
+}
+
+#[test]
+fn tab_walks_the_browser_s_list_into_rows_out_of_view() {
+    let mut h = Harness::new();
+    let _ = open_browser(&mut h);
+    let last = example::plugin("Youlean Loudness Meter 2").id;
+    let row = egui::Id::new(("plugin", last.as_str()));
+    let focused = |h: &Harness| h.ctx.memory(|m| m.focused());
+    // From the search field through the nav and every row and star before it.
+    let mut tabs = 0;
+    while focused(&h) != Some(row) {
+        assert!(tabs < 200, "Tab never reached the last row");
+        let _ = h.key(Key::Tab, Modifiers::NONE);
+        tabs += 1;
+    }
+    // It scrolled into view as it took the focus.
+    h.wait(1.0);
+    let list_bottom = h.text_rect("Adds to Game, slot 1").top();
+    let at = h.text_rect("Youlean Loudness Meter 2");
+    assert!(at.bottom() <= list_bottom, "{at:?} below {list_bottom}");
+}
+
+#[test]
+fn an_open_browser_lists_what_a_rescan_found() {
+    let mut h = Harness::new();
+    let _ = open_browser(&mut h);
+    assert!(h.find("Airwindows Consolidated").is_some());
+    // The rescan found one plugin under a new name: as many plugins, in a new order.
+    let mut catalog = h.host.inner.catalog().clone();
+    if let Some(plugin) = catalog
+        .plugins
+        .iter_mut()
+        .find(|p| p.name == "Youlean Loudness Meter 2")
+    {
+        plugin.name = "Aardvark Meter".to_string();
+    }
+    h.host.catalog = Some(catalog);
+    h.host.news = vec![vixmix_host::HostEvent::PluginsRescanned];
+    h.idle(1);
+    let new = h.text_rect("Aardvark Meter");
+    let next = h.text_rect("Airwindows Consolidated");
+    assert!(new.top() < next.top(), "first, A to Z: {new:?} {next:?}");
+}

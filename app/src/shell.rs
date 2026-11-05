@@ -175,7 +175,13 @@ impl Shell {
                         .show(message, Some(undo), now, pop::TOAST_WITH_ACTION_S);
                     told = true;
                 }
-                HostEvent::PluginsRescanned => rescanned = true,
+                HostEvent::PluginsRescanned => {
+                    rescanned = true;
+                    // An open browser lists what the rescan found.
+                    if let Some(Popover::Browser(browser)) = &mut self.popover {
+                        browser.forget();
+                    }
+                }
                 HostEvent::EditorClosed(instance) => editors.forget(instance),
                 HostEvent::SetupChanged
                 | HostEvent::Apps(_)
