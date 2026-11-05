@@ -20,3 +20,9 @@ chimaeraproject-vst3-host.workspace = true
 raw-window-handle.workspace = true
 thiserror.workspace = true
 log.workspace = true
+
+# tests/headless.rs: every realtime callback runs inside assert_no_alloc, and the test binary
+# installs its allocator, so an allocation on the data thread (the test plugin's included)
+# aborts the run.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+assert_no_alloc.workspace = true

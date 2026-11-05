@@ -70,7 +70,7 @@ pub(crate) struct Audio {
 }
 
 enum Kind {
-    Null(Null),
+    Null(Box<Null>),
     #[cfg(target_os = "linux")]
     PipeWire(Box<linux::PipeWire>),
 }
@@ -213,11 +213,11 @@ impl Audio {
 }
 
 fn null(engine: &Arc<Engine>, reason: String, retry: Option<(Instant, &'static str)>) -> Kind {
-    Kind::Null(Null {
+    Kind::Null(Box::new(Null {
         pump: NullBackend::new(Arc::clone(engine), NULL_QUANTUM),
         reason,
         retry,
-    })
+    }))
 }
 
 /// The system's backend, or the null backend with the reason there is none.
