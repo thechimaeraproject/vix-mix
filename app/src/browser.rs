@@ -201,7 +201,7 @@ pub fn group(name: &str) -> char {
 /// The browser's frame: the search row, the nav and the list, the footer.
 pub fn show(ui: &mut Ui, browser: &mut Browser, cx: &mut PopCx<'_>) -> Outcome {
     let host = cx.host;
-    let favorite = cx.favorites;
+    let favorite = &|id: &str| host.catalog().favorites.contains(id);
     let (rect, _) = ui.allocate_exact_size(pop::BROWSER.into(), Sense::hover());
     let search = Rect::from_min_size(rect.min, vec2(rect.width(), pop::SEARCH_HEIGHT));
     let foot = Rect::from_min_max(

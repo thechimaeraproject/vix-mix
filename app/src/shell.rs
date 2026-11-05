@@ -1,12 +1,11 @@
 //! The window's state between frames and what it does with a frame's gestures. A frame
 //! ([`crate::ui::draw`]) reads the host and pushes [`Intent`]s; [`Shell::dispatch`] then
 //! carries them out against the host: commands applied (each refusal a toast, which says
-//! what to do), popovers opened and closed, the toasts a removal or a move earns, Undo,
-//! editors queued to open, then opened. Nothing here owns a window or a device (an editor's
-//! window comes from an [`Opener`]), so the headless tests drive the same `Shell` the window
-//! does.
-
-use std::collections::BTreeMap;
+//! what to do), popovers opened and closed, the toasts a move or an add earns, Undo, a star,
+//! a rescan, editors queued to open, then opened. [`Shell::events`] takes in what the host
+//! reported: its backend's state, its messages, a removal with its Undo, a finished rescan,
+//! an editor it closed. Nothing here owns a window or a device (an editor's window comes
+//! from an [`Opener`]), so the headless tests drive the same `Shell` the window does.
 
 use vixmix_host::{BackendState, Host, HostEvent};
 use vixmix_model::{ChannelKind, Command, InstanceId, Setup, Strip};
@@ -16,7 +15,7 @@ use crate::editors::{EditorWindows, MAX_EDITORS, Opener};
 use crate::meters::Meters;
 use crate::popover::{Popover, SourcePanel};
 use crate::theme::pop;
-use crate::toast::{self, Toasts, Undo};
+use crate::toast::Toasts;
 
 /// What a gesture asks for.
 #[derive(Clone, Debug, PartialEq)]
@@ -29,10 +28,12 @@ pub enum Intent {
     Toggle(Anchor),
     /// The add-channel menu: a new channel, and its panel open with the name to type.
     AddChannel(ChannelKind),
-    /// The toast's Undo.
+    /// The toast's Undo: applies the command the host handed out with the removal.
     Undo,
-    /// A star in the plugin browser.
+    /// A star in the plugin browser: the host keeps it in `plugins.ron`.
     Favorite { id: String, on: bool },
+    /// The menu's Rescan plugins.
+    Rescan,
     /// A message for the toast line: a control refused something itself, and says what to do.
     Notice(String),
 }
@@ -46,8 +47,6 @@ pub struct Shell {
     pub gestures: Gestures,
     pub popover: Option<Popover>,
     pub toasts: Toasts,
-    /// Stars toggled in the browser this session, over the catalog's own favourites.
-    pub favorites: Favorites,
     /// Show the focus ring: true from a Tab until the next press of the pointer.
     pub keyboard: bool,
     /// The window's clock at the last frame, in seconds.
@@ -67,7 +66,6 @@ impl Default for Shell {
             gestures: Gestures::default(),
             popover: None,
             toasts: Toasts::default(),
-            favorites: Favorites::default(),
             keyboard: false,
             now: 0.0,
             to_open: Vec::new(),
@@ -76,40 +74,12 @@ impl Default for Shell {
     }
 }
 
-/// The browser's stars as the window shows them: the catalog's favourites with this
-/// session's toggles over them. Bounded: only a plugin the catalog lists can be toggled.
-///
-/// The `Host` trait has no way to save a star yet (the build map's change request 8), so a
-/// toggle lasts until the window closes.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Favorites {
-    toggled: BTreeMap<String, bool>,
-}
-
-impl Favorites {
-    /// Whether `id` is a favourite.
-    pub fn is(&self, host: &dyn Host, id: &str) -> bool {
-        self.toggled
-            .get(id)
-            .copied()
-            .unwrap_or_else(|| host.catalog().favorites.contains(id))
-    }
-
-    /// Stars or unstars `id`, when the catalog lists it.
-    pub fn set(&mut self, host: &dyn Host, id: String, on: bool) {
-        if host.catalog().get(&id).is_some() {
-            self.toggled.insert(id, on);
-        }
-    }
-}
-
-/// What a command earns on the toast line when it changes something: the words, and what
-/// Undo puts back.
+/// What a command earns on the toast line when it changes something. A removal's toast,
+/// with its Undo, is the host's ([`HostEvent::Removed`]).
 #[derive(Clone, Debug, PartialEq)]
 enum Note {
     None,
     Info(String),
-    Undo(String, Undo),
 }
 
 /// The name a strip goes by.
@@ -124,41 +94,6 @@ impl Note {
     /// The note `cmd` earns, read from the setup before it applies.
     fn before(cmd: &Command, setup: &Setup) -> Note {
         match cmd {
-            Command::RemoveInsert { instance } => {
-                let found = setup
-                    .channels
-                    .iter()
-                    .map(|c| (Strip::Channel(c.id), &c.chain))
-                    .chain([
-                        (Strip::Mix(setup.monitor.id), &setup.monitor.chain),
-                        (Strip::Mix(setup.master.id), &setup.master.chain),
-                    ])
-                    .find_map(|(strip, chain)| {
-                        let at = chain.iter().position(|i| i.instance == *instance)?;
-                        Some((strip, at, chain[at].clone()))
-                    });
-                match found {
-                    Some((strip, at, insert)) => Note::Undo(
-                        format!(
-                            "Removed {} from {}",
-                            insert.plugin.name,
-                            strip_name(setup, strip).unwrap_or_default()
-                        ),
-                        Undo::Insert { strip, at, insert },
-                    ),
-                    None => Note::None,
-                }
-            }
-            Command::RemoveChannel(ch) => match setup.channels.iter().position(|c| c.id == *ch) {
-                Some(at) => {
-                    let channel = setup.channels[at].clone();
-                    Note::Undo(
-                        format!("Removed {}", channel.name),
-                        Undo::Channel { at, channel },
-                    )
-                }
-                None => Note::None,
-            },
             Command::MoveInsert { from, to, copy } if from.strip != to.strip || *copy => {
                 let name = match from.strip {
                     Strip::Channel(ch) => setup.channel(ch).map(|c| &c.chain),
@@ -204,17 +139,39 @@ fn removing(cmd: &Command, setup: &Setup) -> Vec<InstanceId> {
 }
 
 impl Shell {
-    /// A host event: the backend's state, a message for the toast line, an editor the host
-    /// closed itself.
-    pub fn event(&mut self, event: HostEvent, editors: &mut EditorWindows) {
-        match event {
-            HostEvent::Backend(state) => self.backend = state,
-            HostEvent::Toast(message) => {
-                log::warn!("{message}");
-                self.toasts.show(message, None, self.now, pop::TOAST_HOST_S);
+    /// What one poll of the host reported, in order: the backend's state, a message for the
+    /// toast line (it says what to do), a removal shown with its Undo for
+    /// [`UNDO_TOAST`](vixmix_host::UNDO_TOAST), a finished rescan (said only when the host
+    /// had nothing to say about it), an editor the host closed itself. The rest (the setup,
+    /// the apps, the devices, the inserts playing as pass-throughs) the next frame reads
+    /// from the host.
+    pub fn events(&mut self, events: Vec<HostEvent>, host: &dyn Host, editors: &mut EditorWindows) {
+        let mut told = false;
+        let mut rescanned = false;
+        for event in events {
+            match event {
+                HostEvent::Backend(state) => self.backend = state,
+                HostEvent::Toast(message) => {
+                    log::warn!("{message}");
+                    self.toasts.show(message, None, self.now, pop::TOAST_HOST_S);
+                    told = true;
+                }
+                HostEvent::Removed { message, undo } => {
+                    log::info!("{message}");
+                    self.toasts
+                        .show(message, Some(undo), self.now, pop::TOAST_WITH_ACTION_S);
+                    told = true;
+                }
+                HostEvent::PluginsRescanned => rescanned = true,
+                HostEvent::EditorClosed(instance) => editors.forget(instance),
+                HostEvent::SetupChanged
+                | HostEvent::Apps(_)
+                | HostEvent::Devices(_)
+                | HostEvent::Problems(_) => {}
             }
-            HostEvent::EditorClosed(instance) => editors.forget(instance),
-            _ => {}
+        }
+        if rescanned && !told {
+            self.toasts.info(rescanned_note(host), self.now);
         }
     }
 
@@ -253,14 +210,16 @@ impl Shell {
                     }
                 }
                 Intent::Undo => {
-                    if let Some(undo) = self.toasts.take_undo(self.now)
-                        && let Err(refused) = toast::replay(host, undo)
-                    {
-                        self.toasts
-                            .show(refused.to_string(), None, self.now, pop::TOAST_HOST_S);
+                    if let Some(undo) = self.toasts.take_undo(self.now) {
+                        self.send(host, editors, undo);
                     }
                 }
-                Intent::Favorite { id, on } => self.favorites.set(host, id, on),
+                Intent::Favorite { id, on } => {
+                    if host.catalog().get(&id).is_some() {
+                        host.set_favorite(&id, on);
+                    }
+                }
+                Intent::Rescan => host.rescan_plugins(),
                 Intent::Notice(message) => {
                     self.toasts.show(message, None, self.now, pop::TOAST_HOST_S);
                 }
@@ -308,17 +267,10 @@ impl Shell {
         }
         match host.apply(cmd) {
             Ok(applied) => {
-                if applied.changed() {
-                    match note {
-                        Note::None => {}
-                        Note::Info(message) => self.toasts.info(message, self.now),
-                        Note::Undo(message, undo) => self.toasts.show(
-                            message,
-                            Some(undo),
-                            self.now,
-                            pop::TOAST_WITH_ACTION_S,
-                        ),
-                    }
+                if applied.changed()
+                    && let Note::Info(message) = note
+                {
+                    self.toasts.info(message, self.now);
                 }
                 Some(applied)
             }
@@ -328,5 +280,13 @@ impl Shell {
                 None
             }
         }
+    }
+}
+
+/// What the toast line says when a rescan finished and the host said nothing of its own.
+fn rescanned_note(host: &dyn Host) -> String {
+    match host.catalog().plugins.len() {
+        1 => "Rescanned the plugin folders: 1 plugin".to_string(),
+        n => format!("Rescanned the plugin folders: {n} plugins"),
     }
 }

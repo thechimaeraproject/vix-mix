@@ -5,7 +5,8 @@
 use egui::{Key, Modifiers, Pos2, vec2};
 use vixmix_host::Host;
 use vixmix_model::{
-    ChannelKind, Command, DeviceRef, MixId, SlotRef, Source, Strip, example, taper,
+    ChannelKind, Command, DeviceRef, MAX_CHANNELS, MixId, Refused, SlotRef, Source, Strip, example,
+    taper,
 };
 
 use crate::fader::{FINE_DRAG, FINE_KEY_STEP, KEY_STEP, Target};
@@ -491,8 +492,19 @@ fn the_browser_nav_filters_and_a_star_toggles_a_favourite() {
         name.left() - pop::PLUGIN_GAP - pop::STAR_COLUMN / 2.0,
         name.center().y,
     );
+    let from = h.host.calls.len();
     let _ = h.click(star);
-    assert!(h.intents.iter().any(|i| matches!(i, Intent::Favorite { id, on: false } if *id == example::plugin("Pro-Q 3").id)), "{:?}", h.intents);
+    let pro_q = example::plugin("Pro-Q 3").id;
+    assert!(
+        h.intents
+            .iter()
+            .any(|i| matches!(i, Intent::Favorite { id, on: false } if *id == pro_q)),
+        "{:?}",
+        h.intents
+    );
+    // The host keeps it (in `plugins.ron`, for the real one).
+    assert_eq!(h.host.calls[from..], [Call::Favorite(pro_q.clone(), false)]);
+    assert!(!h.host.catalog().favorites.contains(&pro_q));
     h.idle(1);
     assert_eq!(count(&h), 2, "{:?}", h.drawn());
     assert!(h.find("3").is_some(), "Favorites counts three");
@@ -587,16 +599,20 @@ fn removing_an_insert_shows_undo_and_undo_puts_it_back() {
         "{:?}",
         h.drawn()
     );
+    // Undo applies the one command the host handed out with the removal: the same insert,
+    // instance and all, back in its slot.
     let sent = h.click(h.text("Undo"));
     assert_eq!(
         sent,
-        vec![Command::AddInsert {
-            strip: mic,
-            plugin: removed.plugin.clone(),
-            at: 1
+        vec![Command::RestoreInsert {
+            to: SlotRef {
+                strip: mic,
+                index: 1
+            },
+            insert: removed.clone()
         }]
     );
-    assert_eq!(h.setup().channels[0].chain[1].plugin, removed.plugin);
+    assert_eq!(h.setup().channels[0].chain[1], removed);
     h.idle(1);
     assert!(h.find("Undo").is_none(), "Undo hides the toast");
 }
@@ -613,14 +629,15 @@ fn a_bypassed_insert_comes_back_bypassed_and_undo_dies_with_its_toast() {
     h.idle(2);
     let undo = h.text("Undo");
     let sent = h.click(undo);
-    let Command::AddInsert { .. } = sent[0] else {
+    let Command::RestoreInsert { insert, .. } = one(&sent) else {
         panic!("{sent:?}")
     };
-    let Command::SetInsertEnabled { instance, enabled } = sent[1] else {
-        panic!("{sent:?}")
-    };
-    assert!(!enabled);
-    assert_eq!(h.setup().channels[2].chain[0].instance, instance);
+    assert!(!insert.enabled);
+    assert_eq!(h.setup().channels[2].chain[0].instance, ott);
+    assert!(
+        !h.setup().channels[2].chain[0].enabled,
+        "bypassed as it was"
+    );
     // Gone after five seconds, and its Undo with it.
     let _ = h.click(h.slot(music, 0).center());
     let _ = h.key(Key::Delete, Modifiers::NONE);
@@ -645,61 +662,45 @@ fn removing_a_channel_shows_undo_and_undo_brings_it_back() {
     assert_eq!(h.shell.popover, None);
     assert_eq!(h.setup().channels.len(), 5);
     h.idle(2);
-    assert!(h.find("Removed Music").is_some());
+    // The host's words, and its Undo: the channel back at its place, ids, chain and all.
+    assert!(h.find("Removed channel Music").is_some(), "{:?}", h.drawn());
     let sent = h.click(h.text("Undo"));
-    let back = h.setup().channels.last().unwrap().clone();
     assert_eq!(
         sent,
-        vec![
-            Command::AddChannel {
-                kind: ChannelKind::Apps
-            },
-            Command::Rename {
-                ch: back.id,
-                name: "Music".to_string()
-            },
-            Command::SetSource {
-                ch: back.id,
-                source: music.source.clone()
-            },
-            Command::SetLink {
-                ch: back.id,
-                link: false
-            },
-            Command::SetSend {
-                ch: back.id,
-                mix: MixId::Monitor,
-                position: music.monitor.position
-            },
-            Command::SetSend {
-                ch: back.id,
-                mix: MixId::Master,
-                position: music.master.position
-            },
-            Command::SetMute {
-                ch: back.id,
-                mix: MixId::Master,
-                mute: true
-            },
-            Command::AddInsert {
-                strip: Strip::Channel(back.id),
-                plugin: music.chain[0].plugin.clone(),
-                at: 0
-            },
-            Command::SetInsertEnabled {
-                instance: back.chain[0].instance,
-                enabled: false
-            },
-        ]
+        vec![Command::RestoreChannel {
+            at: 2,
+            channel: music.clone()
+        }]
     );
-    // All of it back, but at the right end and with new ids (change request 2 restores
-    // the place and the ids).
-    assert_eq!(back.name, music.name);
-    assert_eq!(back.source, music.source);
-    assert_eq!((back.monitor, back.master), (music.monitor, music.master));
-    assert_eq!(back.link, music.link);
-    assert_eq!(back.chain[0].plugin, music.chain[0].plugin);
-    assert!(!back.chain[0].enabled);
+    assert_eq!(h.setup().channels[2], music);
+    assert_eq!(h.setup().channels.len(), 6);
+}
+
+#[test]
+fn an_undo_the_host_refuses_says_why_on_the_toast_line() {
+    let mut h = Harness::new();
+    let music = h.setup().channels[2].clone();
+    let _ = h.click(h.head(Strip::Channel(music.id)).center());
+    h.idle(2);
+    let _ = h.click(h.text("Remove channel"));
+    h.idle(2);
+    let undo = h.text("Undo");
+    // Three channels added elsewhere while the toast shows: the console is full again.
+    for _ in 0..3 {
+        let _ = h.host.inner.apply(Command::AddChannel {
+            kind: ChannelKind::Apps,
+        });
+    }
+    h.idle(1);
+    let sent = h.click(undo);
+    assert!(
+        matches!(one(&sent), Command::RestoreChannel { .. }),
+        "{sent:?}"
+    );
+    h.idle(1);
+    let refused = Refused::TooManyChannels { max: MAX_CHANNELS }.to_string();
+    assert!(h.find(&refused).is_some(), "{:?}", h.drawn());
+    assert_eq!(h.setup().channels.len(), MAX_CHANNELS);
 }
 
 #[test]
@@ -1059,8 +1060,25 @@ fn the_preferences_ask_for_a_quantum_and_take_plugin_folders() {
     let _ = h.click(menu);
     assert_eq!(h.shell.popover, Some(Popover::Menu));
     h.idle(2);
-    // Rescan waits for the host to offer one: it sends nothing.
+    // Rescan plugins asks the host and closes the menu; when the host has nothing of its
+    // own to say about it, the toast line says what the catalog holds now.
+    let from = h.host.calls.len();
     assert!(h.click(h.text("Rescan plugins")).is_empty());
+    assert_eq!(h.host.calls[from..], [Call::Rescan]);
+    assert_eq!(h.shell.popover, None);
+    h.idle(1);
+    let plugins = h.host.catalog().plugins.len();
+    let said = format!("Rescanned the plugin folders: {plugins} plugins");
+    assert!(h.find(&said).is_some(), "{:?}", h.drawn());
+    // A host that warned about the rescan keeps its warning on the toast line.
+    h.host.news = vec![
+        vixmix_host::HostEvent::Toast("Pro-C 2 is missing: rescan plugins".to_string()),
+        vixmix_host::HostEvent::PluginsRescanned,
+    ];
+    h.idle(1);
+    assert!(h.find("Pro-C 2 is missing: rescan plugins").is_some());
+    let _ = h.click(menu);
+    h.idle(2);
     let _ = h.click(h.text("Preferences"));
     h.idle(2);
     let sent = h.click(h.text("512 samples"));
@@ -1089,4 +1107,71 @@ fn an_app_search_that_finds_nothing_says_so() {
     h.idle(1);
     assert!(h.find("No app matches.").is_some(), "{:?}", h.drawn());
     assert!(h.find("PLAYING NOW").is_none());
+}
+
+#[test]
+fn an_insert_playing_as_a_pass_through_is_marked_and_says_why() {
+    let mut h = Harness::new();
+    let mic = Strip::Channel(h.channel(0));
+    let insert = h.setup().channels[0].chain[1].clone();
+    let message = "Pro-C 2 is not installed on this machine: install it and rescan plugins, or remove the insert";
+    h.host.problems = vec![vixmix_host::InsertProblem {
+        strip: mic,
+        instance: insert.instance,
+        plugin_id: insert.plugin.id.clone(),
+        message: message.to_string(),
+    }];
+    h.idle(1);
+    let ink = |h: &Harness, text: &str| {
+        h.texts
+            .iter()
+            .find(|(t, _, _)| t == text)
+            .map(|(_, _, colour)| *colour)
+    };
+    assert_eq!(ink(&h, "Pro-C 2"), Some(crate::theme::colour::MUTE));
+    assert_eq!(
+        ink(&h, "Noise Suppression for Voice"),
+        Some(crate::theme::colour::TEXT),
+        "only the failing slot is marked"
+    );
+    // Under the pointer it says why, and what to do.
+    let _ = h.hover(h.slot(mic, 1).center());
+    h.wait(1.0);
+    let _ = h.hover(h.slot(mic, 1).center());
+    assert!(h.find(message).is_some(), "{:?}", h.drawn());
+    // Back to normal once the host has no problem with it.
+    h.host.problems.clear();
+    h.idle(1);
+    assert_eq!(ink(&h, "Pro-C 2"), Some(crate::theme::colour::TEXT));
+}
+
+#[test]
+fn the_banner_says_when_the_mixer_is_idle_or_the_daemon_is_gone() {
+    let mut h = Harness::new();
+    let idle = "Nothing records Master and Monitor has no device: pick Monitor's output";
+    h.host.news = vec![vixmix_host::HostEvent::Backend(
+        vixmix_host::BackendState::Idle {
+            reason: idle.to_string(),
+        },
+    )];
+    h.idle(1);
+    assert!(h.find(idle).is_some(), "{:?}", h.drawn());
+    h.host.news = vec![vixmix_host::HostEvent::Backend(
+        vixmix_host::BackendState::Disconnected,
+    )];
+    h.idle(1);
+    assert!(h.find(idle).is_none());
+    assert!(
+        h.find(vixmix_host::BackendState::DISCONNECTED).is_some(),
+        "{:?}",
+        h.drawn()
+    );
+    h.host.news = vec![vixmix_host::HostEvent::Backend(
+        vixmix_host::BackendState::Running {
+            rate: 48_000,
+            quantum: 256,
+        },
+    )];
+    h.idle(1);
+    assert!(h.find(vixmix_host::BackendState::DISCONNECTED).is_none());
 }

@@ -179,8 +179,6 @@ pub struct PopCx<'a> {
     pub host: &'a dyn Host,
     pub out: &'a mut Vec<Intent>,
     pub keyboard: bool,
-    /// The favourites as the window shows them.
-    pub favorites: &'a dyn Fn(&str) -> bool,
 }
 
 /// Where a popover of `size` goes: below `anchor` (its left edges lined up) or beside it
@@ -906,25 +904,19 @@ fn output_panel(ui: &mut Ui, panel: &mut OutputPanel, cx: &mut PopCx<'_>) -> Out
     if done { Outcome::Close } else { Outcome::Stay }
 }
 
-/// A menu row (`.menu button`): an icon when given, the label; faint and inert when not
-/// `enabled`. Returns whether it was pressed.
+/// A menu row (`.menu button`): an icon when given, the label.
 fn menu_row(
     ui: &mut Ui,
     id: Id,
     icon: Option<&Icon>,
     label: &str,
-    enabled: bool,
     keyboard: bool,
 ) -> egui::Response {
     let (rect, _) =
         ui.allocate_exact_size(vec2(ui.available_width(), pop::MENU_ROW), Sense::hover());
-    let response = if enabled {
-        widgets::press(ui, rect, id)
-    } else {
-        ui.interact(rect, id, Sense::hover())
-    };
+    let response = widgets::press(ui, rect, id);
     let painter = ui.painter();
-    if enabled && response.hovered() {
+    if response.hovered() {
         painter.rect_filled(rect, size::CORNER, colour::CTL);
     }
     let y = rect.center().y;
@@ -937,8 +929,13 @@ fn menu_row(
         icons::paint(painter, icon, icon_rect, colour::DIM);
         x = icon_rect.right() + pop::MENU_GAP;
     }
-    let ink = if enabled { colour::TEXT } else { colour::FAINT };
-    let text = strip::galley(painter, label, font::sans(font::BODY), ink, Spacing::None);
+    let text = strip::galley(
+        painter,
+        label,
+        font::sans(font::BODY),
+        colour::TEXT,
+        Spacing::None,
+    );
     strip::place(painter, text, Align2::LEFT_CENTER, pos2(x, y));
     if keyboard && response.has_focus() {
         widgets::ring(painter, rect, 0.0);
@@ -963,16 +960,7 @@ fn add_channel_menu(ui: &mut Ui, cx: &mut PopCx<'_>) -> Outcome {
             (ChannelKind::Apps, &icons::APPS, "App channel"),
             (ChannelKind::Hardware, &icons::MIC, "Hardware input"),
         ] {
-            if menu_row(
-                ui,
-                Id::new(("add", label)),
-                Some(icon),
-                label,
-                true,
-                cx.keyboard,
-            )
-            .clicked()
-            {
+            if menu_row(ui, Id::new(("add", label)), Some(icon), label, cx.keyboard).clicked() {
                 picked = Some(kind);
             }
         }
@@ -986,32 +974,18 @@ fn add_channel_menu(ui: &mut Ui, cx: &mut PopCx<'_>) -> Outcome {
     }
 }
 
-/// The header's menu: Preferences, and Rescan plugins (which waits for the host to offer a
-/// rescan; see the build map's change request 8).
+/// The header's menu: Preferences, and Rescan plugins (the host describes every bundle that
+/// failed, or is new or changed, again, and tries every missing plugin again).
 fn main_menu(ui: &mut Ui, cx: &mut PopCx<'_>) -> Outcome {
     let mut outcome = Outcome::Stay;
     menu(ui, |ui| {
-        if menu_row(
-            ui,
-            Id::new("preferences"),
-            None,
-            "Preferences",
-            true,
-            cx.keyboard,
-        )
-        .clicked()
-        {
+        if menu_row(ui, Id::new("preferences"), None, "Preferences", cx.keyboard).clicked() {
             outcome = Outcome::Open(Popover::Prefs(PrefsPanel::default()));
         }
-        menu_row(
-            ui,
-            Id::new("rescan"),
-            None,
-            "Rescan plugins",
-            false,
-            cx.keyboard,
-        )
-        .on_hover_text("Not in this build yet: the host cannot rescan while it runs");
+        if menu_row(ui, Id::new("rescan"), None, "Rescan plugins", cx.keyboard).clicked() {
+            cx.out.push(Intent::Rescan);
+            outcome = Outcome::Close;
+        }
     });
     outcome
 }

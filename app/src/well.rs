@@ -9,6 +9,11 @@
 //! starts a drag ([`crate::drag`]). With focus on a slot: Enter opens the editor, Space
 //! bypasses, Delete or Backspace removes, Alt with Up or Down moves it, Up or Down moves the
 //! focus. "+ Add plugin" opens the plugin browser beside it.
+//!
+//! **A slot playing as a pass-through** (its plugin missing, or it could not be set up:
+//! [`Host::problems`](vixmix_host::Host::problems)) is marked in the mute colour, its square
+//! outlined and its name, and says why and what to do under the pointer. The prototype has
+//! no such state; the host's banner line used to carry the first one.
 
 use egui::containers::scroll_area::{DragScroll, ScrollSource};
 use egui::{
@@ -181,14 +186,21 @@ fn slot_row(
     let id = slot_id(insert);
     let response = ui.interact(slot, id, Sense::click_and_drag());
     let name = &insert.plugin.name;
+    let problem = cx
+        .host
+        .problems()
+        .iter()
+        .find(|p| p.instance == instance)
+        .map(|p| p.message.as_str());
     let vendor = cx
         .host
         .catalog()
         .get(&insert.plugin.id)
         .map(|p| p.vendor.clone());
-    let response = match vendor {
-        Some(vendor) => response.on_hover_text(format!("{name} \u{b7} {vendor}")),
-        None => response.on_hover_text(name.as_str()),
+    let response = match (problem, vendor) {
+        (Some(problem), _) => response.on_hover_text(problem),
+        (None, Some(vendor)) => response.on_hover_text(format!("{name} \u{b7} {vendor}")),
+        (None, None) => response.on_hover_text(name.as_str()),
     };
     let from = SlotRef {
         strip: view.strip,
@@ -244,20 +256,26 @@ fn slot_row(
         pos2(slot.left() + size::SLOT_PAD_X, y - size::BYPASS / 2.0),
         vec2(size::BYPASS, size::BYPASS),
     );
-    let bypass = widgets::press(ui, square, Id::new(("bypass", instance))).on_hover_text(
-        if insert.enabled {
-            format!("{name} on")
-        } else {
-            format!("{name} bypassed")
-        },
-    );
+    let bypass =
+        widgets::press(ui, square, Id::new(("bypass", instance))).on_hover_text(match problem {
+            Some(problem) => problem.to_string(),
+            None if insert.enabled => format!("{name} on"),
+            None => format!("{name} bypassed"),
+        });
     if bypass.clicked() {
         cx.out.push(Intent::Apply(Command::SetInsertEnabled {
             instance,
             enabled: !insert.enabled,
         }));
     }
-    if insert.enabled {
+    if problem.is_some() {
+        painter.rect_stroke(
+            square,
+            size::BYPASS_CORNER,
+            Stroke::new(size::HAIRLINE, colour::MUTE.gamma_multiply(opacity)),
+            StrokeKind::Inside,
+        );
+    } else if insert.enabled {
         painter.rect_filled(
             square,
             size::BYPASS_CORNER,
@@ -272,7 +290,9 @@ fn slot_row(
         );
     }
     let x = square.right() + size::SLOT_GAP;
-    let ink = if insert.enabled {
+    let ink = if problem.is_some() {
+        colour::MUTE
+    } else if insert.enabled {
         colour::TEXT
     } else {
         colour::FAINT

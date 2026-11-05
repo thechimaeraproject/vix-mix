@@ -3,44 +3,29 @@
 //! message from the host (which says what went wrong and what to do) 8 s. A new message
 //! takes the old one's place, and the old one's Undo with it.
 //!
-//! **Undo.** Removing an insert or a channel shows "Removed …" with Undo. The window keeps
-//! what was removed while the toast shows and, on Undo, puts it back through the commands
-//! the `Host` trait has today ([`replay`]): an insert is added again at its place (bypassed
-//! again if it was); a channel is added again with its name, source (less any app another
-//! channel has taken since), faders, mutes, link, MON and MST and its inserts. Until the
-//! model has change request 2's `RestoreChannel` and `RestoreInsert`, a restored channel
-//! comes back at the right end rather than its place, and a restored insert is a new
-//! instance that starts from the plugin's defaults rather than the state the host kept.
+//! **Undo.** Removing an insert or a channel shows the host's "Removed …" with Undo
+//! ([`HostEvent::Removed`](vixmix_host::HostEvent::Removed)), for the host's
+//! [`UNDO_TOAST`](vixmix_host::UNDO_TOAST). Undo applies the one command the host handed
+//! out with it, a `RestoreChannel` or `RestoreInsert`: the channel comes back at its place,
+//! the insert in its slot, each with the plugin instances the host kept (their state and a
+//! reverb's tail included). The Undo dies with its toast, and a new message takes its place.
 
 use egui::{
     Align2, Area, Context, CornerRadius, Frame, Id, Margin, Order, Rect, Stroke, pos2, vec2,
 };
-use vixmix_host::Host;
-use vixmix_model::{Channel, Command, Insert, Refused, Source, Strip};
+use vixmix_model::Command;
 
 use crate::shell::Intent;
 use crate::strip;
 use crate::theme::{colour, font, pop, size};
 use crate::widgets::{self, ButtonKind};
 
-/// What an Undo puts back.
-#[derive(Clone, Debug, PartialEq)]
-pub enum Undo {
-    /// An insert, at its place in its strip's chain.
-    Insert {
-        strip: Strip,
-        at: usize,
-        insert: Insert,
-    },
-    /// A channel, which was at `at` among the channels.
-    Channel { at: usize, channel: Channel },
-}
-
 /// One message.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Toast {
     pub message: String,
-    pub undo: Option<Undo>,
+    /// What the Undo button applies.
+    pub undo: Option<Command>,
     /// When it starts to fade, in the window's seconds.
     pub until: f64,
 }
@@ -53,7 +38,13 @@ pub struct Toasts {
 
 impl Toasts {
     /// Shows `message` from `now` for `seconds`, with `undo` behind its button.
-    pub fn show(&mut self, message: impl Into<String>, undo: Option<Undo>, now: f64, seconds: f64) {
+    pub fn show(
+        &mut self,
+        message: impl Into<String>,
+        undo: Option<Command>,
+        now: f64,
+        seconds: f64,
+    ) {
         self.current = Some(Toast {
             message: message.into(),
             undo,
@@ -71,8 +62,8 @@ impl Toasts {
         self.current.as_ref().filter(|t| now < t.until)
     }
 
-    /// The Undo button: takes what it puts back, and the toast goes.
-    pub fn take_undo(&mut self, now: f64) -> Option<Undo> {
+    /// The Undo button: takes the command that puts it back, and the toast goes.
+    pub fn take_undo(&mut self, now: f64) -> Option<Command> {
         let toast = self.current.take_if(|t| now < t.until)?;
         toast.undo
     }
@@ -173,141 +164,6 @@ impl Toasts {
     }
 }
 
-/// Puts back what was removed, through the host's commands; stops at the first refusal
-/// (the strip it belonged to is gone, the channels are full) and returns it.
-pub fn replay(host: &mut dyn Host, undo: Undo) -> Result<(), Refused> {
-    match undo {
-        Undo::Insert { strip, at, insert } => {
-            restore_insert(host, strip, at, &insert)?;
-        }
-        Undo::Channel { channel, .. } => {
-            let applied = host.apply(Command::AddChannel {
-                kind: channel.kind(),
-            })?;
-            let ch = applied
-                .channel
-                .expect("AddChannel says which channel it made");
-            let strip = Strip::Channel(ch);
-            let now = |host: &dyn Host| host.setup().channel(ch).cloned();
-            let Some(fresh) = now(host) else {
-                return Ok(());
-            };
-            if fresh.name != channel.name {
-                send(
-                    host,
-                    Command::Rename {
-                        ch,
-                        name: channel.name.clone(),
-                    },
-                )?;
-            }
-            // An app another channel has taken since stays there.
-            let source = match &channel.source {
-                Source::Apps(apps) => Source::Apps(
-                    apps.iter()
-                        .filter(|a| host.setup().channel_of_app(a).is_none())
-                        .cloned()
-                        .collect(),
-                ),
-                hardware => hardware.clone(),
-            };
-            if fresh.source != source {
-                send(host, Command::SetSource { ch, source })?;
-            }
-            // Unlinked while the sends are set, so neither drags the other.
-            let sends = [
-                (vixmix_model::MixId::Monitor, channel.monitor, fresh.monitor),
-                (vixmix_model::MixId::Master, channel.master, fresh.master),
-            ];
-            if fresh.link && sends.iter().any(|(_, was, is)| was.position != is.position) {
-                send(host, Command::SetLink { ch, link: false })?;
-            }
-            for (mix, was, is) in sends {
-                if was.position != is.position {
-                    send(
-                        host,
-                        Command::SetSend {
-                            ch,
-                            mix,
-                            position: was.position,
-                        },
-                    )?;
-                }
-                if was.mute != is.mute {
-                    send(
-                        host,
-                        Command::SetMute {
-                            ch,
-                            mix,
-                            mute: was.mute,
-                        },
-                    )?;
-                }
-                if channel.chain_to(mix) != fresh.chain_to(mix) {
-                    send(
-                        host,
-                        Command::SetChainRouting {
-                            ch,
-                            mix,
-                            on: channel.chain_to(mix),
-                        },
-                    )?;
-                }
-            }
-            if now(host).is_some_and(|c| c.link != channel.link) {
-                send(
-                    host,
-                    Command::SetLink {
-                        ch,
-                        link: channel.link,
-                    },
-                )?;
-            }
-            for (at, insert) in channel.chain.iter().enumerate() {
-                restore_insert(host, strip, at, insert)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Applies `cmd` for an Undo: what it changed matters only through the setup.
-fn send(host: &mut dyn Host, cmd: Command) -> Result<(), Refused> {
-    host.apply(cmd).map(drop)
-}
-
-/// Adds `insert`'s plugin to `strip` at `at` (or the end, when the chain is shorter now),
-/// bypassed again if it was.
-fn restore_insert(
-    host: &mut dyn Host,
-    strip: Strip,
-    at: usize,
-    insert: &Insert,
-) -> Result<(), Refused> {
-    let setup = host.setup();
-    let len = match strip {
-        Strip::Channel(ch) => setup.channel(ch).map_or(at, |c| c.chain.len()),
-        Strip::Mix(mix) => setup.mix(mix).chain.len(),
-    };
-    let applied = host.apply(Command::AddInsert {
-        strip,
-        plugin: insert.plugin.clone(),
-        at: at.min(len),
-    })?;
-    if !insert.enabled
-        && let Some(&instance) = applied.created.first()
-    {
-        send(
-            host,
-            Command::SetInsertEnabled {
-                instance,
-                enabled: false,
-            },
-        )?;
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,7 +171,7 @@ mod tests {
     #[test]
     fn a_toast_shows_for_its_time_and_its_undo_goes_with_it() {
         let mut toasts = Toasts::default();
-        let undo = Undo::Channel {
+        let undo = Command::RestoreChannel {
             at: 0,
             channel: vixmix_model::example::setup().channels[0].clone(),
         };

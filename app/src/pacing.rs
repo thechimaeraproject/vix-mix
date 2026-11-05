@@ -13,6 +13,10 @@
 //!   again so what it held reaches the screen; after [`REFUSALS_BEFORE_BACKING_OFF`] in a row
 //!   the window tries every [`HIDDEN_POLL`] instead (an X11 window iconified with no event
 //!   that says so can refuse every frame).
+//! - **The host's own poll** ([`Host::next_poll`](vixmix_host::Host::next_poll): PipeWire's
+//!   news, the debounced save, a removed instance's undo running out): every frame serves the
+//!   host, and between frames it is served when it asks, at most 60 times a second, without a
+//!   frame unless it brought news (then a frame as soon as the cap allows).
 //! - **Hidden** (minimised, zero-sized, fully covered: [`Visibility`]): nothing is drawn.
 //!   The host and the open editors are still served, without a frame: every [`EDITOR_POLL`]
 //!   while an editor is open (its own window may be in view), every [`HIDDEN_POLL`] while
@@ -47,7 +51,8 @@ pub enum Next {
     Wait,
     /// A frame, drawn, at this time.
     Draw(Instant),
-    /// The host and the editors served at this time, nothing drawn: the window is hidden.
+    /// The host and the editors served at this time, nothing drawn: the window is hidden,
+    /// or the host asked to be polled before the next frame.
     Serve(Instant),
 }
 
@@ -100,6 +105,8 @@ pub struct Wants {
     pub editors: bool,
     /// The frame acted: what it changed shows on the next.
     pub acted: bool,
+    /// When the host wants its next poll, counted from the frame's end; `None` for never.
+    pub poll: Option<Duration>,
 }
 
 /// The pacing's memory between frames.
@@ -107,8 +114,10 @@ pub struct Wants {
 pub struct Pacer {
     /// The last frame's slot: when it began, or when it was due if the timer woke it.
     slot: Instant,
-    /// What the loop waits for now.
-    next: Next,
+    /// When the next frame is due, if one is.
+    draw: Option<Instant>,
+    /// When the host is next served without a frame, if it is.
+    serve: Option<Instant>,
     /// Frames in a row the surface refused.
     refused: u32,
     /// Whether the window can be seen.
@@ -120,30 +129,35 @@ impl Pacer {
     pub fn new(now: Instant) -> Pacer {
         Pacer {
             slot: now.checked_sub(FRAME_INTERVAL).unwrap_or(now),
-            next: Next::Wait,
+            draw: None,
+            serve: None,
             refused: 0,
             seen: Visibility::default(),
         }
     }
 
-    /// What the loop waits for now.
+    /// What the loop waits for now: the sooner of the next frame and the next serve, the
+    /// frame when they tie (a frame serves the host too).
     pub fn next(&self) -> Next {
-        self.next
+        match (self.draw, self.serve) {
+            (Some(draw), Some(serve)) if serve < draw => Next::Serve(serve),
+            (Some(draw), _) => Next::Draw(draw),
+            (None, Some(serve)) => Next::Serve(serve),
+            (None, None) => Next::Wait,
+        }
     }
 
     /// The slot of a frame or a hidden tick that starts at `started`: when it was due if the
     /// timer woke it within an interval of that, else when it started.
     pub fn begin(&mut self, started: Instant) -> Instant {
-        let slot = match self.next {
-            Next::Draw(due) | Next::Serve(due)
-                if started >= due && started - due < FRAME_INTERVAL =>
-            {
-                due
-            }
-            _ => started,
-        };
-        self.next = Next::Wait;
-        slot
+        let due = [self.draw, self.serve]
+            .into_iter()
+            .flatten()
+            .filter(|due| started >= *due && started - *due < FRAME_INTERVAL)
+            .max();
+        self.draw = None;
+        self.serve = None;
+        due.unwrap_or(started)
     }
 
     /// After a frame or a hidden tick that took `slot` and ended at `now`: `drawn` says
@@ -156,8 +170,20 @@ impl Pacer {
             Some(false) => self.refused = self.refused.saturating_add(1),
             None => {}
         }
-        self.next = next(slot, now, self.refused, self.seen.hidden(), wants);
-        self.next
+        (self.draw, self.serve) = plan(slot, now, self.refused, self.seen.hidden(), wants);
+        self.next()
+    }
+
+    /// After the host was served between frames, at `now`, because it asked: `poll` is when
+    /// it wants the next, and `news` whether it reported anything, which the window draws as
+    /// soon as the 60 Hz cap allows (never while it is hidden). The next frame keeps its time.
+    pub fn polled(&mut self, now: Instant, poll: Option<Duration>, news: bool) -> Next {
+        self.serve = host_poll(now, poll);
+        if news && !self.seen.hidden() {
+            let at = now.max(self.slot + FRAME_INTERVAL);
+            self.draw = Some(self.draw.map_or(at, |due| due.min(at)));
+        }
+        self.next()
     }
 
     /// An input event that egui wants drawn: as soon as the 60 Hz cap allows, never while
@@ -170,19 +196,34 @@ impl Pacer {
         if now >= at {
             return Wake::Now;
         }
-        match self.next {
-            Next::Draw(due) if due <= at => Wake::Nothing,
+        match self.draw {
+            Some(due) if due <= at => Wake::Nothing,
             _ => {
-                self.next = Next::Draw(at);
+                self.draw = Some(at);
                 Wake::At(at)
             }
         }
     }
 }
 
+/// When the host asked to be served, `poll` from `now`, but never sooner than an interval:
+/// the host is served at most 60 times a second however soon it asks.
+fn host_poll(now: Instant, poll: Option<Duration>) -> Option<Instant> {
+    poll.filter(|wait| *wait != Duration::MAX)
+        .and_then(|wait| now.checked_add(wait.max(FRAME_INTERVAL)))
+}
+
 /// What comes after a frame that took `slot` and ended at `now`, with `refused` frames in a
-/// row the surface did not take, the window `hidden` or not.
-pub fn next(slot: Instant, now: Instant, refused: u32, hidden: bool, wants: Wants) -> Next {
+/// row the surface did not take, the window `hidden` or not: when the next frame is due, and
+/// when the host is served before it without one.
+pub fn plan(
+    slot: Instant,
+    now: Instant,
+    refused: u32,
+    hidden: bool,
+    wants: Wants,
+) -> (Option<Instant>, Option<Instant>) {
+    let poll = host_poll(now, wants.poll);
     if hidden {
         let every = if wants.editors {
             Some(EDITOR_POLL)
@@ -191,7 +232,12 @@ pub fn next(slot: Instant, now: Instant, refused: u32, hidden: bool, wants: Want
         } else {
             None
         };
-        return every.map_or(Next::Wait, |every| Next::Serve(slot + every));
+        let tick = every.map(|every| slot + every);
+        let serve = match (tick, poll) {
+            (Some(tick), Some(poll)) => Some(tick.min(poll)),
+            (tick, poll) => tick.or(poll),
+        };
+        return (None, serve);
     }
     // egui's `Duration::MAX` means never.
     let mut due = wants
@@ -213,7 +259,8 @@ pub fn next(slot: Instant, now: Instant, refused: u32, hidden: bool, wants: Want
     if wants.acted {
         sooner(now);
     }
-    due.map_or(Next::Wait, |at| Next::Draw(at.max(slot + FRAME_INTERVAL)))
+    let draw = due.map(|at| at.max(slot + FRAME_INTERVAL));
+    (draw, poll)
 }
 
 #[cfg(test)]
@@ -298,6 +345,7 @@ mod tests {
             animating: true,
             editors: false,
             acted: true,
+            poll: None,
         };
         assert_eq!(
             pacer.end(slot, t + MS, None, busy),
@@ -402,5 +450,96 @@ mod tests {
         assert_eq!(pacer.wake(t + 6 * MS), Wake::Nothing);
         // An interval later: now.
         assert_eq!(pacer.wake(t + FRAME_INTERVAL), Wake::Now);
+    }
+
+    #[test]
+    fn an_idle_window_serves_the_host_when_it_asks_and_draws_only_for_news() {
+        let t = Instant::now();
+        let mut pacer = Pacer::new(t);
+        let slot = pacer.begin(t);
+        // No backend, nothing to animate: the host wants a poll in a second (a debounced
+        // save), and nothing else is due.
+        let asks = Wants {
+            poll: Some(Duration::from_secs(1)),
+            ..Wants::default()
+        };
+        let next = pacer.end(slot, t + MS, Some(true), asks);
+        assert_eq!(next, Next::Serve(t + MS + Duration::from_secs(1)));
+        // Served with no news: no frame, and the next poll when the host says.
+        let served = t + Duration::from_secs(1);
+        let next = pacer.polled(served, Some(Duration::from_millis(50)), false);
+        assert_eq!(next, Next::Serve(served + Duration::from_millis(50)));
+        // News: a frame at once (the last was long ago), before the next poll.
+        let later = served + Duration::from_millis(50);
+        let next = pacer.polled(later, Some(Duration::from_millis(50)), true);
+        assert_eq!(next, Next::Draw(later));
+        // A host that asks again at once is served no sooner than an interval: no spin.
+        let slot = pacer.begin(later);
+        let at_once = Wants {
+            poll: Some(Duration::ZERO),
+            ..Wants::default()
+        };
+        let next = pacer.end(slot, later + MS, Some(true), at_once);
+        assert_eq!(next, Next::Serve(later + MS + FRAME_INTERVAL));
+        // Nothing asked of the host and nothing to draw: the loop waits for an event.
+        assert_eq!(pacer.polled(later + 2 * MS, None, false), Next::Wait);
+    }
+
+    #[test]
+    fn a_poll_never_puts_off_a_frame_and_news_waits_for_the_cap() {
+        let t = Instant::now();
+        let mut pacer = Pacer::new(t);
+        let slot = pacer.begin(t);
+        // egui's cursor blinks in half a second; the host wants a poll in 50 ms.
+        let wants = Wants {
+            repaint: Some(Duration::from_millis(500)),
+            poll: Some(Duration::from_millis(50)),
+            ..Wants::default()
+        };
+        let next = pacer.end(slot, t + MS, Some(true), wants);
+        assert_eq!(next, Next::Serve(t + MS + Duration::from_millis(50)));
+        // No news: the blink is still due when it was.
+        let served = t + MS + Duration::from_millis(50);
+        assert_eq!(
+            pacer.polled(served, None, false),
+            Next::Draw(t + MS + Duration::from_millis(500))
+        );
+        // A frame a moment ago: news waits for the end of its interval.
+        let slot = pacer.begin(served);
+        pacer.end(slot, served + MS, Some(true), Wants::default());
+        let next = pacer.polled(served + 2 * MS, None, true);
+        assert_eq!(next, Next::Draw(served + FRAME_INTERVAL));
+        // Hidden, news draws nothing.
+        pacer.seen.minimized = true;
+        let slot = pacer.begin(served + FRAME_INTERVAL);
+        pacer.end(slot, slot, None, Wants::default());
+        assert_eq!(pacer.polled(slot + MS, None, true), Next::Wait);
+    }
+
+    #[test]
+    fn a_hidden_window_serves_the_host_when_it_asks_sooner_than_its_tick() {
+        let t = Instant::now();
+        let mut pacer = Pacer::new(t);
+        pacer.seen.zero_size = true;
+        let slot = pacer.begin(t);
+        // Meters would move (every quarter second), but an undo runs out in 100 ms.
+        let wants = Wants {
+            animating: true,
+            poll: Some(Duration::from_millis(100)),
+            ..Wants::default()
+        };
+        assert_eq!(
+            pacer.end(slot, t + MS, None, wants),
+            Next::Serve(t + MS + Duration::from_millis(100))
+        );
+        // Nothing animating: only the host's own poll wakes it.
+        let quiet = Wants {
+            poll: Some(Duration::from_secs(2)),
+            ..Wants::default()
+        };
+        assert_eq!(
+            pacer.end(slot, t + MS, None, quiet),
+            Next::Serve(t + MS + Duration::from_secs(2))
+        );
     }
 }
