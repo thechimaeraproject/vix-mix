@@ -27,7 +27,7 @@ a daemon to try it against is [Run a headless PipeWire](../cookbook/run-headless
 - `BackendConfig { app_name: &'static str, wanted_quantum: u32 }`, default `vix-mix` and 256.
   `app_name` is `application.name`, `node.group`, `node.link-group` and every node name's
   prefix; `wanted_quantum` goes into `node.latency` as `<quantum>/48000` (a request, never
-  `node.force-quantum`).
+  `node.force-quantum`), and `Backend::set_quantum` changes it later.
 - `BackendEvent`: `Connected { rate, quantum }` (the tick ran its first cycle since the daemon
   answered), `Disconnected`, `DeviceAdded(DeviceInfo)`, `DeviceRemoved(node name)`,
   `AppStreamAdded(AppStream { node, app: AppRef, media_name })`, `AppStreamRemoved(node id)`,
@@ -43,7 +43,13 @@ a daemon to try it against is [Run a headless PipeWire](../cookbook/run-headless
   `apply(&self, &BackendGraph)` and `route(&self, app_node, Option<&str>)` (a channel's
   `node.name`, or `None` for the default) post to a mailbox and return at once (latest wins per
   graph and per app node; the control thread applies a waiting graph before the routings that
-  wait with it, so a routing names a sink of the newest graph); `stats(&self) ->
+  wait with it, so a routing names a sink of the newest graph); `set_quantum(&self, u32)` asks
+  for a new quantum in place (change request 9): every stream of ours updates its
+  `node.latency` (`pw_stream_update_properties`, which pipewire-rs does not wrap) without being
+  made again, so no node goes, no link breaks (a session manager's, a recorder's of the Master
+  source, one made by hand) and no app is moved, and every stream made later (this connection's
+  or the next's) asks for it too; it is posted like a graph (latest wins) and taken before the
+  graph that waits with it, and `QuantumChanged` reports the tick following it; `stats(&self) ->
   BackendStats`; `disconnect(self)` (also on drop) destroys every stream and leaves the daemon,
   leaving routings as they are. The routings posted before `disconnect` are written first, and
   the backend leaves only once a core roundtrip has come back (at most a second), so a host
@@ -71,7 +77,7 @@ a daemon to try it against is [Run a headless PipeWire](../cookbook/run-headless
 
 | Thread | Runs | Touches | Never |
 |---|---|---|---|
-| the host's (any) | `connect`, `apply`, `route`, `stats`, `disconnect` | the mailbox (a mutex, latest wins), one wake through a `pipewire::channel`, the counters | anything PipeWire hands out |
+| the host's (any) | `connect`, `apply`, `set_quantum`, `route`, `stats`, `disconnect` | the mailbox (a mutex, latest wins), one wake through a `pipewire::channel`, the counters | anything PipeWire hands out |
 | `vix-mix-pipewire` (control) | the main loop: the context, the core, the registry, the `default` metadata, every stream and proxy; a housekeeping pass every 20 ms | every PipeWire object; the host's event channel (`try_send`, then a backlog of at most 1024); the plan rings | a stream's realtime user data |
 | PipeWire's data loop (one, `context.num-data-loops = 1`) | every stream's `process` | that stream's own user data, the rings, atomics, the tick's state through one compare-and-swap | the forbidden list below |
 
@@ -261,7 +267,9 @@ At 256 frames and 48 kHz one quantum is 5.33 ms. App to audible ≈ the app's ow
 one quantum) + one quantum in the ring (exact: the governor holds it) + the device's period ≈
 3 quanta ≈ 16 ms; mic to headphones ≈ 3 quanta plus the converters. At 128 it is ≈ 8–9 ms, at a
 global cost (the graph's quantum is everyone's); the preferences offer 128, 256 and 512 through
-`node.latency`. Master out and the Master source add nothing: they play the mix of the cycle they
+`node.latency`, changed in place by `set_quantum` while everything plays. A larger quantum
+costs one short gap while each ring grows to one new quantum ahead (the host's test measures it
+at 256 to 512: one gap of 1024 frames in a recording of the Master source). Master out and the Master source add nothing: they play the mix of the cycle they
 run in. The by-hand measurement on real hardware is handoff 06's cookbook, run by handoff 08.
 
 ## Forbidden on the data thread
@@ -299,7 +307,12 @@ On Linux, `cargo test -p vixmix-pipewire` (on Windows the crate compiles to noth
   unrelated subject's keys were cleared; a rename that keeps the slug (`Test` to `TEST`) making
   the sink again under the same name, with the app routed before it and the app routed in the
   same breath both on the new node and neither on the default; a quantum forced to 512 reported
-  and followed, and back; Monitor's device removed mid-run with Master out ticking on, at most
+  and followed, and back; a quantum asked for in place with `set_quantum` (512, and back)
+  followed while an app plays into a sink and `pw-record` records the Master source, every node
+  of ours keeping its `object.serial` (none made again), the app and Monitor's link kept and the
+  recording at the mix's level throughout
+  (`a_quantum_asked_for_in_place_keeps_every_node_and_link`, which fails without the in-place
+  update); Monitor's device removed mid-run with Master out ticking on, at most
   one quantum of silence and at most two breaks on Master (measured: none), every cycle
   ticked.
 - On request (`-- --ignored`, [the cookbook](../cookbook/run-headless-pipewire.md) step 6):

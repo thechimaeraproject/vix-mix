@@ -996,6 +996,77 @@ fn a_quantum_change_is_reported_and_the_tick_follows_it() {
     );
 }
 
+#[test]
+fn a_quantum_asked_for_in_place_keeps_every_node_and_link() {
+    let Some(_daemon) = headless() else {
+        return;
+    };
+    let dir = scratch("ask");
+    let mut rig = Rig::new("vixmix-ask");
+    rig.start(&rig.graph("Test", Some(NULL_SINK), None, true));
+    let app = "vixmix-ask-app";
+    let _app = play(&sine_wav(&dir, 20.0), app);
+    let node = rig.app_stream(app);
+    rig.backend().route(node, Some(&rig.sink("Test")));
+    assert!(rig.channel_hears(true, Duration::from_secs(3)));
+    let ours = [
+        rig.sink("Test"),
+        monitor_out_node_name(rig.app),
+        master_node_name(rig.app),
+    ];
+    let serials: Vec<Option<u64>> = ours.iter().map(|n| node_serial(n)).collect();
+    assert!(serials.iter().all(Option::is_some), "{ours:?} {serials:?}");
+    let master = dir.join("master.wav");
+    let recorder = record(&master_node_name(rig.app), false, &master);
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Asked for 512: the graph follows, and nothing of ours was made again (a node made again
+    // has a new serial), so the app, Monitor's link and the recorder's link stay.
+    rig.backend().set_quantum(512);
+    assert!(
+        rig.wait(Duration::from_secs(3), |e| *e
+            == BackendEvent::QuantumChanged(512))
+            .is_some(),
+        "no QuantumChanged(512); saw {:?}",
+        rig.seen
+    );
+    assert_eq!(rig.stats().quantum, 512);
+    let after: Vec<Option<u64>> = ours.iter().map(|n| node_serial(n)).collect();
+    assert_eq!(serials, after, "a node of ours was made again: {ours:?}");
+    assert!(
+        linked(app, &rig.sink("Test")),
+        "{}",
+        run("pw-link", &["-l"])
+    );
+    assert!(linked(&monitor_out_node_name(rig.app), NULL_SINK));
+    std::thread::sleep(Duration::from_secs(1));
+    assert!(
+        rig.channel_hears(true, Duration::from_secs(2)),
+        "the app went quiet at 512"
+    );
+    recorder.interrupt();
+    let recorded = read_wav_left(&master);
+    let peak = recorded[(RATE / 10).min(recorded.len())..]
+        .iter()
+        .fold(0.0f32, |p, s| p.max(s.abs()));
+    assert!(
+        recorded.len() > RATE && (peak - 0.5).abs() < 0.01,
+        "the recorder of {} heard {peak} over {} frames",
+        master_node_name(rig.app),
+        recorded.len()
+    );
+
+    // And back.
+    rig.backend().set_quantum(QUANTUM as u32);
+    assert!(
+        rig.wait(Duration::from_secs(3), |e| *e
+            == BackendEvent::QuantumChanged(QUANTUM as u32))
+            .is_some(),
+        "the quantum did not come back; saw {:?}",
+        rig.seen
+    );
+}
+
 /// The acceptance run (`docs/handoffs/03-pipewire-backend.md`): two minutes with null devices
 /// at 256, zero xruns, every ring exactly one quantum ahead at every tick. Two minutes is too
 /// long for every push, so it runs on request:
