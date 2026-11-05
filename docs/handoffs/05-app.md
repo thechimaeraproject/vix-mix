@@ -1,40 +1,72 @@
 # 05 — App
 
-**Record — look gate passed 2026-11-04; steps 2–9 in progress.** The user judged
+**Record — shipped 2026-11-04.** The look gate passed: the user judged
 [egui-look-gate.png](../design/prototype/egui-look-gate.png) beside the prototype's
-[screenshot.png](../design/prototype/screenshot.png): "looks great, somehow better than the
-reference". Egui stays; Slint is not needed.
-Step 1 is built: the theme as named constants (`app/src/theme.rs`: every colour, the meter
-gradient, the corners, the strip and header sizes, the font sizes), IBM Plex Sans Condensed
-400/500/600 and Plex Mono 400/500 embedded with their OFL licence (`app/assets/fonts/`), the
-console drawn static from `FakeHost` (`strip.rs`, `console.rs`, `meters.rs`, `icons.rs`,
-`ui.rs`), and the headless capture `--dump-png` (`capture.rs`), whose output is
-[egui-look-gate.png](../design/prototype/egui-look-gate.png) beside
-[screenshot.png](../design/prototype/screenshot.png). `cargo run -p vix-mix -- --fake
---quit-after-frames 3` still exits 0. [reference/app.md](../reference/app.md) says what is
-built. `crates/vixmix-host/src/fake.rs` is unchanged: the example data already held everything
-the strips show. Deviations, each with its reason:
+[screenshot.png](../design/prototype/screenshot.png) — "looks great, somehow better than the
+reference" — so egui stays and Slint is not needed. Then the console became the prototype's,
+interactive, over the `Host` trait: every gesture the acceptance lists sends its command
+(asserted headless in `app/src/acceptance.rs` on both CI legs), the popovers, the plugin
+browser, the toasts with Undo, the header's menu and preferences, editor windows (proven by
+hand on Windows with Goodhertz's Tone Control 3), 60 Hz pacing (1200 frames in 19.99 s on
+`FakeHost`, 0.3 to 0.7 % of a 24-core machine's CPU). [reference/app.md](../reference/app.md)
+is the contract as built. Nothing outside `app/` changed: `crates/vixmix-host/src/fake.rs`
+is unchanged, because the example data held everything the window shows. The build map's
+change request 8 proposes what the window needs from the host. Deviations, each with its
+reason:
 
 - **The capture is the whole console, not one strip of each.** Every channel strip is the
   one `strip::channel` and both mixes the one `strip::mix`, so six and two cost nothing more,
-  and the screenshot is the whole console: like beside like is what the user judges. The
-  header's display and the add-channel column (steps 6 and 3) are drawn too, static, for the
-  same reason; nothing senses the pointer.
-- **`--dump-png`, not `egui_kittest`.** The flag draws through the window's own paint path
-  (`gpu::upload`, `gpu::encode`, now shared), so the PNG is what the window shows; it adds
-  only `png`, already in the lock; and `cargo test` stays free of a GPU, which neither CI leg
-  has. It is deterministic (`FakeHost` is seeded): the same adapter draws the same PNG.
-- **The peak-hold line is built now** (step 3's `MeterFader` holds 900 ms, then falls 0.006
-  a frame), as window state in `meters.rs`, because the peak lines are part of the look; the
-  fader's gestures are not.
+  and the screenshot is the whole console: like beside like is what the user judged.
+- **`--dump-png` and egui's own headless run, not `egui_kittest`.** The flag draws through
+  the window's own paint path (`gpu::upload`, `gpu::encode`), so the PNG is what the window
+  shows; the gesture tests run `ui::draw` and `Shell::dispatch` in a plain `egui::Context`
+  (Vix's `test_support.rs` pattern), which needs no GPU and no new dependency. With the
+  gestures built the capture still draws the look gate's PNG byte for byte.
+- **The peak-hold line was built at the look gate**, as window state in `meters.rs`, because
+  the peak lines are part of the look.
 - **Icons are the prototype's SVG paths followed with egui's painter** (`icons.rs`), because
-  egui draws no SVG and a rasterizing crate would add a dependency for fourteen strokes.
+  egui draws no SVG and a rasterizing crate would add a dependency for fourteen strokes; each
+  is read once and kept (the look gate's verifier found them re-read every frame).
 - **Type.** Sans 500 is embedded as listed but prototype v5 sets nothing in it (its 500s are
   all mono). The MST tag's mono 600 is drawn in mono 500, the heaviest mono embedded.
 - **The header** says "Vix Mix" (the charter's name), not the prototype's "Mixer", draws no
   in-app window buttons (step 6: the desktop's decorations), and the display is the
-  prototype's cells (`48 kHz`, `256 samples`, `5.3 ms`, `DSP` with its bar) instead of lane
-  00's one line; its test changed with it. The window has no 1-point border of its own.
+  prototype's cells. Its menu button opens a menu (Preferences, Rescan plugins) where the
+  prototype showed a toast naming them; the preferences panel (the quantum, the extra plugin
+  folders) is drawn in the source panel's style, the prototype having none.
+- **A rename is sent once, when the source panel closes**, not on every keystroke as the
+  prototype's input handler renames: a rename re-describes the channel's PipeWire node, and
+  the header already follows the field as it is typed.
+- **Undo replays through the commands the trait has** (`toast::replay`): change request 2
+  (`RestoreChannel`, `RestoreInsert`) is recorded in the build map as applied, but the model
+  on master has neither variant. So a restored channel comes back at the right end, not its
+  place, and a restored insert is a new instance starting from the plugin's defaults. With the
+  variants in the model, Undo becomes one command.
+- **Three controls wait on the host** (change request 8, proposed): the browser's star toggles
+  for the session only (`Host` has no `set_favorite`), Rescan plugins is drawn inert (no
+  `rescan_plugins`), and an editor's window takes the size its plugin asks for without the
+  plugin being told it has it (no `resize_editor`; the kit's resize is asynchronous).
+- **The browser lists the types the catalog has**, in the prototype's order, and searches with
+  its own ranking (the prototype's, as `Catalog::search` has it): the app depends on the host
+  and the model only, so it cannot name `PluginKind::ALL` or `Filter`. The example catalog has
+  all ten types. Import chain and Export chain are not drawn: chain import and export is named
+  in the charter's Open list, not built.
+- **The window opens at the console's size**, not lane 00's 1280 × 720, as the prototype's
+  app box is the console's, and its least size follows the content (the banner, the header's
+  display beside the title on a one-channel console).
+- **Pacing is a 60 Hz grid**: lane 00's rule timed the next frame from the end of the last, and
+  measured 54 frames a second; frames now count from start to start (a timer frame from when
+  it was due), and input frames wait for the same cap.
+- **What the prototype does not have**: an input or output that is in use but absent is listed
+  first, marked "not connected"; a new hardware channel starts with no input picked (the
+  model's `AddChannel`; the prototype picked one); the keyboard focus ring follows a Tab, for
+  every control; popovers show without egui's fade, but each kind's first appearance is drawn
+  unseen for one frame (egui sizes a new area first).
+- **Dependencies**: the app names the kit's `EditorEvent` and `EditorSize` (what
+  `Host::tick_editors` and `Host::open_editor` return), so it takes
+  `chimaeraproject-vst3-host` directly, already built for the host at the kit's one tag; its
+  tests take `vixmix-plugins`, because their `Recorder` implements `Host`, whose `catalog`
+  names `Catalog`. The lock gains two edges and no crate.
 
 **Needs:** 00. **Runs alongside:** 01, 02, 03, 04. **Size:** XL. Starts on Windows against
 `FakeHost`.

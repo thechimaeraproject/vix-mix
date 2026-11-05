@@ -64,13 +64,17 @@ the data thread or the rings (03), the instances (04) or when to prepare (06). S
 [docs/reference/engine.md](docs/reference/engine.md) and
 [handoff 02](docs/handoffs/02-engine.md).
 
-**The look gate is rendered (2026-11-04), awaiting the user's verdict:**
-[handoff 05](docs/handoffs/05-app.md) step 1 put prototype v5's theme (`app/src/theme.rs`) and
-embedded Plex fonts into the window, which now draws the console static from the host, and
-`cargo run -p vix-mix -- --dump-png <file>` captures it offscreen at 2×
-(`docs/design/prototype/egui-look-gate.png`, beside `screenshot.png`). No gesture, popover,
-browser or editor window yet: steps 2–9 wait on the verdict (keep going in egui, or Slint). See
-`docs/reference/app.md`.
+**The window is implemented (2026-11-04):** the `vix-mix` app owns prototype v5's console as a
+winit and egui-wgpu window over the `Host` trait — the look the user passed at the gate (the
+theme, the embedded Plex fonts, `--dump-png`), every gesture as the command it sends (faders,
+mutes, link, the ear, MON/MST, bypass, inserts dragged within and between strips), the source
+and output panels, the add-channel menu, the plugin browser, the menu and preferences, toasts
+with Undo, plugin editor windows on X11 on Linux, and 60 Hz pacing; each gesture is asserted
+headless against `FakeHost`. It owns no setup, audio or plugin (the host does), and waits on
+the host for a saved favourite, a rescan and telling an editor its size (change request 8) and
+on the model for an Undo that restores place and state (change request 2). See
+[docs/reference/app.md](docs/reference/app.md) and
+[handoff 05](docs/handoffs/05-app.md).
 
 **The PipeWire backend is implemented (2026-11-04):** `vixmix-pipewire` owns the control thread,
 every stream and proxy, the input rings and their latency governor (exactly one quantum), the

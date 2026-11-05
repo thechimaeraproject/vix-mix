@@ -31,7 +31,8 @@ on every push and in CI.
 ## Reference
 
 - [reference/app.md](reference/app.md) — the `vix-mix` window: the winit and egui-wgpu shell,
-  the pacing rule, the command line, what each frame draws today.
+  pacing, the look, every gesture and the command it sends, the popovers, the plugin browser,
+  toasts and Undo, editor windows, what the window needs from the host.
 - [reference/engine.md](reference/engine.md) — the realtime graph: the prepared graph and its
   acknowledged handoff, the allocation-free tick, meters, stats, the null backend.
 - [reference/host.md](reference/host.md) — the orchestrator: the `Host` trait the window
