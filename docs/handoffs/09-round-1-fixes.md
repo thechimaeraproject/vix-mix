@@ -28,7 +28,19 @@ that owns it. Going in, the goal is the twelve items below.
 - [Handoff 03](03-pipewire-backend.md)'s record (the two-minute run) and
   [handoff 06](06-host-and-integration.md)'s (the verifiers' notes).
 
-## The pass
+## What this round owns, what others keep
+
+Each step owns the crate it fixes and that crate's reference doc, as the lane that built the
+crate did: `vixmix-host` with [reference/host.md](../reference/host.md), `vixmix-pipewire` with
+[reference/pipewire.md](../reference/pipewire.md), the window in `app/` with
+[reference/app.md](../reference/app.md), and the packaging files in `packaging/linux/` with
+[install-on-fedora.md](../cookbook/install-on-fedora.md). A cookbook an item corrects is this
+round's for that edit. Every other crate stays as it is. The shared contracts still change only
+through a change request in [build-map.md](../build-map.md) § Change requests, agreed in the
+main session, and a fix the kit owns (item 6) is a kit issue and a `kit bump`, never a patch
+here.
+
+## Steps
 
 1. **Install** by [install-on-fedora.md](../cookbook/install-on-fedora.md) (step 4 or 5) and
    start Vix Mix from the KDE launcher: handoff 08's acceptance is that it installs by the
@@ -65,15 +77,20 @@ that owns it. Going in, the goal is the twelve items below.
    three quanta, 16 ms at 256). Check: the three `jack_iodelay` figures, the date, the interface
    and the kernel, and the ERR count the `vix-mix.*` rows of `pw-top` reached in five minutes at
    256, with what was happening when one moved.
-3. **An app started again within milliseconds of the mixer quitting can end routed but
-   silent.** Seen with `pw-play` in the container: a player restarted into its channel right
-   after the quit broke, one a second later did not, so `crates/vixmix-host/tests/headless.rs`
-   waits for the player to settle and the by-hand pass step 9 asks you to note how soon after
-   the quit Spotify started. Check: in step 9, quit and start Vix Mix again at once while
-   Spotify plays, several times. If Spotify ends silent, shutdown should wait, bounded, until
-   each app it routed home has left our sinks before `Backend::disconnect`
+3. **Vix Mix started again within milliseconds of quitting can leave a playing app routed but
+   silent.** Seen with `pw-play` in the container: the player kept playing through the quit
+   and was moving back to the default device when a mixer booted again at once routed it into
+   its channel, while the graph was still moving to the player's own quantum; the player's node
+   then erred every cycle and went away. A mixer started a second later did not break it, so
+   `crates/vixmix-host/tests/headless.rs` waits for the player to settle before it boots again,
+   and the by-hand pass step 9 asks you to note how soon after the quit you started Vix Mix
+   (its "a player restarted into its channel" is that player, routed back by the mixer started
+   again). Check: in step 9, quit Vix Mix and start it again at once while Spotify plays,
+   several times. If Spotify ends silent, shutdown should wait, bounded, until each app it
+   routed home has left our sinks before `Backend::disconnect`
    ([reference/host.md](../reference/host.md) § Shutdown; `vixmix-host`, with the backend
-   reporting the move).
+   reporting the move), and step 9's sentence should say the mixer, not the player, started
+   again.
 4. **Monitor's device gone, with Master on "No device".** Where:
    `crates/vixmix-host/src/audio.rs`. The toast "Monitor's output device is not there…" is said
    only when Master out takes the tick; with Master on "No device" the tick moves to the Master
@@ -110,14 +127,23 @@ that owns it. Going in, the goal is the twelve items below.
    Master source (an app recording it starts the mixer), running, the daemon gone
    (`systemctl --user restart pipewire pipewire-pulse wireplumber`), Monitor's device gone, a
    plugin missing (a bundle renamed), a scan failure.
-9. **The window's entry in the task manager.** Where:
+9. **The window's entry in the task manager, and the launch feedback.** Where:
    `packaging/linux/org.chimaeraproject.vixmix.desktop` and `app/` (the window, lane 05). winit
    gives an X11 window the class `vix-mix`, the binary's name, which the desktop entry's
    `StartupWMClass` matches; on Wayland it sets no app id unless the app names one, so Plasma
-   guesses from the process. Check: the running window's task-manager entry and title bar show
-   the icon, on Wayland today and on XWayland once handoff 05 step 7 creates the event loop on
-   X11. If not, the app names its window with winit's `with_name` (the app id
-   `org.chimaeraproject.vixmix` on Wayland, the class `vix-mix` on X11).
+   guesses from the process. The entry leaves `StartupNotify` out, because the app does not yet
+   read the activation token the launcher hands it (`XDG_ACTIVATION_TOKEN` on Wayland,
+   `DESKTOP_STARTUP_ID` on X11): `true` would promise it does, `false` would turn the feedback
+   off where `StartupWMClass` ends it. Check: the running window's task-manager entry and title
+   bar show the icon, on Wayland today and on XWayland once handoff 05 step 7 creates the event
+   loop on X11; and after a start from the launcher, whether the bouncing cursor and the task
+   manager's launch entry go when the window appears or stay until Plasma's timeout. If the
+   icon is generic, the app names its window with winit's `with_name` (the app id
+   `org.chimaeraproject.vixmix` on Wayland, the class `vix-mix` on X11). If the feedback stays,
+   the app reads the token with winit's `EventLoopExtStartupNotify::read_token_from_env`, makes
+   its window `with_activation_token` (`WindowAttributesExtStartupNotify`), calls
+   `reset_activation_token_env` so no child process inherits it, and the desktop entry then
+   says `StartupNotify=true`.
 10. **Logging out with apps routed.** Where: `app/src/main.rs` (no signal handling) and
     [reference/host.md](../reference/host.md) § Shutdown. A window asked to close (Plasma's
     logout should ask) runs the shutdown order; a `SIGTERM` (`pkill vix-mix`) ends the process
