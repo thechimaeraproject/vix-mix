@@ -448,6 +448,7 @@ mod tests {
         host.calls.clear();
         shell.events(
             vec![vixmix_host::HostEvent::EditorClosed(a)],
+            0.0,
             &host,
             &mut editors,
         );

@@ -70,7 +70,8 @@ struct Running {
     shell: Shell,
     /// The plugin editors' windows.
     editors: EditorWindows,
-    /// When the window opened: the peak-hold clock.
+    /// When the window opened: the window's clock (egui's input time, the host's messages,
+    /// the peak-hold lines) counts from it.
     opened: Instant,
     first_frame: bool,
     frames: u64,
@@ -286,11 +287,20 @@ impl Running {
         self.frame(event_loop)
     }
 
-    /// The host's events taken in and the open editors served; whether the host had news.
+    /// The window's clock, in seconds: one clock for egui's input and the host's messages, so
+    /// a message stamped as it arrives between frames shows for its whole time.
+    fn clock(&self) -> f64 {
+        self.opened.elapsed().as_secs_f64()
+    }
+
+    /// The host's events taken in, stamped with when they came, and the open editors served;
+    /// whether the host had news.
     fn serve_host(&mut self) -> bool {
         let events = self.host.poll();
         let news = !events.is_empty();
-        self.shell.events(events, &*self.host, &mut self.editors);
+        let now = self.clock();
+        self.shell
+            .events(events, now, &*self.host, &mut self.editors);
         self.editors.tick(self.host.as_mut());
         news
     }
@@ -354,10 +364,13 @@ impl Running {
             return Ok(());
         }
         self.serve_host();
-        let now_ms = self.opened.elapsed().as_secs_f64() * 1000.0;
+        let now_ms = self.clock() * 1000.0;
         self.shell.meters.update(&self.host.meters(), now_ms);
 
-        let raw_input = self.egui_state.take_egui_input(&self.window);
+        let mut raw_input = self.egui_state.take_egui_input(&self.window);
+        // egui-winit's own clock starts with its state; the window's is the one the host's
+        // messages were stamped with.
+        raw_input.time = Some(self.clock());
         self.first_frame = false;
         let mut intents = Vec::new();
         let (shell, host) = (&mut self.shell, &*self.host);

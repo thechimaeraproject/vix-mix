@@ -116,6 +116,14 @@ folders: N plugins", only when the host said nothing of its own in the same poll
 about the rescan stays on the line), `EditorClosed`. The setup, the apps, the devices and the
 inserts playing as pass-throughs the next frame reads from the host.
 
+**One clock.** The window's clock counts seconds from when it opened (`Running::opened`). Each
+frame gives it to egui as the input's time (egui-winit's own clock starts with its state), so
+`Shell::now` is the frame's; and each poll of the host passes it to `Shell::events` as the
+moment the messages came, and they are stamped with it. A message shows for its whole time
+from when it arrived, however long the last frame was before it: the window draws nothing
+while the mixer is idle or the daemon is gone, and `Host::rescan_plugins` holds the window's
+thread while it describes new bundles.
+
 ## Pacing
 
 `pacing.rs`'s `Pacer` says what comes next, as a plain function of what the last frame left
@@ -470,7 +478,11 @@ gesture sent):
   `a_panel_opens_with_the_focus_on_its_checked_radio_and_the_arrows_pick` (an input panel and
   Master's output panel: Down, round the end, Space, Up to "No device"),
   `an_insert_playing_as_a_pass_through_is_marked_and_says_why`,
-  `the_banner_says_when_the_mixer_is_idle_or_the_daemon_is_gone`.
+  `the_banner_says_when_the_mixer_is_idle_or_the_daemon_is_gone`;
+- the clock: `a_host_message_after_a_quiet_spell_shows_for_its_whole_time` (a host's toast
+  polled 20 s after the last frame shows, still shows 7 s on, and is gone after its 8 s),
+  `a_rescan_that_holds_the_window_still_says_what_it_found` (a rescan answered 5 s after the
+  frame that asked still shows its note, for its 2.4 s from the answer).
 
 **The parts:**
 
