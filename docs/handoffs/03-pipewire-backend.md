@@ -78,7 +78,7 @@ forced by what the daemon did:
   `#[ignore]`d and run on request (the cookbook, step 6).
 - No `kit-*.md` record names this handoff, so none was flipped.
 
-**Acceptance, as run on 2026-11-04 in the container:** `tests/headless.rs` 9 passed (2 on
+**Acceptance, as run on 2026-11-04 in the container:** `tests/headless.rs` 10 passed (2 on
 request); clippy clean on Linux with `-D warnings`, and on Windows the crate compiles to nothing
 inside a green `dev check`. The daemon-restart run passed: `Disconnected`, then `Connected` and
 Monitor out linked again after the daemon came back.

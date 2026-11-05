@@ -42,9 +42,10 @@ a daemon to try it against is [Run a headless PipeWire](../cookbook/run-headless
   BackendError>` starts the control thread and returns once the daemon answered;
   `apply(&self, &BackendGraph)` and `route(&self, app_node, Option<&str>)` (a channel's
   `node.name`, or `None` for the default) post to a mailbox and return at once (latest wins per
-  graph and per app node); `stats(&self) -> BackendStats`; `disconnect(self)` (also on drop)
-  destroys every stream and leaves the daemon, leaving routings as they are. `Backend` is
-  `Send + Sync`.
+  graph and per app node; the control thread applies a waiting graph before the routings that
+  wait with it, so a routing names a sink of the newest graph); `stats(&self) ->
+  BackendStats`; `disconnect(self)` (also on drop) destroys every stream and leaves the daemon,
+  leaving routings as they are. `Backend` is `Send + Sync`.
 - `BackendStats`: `tick_source`, `ticks`, `rate`, `quantum`, `xruns`, `underruns`,
   `overflows`, `ring_checks` and `ring_off` (§ The rings), `monitor_cycles`,
   `master_out_cycles`, `master_source_cycles` (cycles each output wrote the mix of its own
@@ -58,8 +59,9 @@ a daemon to try it against is [Run a headless PipeWire](../cookbook/run-headless
   `master_out_node_name` `<app>.master-out`, `master_node_name` `<app>.master`; `slug` keeps
   lower-case ASCII letters and digits with one `-` for every other run (`channel` when nothing
   is left). The id keeps two channels whose names slug alike apart; the slug is for whoever reads
-  `pw-top`. A rename changes the name: the sink is made again under it and the backend moves
-  the apps the metadata sent to the old one (§ Routing). `DISPLAY_NAME` (`Vix Mix`) prefixes
+  `pw-top`. A rename makes the sink again, under a new name, or under the same one when the
+  slug does not change (`Test` to `TEST`); either way the backend moves the old sink's apps to
+  the new one (§ Registry, identity and routing). `DISPLAY_NAME` (`Vix Mix`) prefixes
   every `node.description`: the Master source is "Vix Mix Master".
 
 ## Threads
@@ -218,9 +220,14 @@ control thread, at most sixteen in flight each way.
   most). WirePlumber's own memory of a routing is unreliable when an app quits (its
   `restore-stream` forgets a target whose metadata is cleared while the node is still known),
   which is why the host's rule, not the session manager, is the routing of record.
-- **A renamed app sink** keeps its apps: every subject the metadata sent to the old sink (by our
-  serial or by WirePlumber's restored id) is routed to the new one once it is announced. The
-  backend finds them in its mirror of the two keys for every subject. A metadata event with no
+- **A renamed app sink** keeps its apps, whether its node name changed or not: every subject
+  the metadata sent to the old sink (by our serial or by WirePlumber's restored id), and every
+  app the host routed to the old name whose routing the metadata has not echoed yet or that
+  still waits, is routed to the new one once it is announced. The old sink's name is forgotten
+  the moment its stream is destroyed, before the registry says it is gone (so too a removed
+  channel's): a routing to that name, the same name again when the slug is unchanged, waits for
+  the new node instead of writing the old one's serial, which nothing would rewrite. The backend
+  finds the subjects in its mirror of the two keys for every subject. A metadata event with no
   key clears one subject's keys (WirePlumber's, when an app it routed goes away; `pw-metadata
   -d <id>`), so it drops that subject from the mirror alone; only a subject of `PW_ID_ANY`
   would empty it.
@@ -282,9 +289,12 @@ On Linux, `cargo test -p vixmix-pipewire` (on Windows the crate compiles to noth
   a capture channel linked to the null source; an app un-assigned while absent going back to
   the default when it appears, whether the session manager's restore lands before or after the
   host's routing; a renamed channel keeping its app after another app routed to it quit and an
-  unrelated subject's keys were cleared; a quantum forced to 512 reported and followed, and
-  back; Monitor's device removed mid-run with Master out ticking on, at most one quantum of
-  silence and at most two breaks on Master (measured: none), every cycle ticked.
+  unrelated subject's keys were cleared; a rename that keeps the slug (`Test` to `TEST`) making
+  the sink again under the same name, with the app routed before it and the app routed in the
+  same breath both on the new node and neither on the default; a quantum forced to 512 reported
+  and followed, and back; Monitor's device removed mid-run with Master out ticking on, at most
+  one quantum of silence and at most two breaks on Master (measured: none), every cycle
+  ticked.
 - On request (`-- --ignored`, [the cookbook](../cookbook/run-headless-pipewire.md) step 6):
   `two_minutes_at_256_without_an_xrun` — two minutes with null devices at 256, zero xruns, every
   ring check on target, every output every cycle, and no ERR added on any node of ours over the

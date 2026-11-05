@@ -407,6 +407,24 @@ fn node_id(name: &str) -> Option<u32> {
     None
 }
 
+/// The `object.serial` of the node named `name`, from `pw-cli ls Node`. Unlike its id, which
+/// PipeWire hands to the next object once the node is gone, a serial is never used twice.
+fn node_serial(name: &str) -> Option<u64> {
+    let listing = run("pw-cli", &["ls", "Node"]);
+    let mut serial = None;
+    for line in listing.lines() {
+        let line = line.trim();
+        if line.starts_with("id ") {
+            serial = None;
+        } else if let Some(rest) = line.strip_prefix("object.serial = ") {
+            serial = rest.trim_matches('"').parse().ok();
+        } else if line == format!("node.name = \"{name}\"") {
+            return serial;
+        }
+    }
+    None
+}
+
 /// `pw-top`'s ERR column — PipeWire's own count of the cycles a node had not finished when the
 /// next began, since the node was made — for every node, by name, from the second of two
 /// samples (`pw-top -b -n 2`).
@@ -772,6 +790,60 @@ fn a_renamed_channel_keeps_its_apps_after_another_has_quit() {
         run("pw-metadata", &["-n", "default"])
     );
     assert!(!linked(stays, NULL_SINK));
+    assert!(rig.channel_hears(true, Duration::from_secs(3)));
+}
+
+#[test]
+fn a_rename_that_keeps_the_slug_keeps_its_apps() {
+    let Some(_daemon) = headless() else {
+        return;
+    };
+    let dir = scratch("sameslug");
+    let wav = sine_wav(&dir, 12.0);
+    let (routed, joins) = ("vixmix-sameslug-app", "vixmix-sameslug-joiner");
+    let mut rig = Rig::new("vixmix-sameslug");
+    rig.start(&rig.graph("Test", Some(NULL_SINK), None, false));
+    let sink = rig.sink("Test");
+    let first = node_serial(&sink).expect("the channel's sink is a node");
+    let _app = play(&wav, routed);
+    let node = rig.app_stream(routed);
+    rig.backend().route(node, Some(&sink));
+    let _joiner = play(&wav, joins);
+    let joiner = rig.app_stream(joins);
+    assert!(
+        eventually(Duration::from_secs(3), || linked(routed, &sink)
+            && linked(joins, NULL_SINK)),
+        "the apps did not settle:\n{}",
+        run("pw-link", &["-l"])
+    );
+
+    // A capitalisation fix keeps the slug, so the sink is made again under the same node name.
+    // One app was routed to it before the rename; the other is routed to it in the same breath
+    // as the rename, which the backend takes in one batch or in two.
+    rig.backend().route(joiner, Some(&sink));
+    rig.backend()
+        .apply(&rig.graph("TEST", Some(NULL_SINK), None, false));
+    assert_eq!(rig.sink("TEST"), sink);
+    assert!(
+        eventually(Duration::from_secs(3), || node_serial(&sink)
+            .is_some_and(|now| now != first)),
+        "the sink was not made again:\n{}",
+        run("pw-cli", &["ls", "Node"])
+    );
+    let followed = || {
+        linked(routed, &sink)
+            && linked(joins, &sink)
+            && !linked(routed, NULL_SINK)
+            && !linked(joins, NULL_SINK)
+    };
+    assert!(
+        eventually(Duration::from_secs(3), followed),
+        "the apps did not follow a rename that keeps the slug:\n{}\n{}",
+        run("pw-link", &["-l"]),
+        run("pw-metadata", &["-n", "default"])
+    );
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(followed(), "an app left the renamed sink");
     assert!(rig.channel_hears(true, Duration::from_secs(3)));
 }
 

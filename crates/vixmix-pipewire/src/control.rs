@@ -471,6 +471,19 @@ impl Conn {
         }
     }
 
+    /// Forgets, by name, the node of an app sink whose stream was just destroyed. Its
+    /// `global_remove` arrives later; until then a routing to that name (the same name again
+    /// when a rename keeps the slug) would find the old node and write its serial, which
+    /// nothing rewrites once the old node is gone. Forgotten, the routing waits in
+    /// `pending_routes` until the registry announces the node that takes the name next.
+    /// `node_names` keeps the id: `global_remove` removes a `nodes` entry only when its id
+    /// matches, so the new node's entry stands.
+    fn forget_sink(&mut self, spec: Option<&Spec>) {
+        if let Some(Spec::AppSink { node_name, .. }) = spec {
+            self.nodes.remove(node_name);
+        }
+    }
+
     fn device_present(&self, name: &str) -> bool {
         self.devices.values().any(|d| d.device.name == name)
     }
@@ -516,12 +529,15 @@ impl Control {
                     }
                     return;
                 }
-                for (node, to) in mail.routes {
-                    self.route(node, to);
-                }
+                // The graph first: a routing names a sink of the newest graph, the way a host
+                // routes its apps again after it applied a setup. Routed first, an app would be
+                // sent to a sink this graph is about to make again, and moved a moment later.
                 if let Some(graph) = mail.graph {
                     self.graph = Some(graph);
                     self.apply(ctl);
+                }
+                for (node, to) in mail.routes {
+                    self.route(node, to);
                 }
             }
             Note::Housekeeping => self.housekeeping(ctl),
@@ -1005,8 +1021,10 @@ impl Control {
             })
             .unwrap_or_default();
         for id in gone {
-            if let Some(conn) = &mut self.conn {
-                conn.channels.remove(&id);
+            if let Some(conn) = &mut self.conn
+                && let Some(stream) = conn.channels.remove(&id)
+            {
+                conn.forget_sink(stream.spec.as_ref());
             }
             if let Some(slot) = self.slots.iter().position(|s| *s == Some(id)) {
                 self.slots[slot] = None;
@@ -1028,16 +1046,20 @@ impl Control {
             if current.as_ref() == spec.as_ref() && conn.channels.contains_key(id) {
                 continue;
             }
-            // The sink this channel had, by id and serial, to move its apps if it is renamed.
-            let old_sink = match &current {
-                Some(Spec::AppSink { node_name, .. }) => conn
-                    .nodes
-                    .get(node_name)
-                    .map(|named| (named.id.to_string(), named.serial.clone())),
+            // The sink this channel had: its name, and its id and serial once announced, to
+            // move its apps when it is made again.
+            let old_name = match &current {
+                Some(Spec::AppSink { node_name, .. }) => Some(node_name.clone()),
                 _ => None,
             };
-            // The old stream goes first, so a new one may take its node name.
+            let old_sink = old_name
+                .as_ref()
+                .and_then(|name| conn.nodes.get(name))
+                .map(|named| (named.id.to_string(), named.serial.clone()));
+            // The old stream goes first, so a new one may take its node name, and its name is
+            // forgotten until the new node is announced (`Conn::forget_sink`).
             conn.channels.remove(id);
+            conn.forget_sink(current.as_ref());
             let mut stream = ChannelStream {
                 spec: spec.clone(),
                 live: None,
@@ -1070,21 +1092,39 @@ impl Control {
             self.pending.taps[slot] = tap;
             self.pending.replace[slot] = true;
             self.pending.dirty = true;
-            // A renamed app sink keeps its apps: what the metadata sends to the old sink (our
-            // routing by serial, WirePlumber's restore by id) is sent to the new one, as soon
+            // A renamed app sink keeps its apps, whether or not the rename changed its node
+            // name: what the metadata sends to the old sink (our routing by serial,
+            // WirePlumber's restore by id), and every routing the host asked for it that the
+            // metadata has not echoed yet or that still waits, is sent to the new one as soon
             // as the registry announces it.
-            if let (Some((old_id, old_serial)), Some(Spec::AppSink { node_name: new, .. })) =
-                (old_sink, spec)
+            if let (Some(old_name), Some(Spec::AppSink { node_name: new, .. })) = (&old_name, spec)
             {
-                let moved: Vec<u32> = conn
+                let mut moved: Vec<u32> = conn
                     .targets
                     .iter()
                     .filter(|(_, target)| {
-                        target.object.as_deref() == Some(old_serial.as_str())
-                            || target.node.as_deref() == Some(old_id.as_str())
+                        old_sink.as_ref().is_some_and(|(old_id, old_serial)| {
+                            target.object.as_deref() == Some(old_serial.as_str())
+                                || target.node.as_deref() == Some(old_id.as_str())
+                        })
                     })
                     .map(|(subject, _)| *subject)
                     .collect();
+                let wished = |to: &Option<String>| to.as_deref() == Some(old_name.as_str());
+                moved.extend(
+                    conn.apps
+                        .iter()
+                        .filter(|(_, app)| app.wish.as_ref().is_some_and(wished))
+                        .map(|(subject, _)| *subject),
+                );
+                moved.extend(
+                    conn.pending_routes
+                        .iter()
+                        .filter(|(_, to)| wished(to))
+                        .map(|(subject, _)| *subject),
+                );
+                moved.sort_unstable();
+                moved.dedup();
                 for subject in moved {
                     self.route(subject, Some(new.clone()));
                 }
