@@ -11,7 +11,8 @@ the [build map](build-map.md) holds the order and the conflict rules.
 | The workspace: five crates and the app, the toolchain pin, the kit's four crates at one tag | [handoff 00](handoffs/00-bootstrap.md) | 2026-11-04 |
 | The shared contracts as compiling skeletons with real minimal behaviour: the setup and its commands, the taper, `setup.ron`, the engine snapshot; the engine's handoff, tick, meters and null backend; the catalog, rack and instances; the backend's signatures; the `Host` trait with `RealHost` and `FakeHost` | [reference/](reference/README.md) | 2026-11-04 |
 | The window: a winit and egui-wgpu shell titled Vix Mix, its header, the no-backend banner, `--fake`, `--quit-after-frames` | [reference/app.md](reference/app.md) | 2026-11-04 |
-| The look gate: prototype v5's theme and Plex fonts, the console drawn static from `FakeHost`, `--dump-png` and [its capture](design/prototype/egui-look-gate.png) beside the screenshot, awaiting the user's verdict | [handoff 05](handoffs/05-app.md) step 1 | 2026-11-04 |
+| The look gate, passed by the user: prototype v5's theme and Plex fonts, the console drawn from the host, `--dump-png` and [its capture](design/prototype/egui-look-gate.png) beside the screenshot | [handoff 05](handoffs/05-app.md) step 1 | 2026-11-04 |
+| The console as prototype v5, interactive over the `Host` trait: faders (drag, Shift, double-click, keys), mute, link, the ear, MON/MST, the FX well with bypass, gear, bin and a scrolling list, inserts dragged within and between strips (Ctrl copies), the source and output panels, the add-channel menu, the plugin browser, the menu and preferences, toasts with Undo, plugin editor windows (X11 on Linux), 60 Hz pacing on a grid; every gesture's command asserted headless | [reference/app.md](reference/app.md), [handoff 05](handoffs/05-app.md) | 2026-11-04 |
 | The kit CLI: manifest, `dev` registry, hooks, skills, `kit-check-docs` | [kit-cli.md](kit-cli.md) | 2026-11-04 |
 | CI: `check (linux)` with a headless PipeWire daemon, `check (windows)` | [kit-cli.md](kit-cli.md) | 2026-11-04 |
 | The model: every command's `Applied` exact and proven against the diff, ids that never come back, `setup.ron` format 2 with the migration from format 1 and the rules checked at load | [reference/model.md](reference/model.md) | 2026-11-04 |
@@ -34,7 +35,7 @@ Wave 2, in parallel, each in its own worktree ([build map](build-map.md) § Wave
 | [02 — Engine](handoffs/02-engine.md) | chains lent through `Lender`, the dry/processed split, mix chains, the no-alloc proof with chains on | shipped 2026-11-04 |
 | [03 — PipeWire backend](handoffs/03-pipewire-backend.md) | the streams, rings, tick election, registry, routing and reconnect, tested against a headless daemon | shipped 2026-11-04 (see Built) |
 | [04 — Plugins](handoffs/04-plugins.md) | scan and cache, instances, the rack, state, editor sessions, tested with the kit's test plugin | shipped 2026-11-04 (see Built) |
-| [05 — App](handoffs/05-app.md) | the look gate, then the console exactly as prototype v5 against `FakeHost` | look gate rendered, awaiting the user's verdict; steps 2–9 not started |
+| [05 — App](handoffs/05-app.md) | the look gate, then the console exactly as prototype v5 against `FakeHost` | shipped 2026-11-04 (see Built); change request 8 proposed for 06 |
 
 Then wave 3: [06 — Host and integration](handoffs/06-host-and-integration.md), shipped
 2026-11-04 (see Built; the acceptance's Fedora bullet waits for the by-hand pass); then
