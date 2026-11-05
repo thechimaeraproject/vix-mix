@@ -9,18 +9,19 @@ interactive, over the `Host` trait: every gesture the acceptance lists sends its
 browser, the toasts with Undo, the header's menu and preferences, editor windows (proven by
 hand on Windows with Goodhertz's Tone Control 3, before and after they moved behind a trait the
 tests fake), 60 Hz pacing while the window can be seen and no frame while it is hidden (600
-frames in 9.99 s on `FakeHost`; 0.00 % of a core minimised). The CPU acceptance waits on the
-user's reading of "5 % CPU": see its deviation below. The branch is rebased onto master with
-lane 06's host, and the window takes what the trait gained there: the removal's Undo is the
-host's `RestoreChannel`/`RestoreInsert`, the browser's star and the menu's Rescan plugins go
-to the host, an insert playing as a pass-through is marked on its slot, the banner shows the
-mixer idle and the daemon gone, and the pacing serves the host when it asks between frames
-(lane 06's banner-line stopgap, its toast and problem fallback, gave way to the window's
-toasts and slot marks). [reference/app.md](../reference/app.md) is the contract as built.
-Nothing outside `app/` changed: `crates/vixmix-host/src/fake.rs` is unchanged, because the
-example data held everything the window shows. The build map's change request 10 proposes
-the two things the window still needs (an editor told its size, the model's bound on plugin
-folders). Deviations, each with its reason:
+frames in 9.99 s on `FakeHost`; 0.00 % of a core minimised). The CPU acceptance is met, read
+per machine as the main session ruled: see its deviation below. The branch is rebased onto
+master with lane 06's host, and the window takes what the trait gained there: the removal's
+Undo is the host's `RestoreChannel`/`RestoreInsert`, the browser's star and the menu's Rescan
+plugins go to the host, an insert playing as a pass-through is marked on its slot, the banner
+shows the mixer idle and the daemon gone, and the pacing serves the host when it asks between
+frames (lane 06's banner-line stopgap, its toast and problem fallback, gave way to the
+window's toasts and slot marks). [reference/app.md](../reference/app.md) is the contract as
+built. Nothing outside `app/` changed: `crates/vixmix-host/src/fake.rs` is unchanged, because the
+example data held everything the window shows. The build map's change request 10, agreed by
+the main session on 2026-11-04, names the two things the window still needs (an editor told
+its size, the model's bound on plugin folders); round 1 (handoff 09) builds them, with the
+frame for the meters alone that the CPU deviation names. Deviations, each with its reason:
 
 - **The capture is the whole console, not one strip of each.** Every channel strip is the
   one `strip::channel` and both mixes the one `strip::mix`, so six and two cost nothing more,
@@ -50,8 +51,8 @@ folders). Deviations, each with its reason:
   says "Removed Music"): `HostEvent::Removed` carries the message and its Undo, and the host
   owns both, so a channel removed by any means reads the same.
 - **An editor's window takes the size its plugin asks for without the plugin being told it
-  has it** (change request 10, proposed): the trait has no `resize_editor`, and the kit's
-  resize is asynchronous.
+  has it** (change request 10, agreed, for round 1): the trait has no `resize_editor`, and the
+  kit's resize is asynchronous.
 - **The browser lists the types the catalog has**, in the prototype's order, and searches with
   its own ranking (the prototype's, as `Catalog::search` has it): the app depends on the host
   and the model only, so it cannot name `PluginKind::ALL` or `Filter`. The example catalog has
@@ -73,31 +74,32 @@ folders). Deviations, each with its reason:
   frame only for news. egui's viewport facts are asked of the desktop when an event may have
   changed them, not every frame as egui-winit's `update_viewport_info` would (a round trip
   each on X11).
-- **The CPU acceptance, "under 5 % CPU", has two readings, and the user has not said which.**
-  Measured on the rebased branch on the 24-core machine, `--fake` at 60 frames a second, debug
-  and release run in turn four times each (20 s after 4 s of warm-up, the process's CPU time,
-  all of it on the window's thread): of the machine, 0.16 to 0.46 %, more than ten times
-  under; of one core, 3.8 to 6.3 % in a release build (4.9 the middle of the runs; the
-  branch's verifier measured 4.4 to 5.2 %) and 5.5 to 11.0 % in the debug build `cargo run`
-  makes (6.4 the middle; the verifier 5.5 to 7.3 %). So per core neither build is reliably
-  under 5 % on this machine: release straddles it and debug is over. The machine's other work
-  moves the figure by more than the difference between the builds. A frame, timed in place in
-  the debug build (release in brackets): the console's drawing 0.38 ms (0.16), egui's share of
-  its pass 0.05 (0.04), tessellating the whole console 0.24 (0.2), encoding and upload 0.09,
-  the surface's acquire 0.05, the driver's submit and present 0.45 (0.43, most of it CPU on
-  the window's thread); an empty egui frame presented at 60 Hz costs 2.1 % of a core by itself.
+- **The CPU acceptance, "under 5 % CPU", is read per machine, as the main session ruled**:
+  the task manager's figure, the plan's intent being a window that is no CPU hog. Measured on
+  the rebased branch on the 24-core machine, `--fake` at 60 frames a second, debug and release
+  run in turn four times each (20 s after 4 s of warm-up, the process's CPU time, all of it on
+  the window's thread): of the machine, 0.16 to 0.46 %, more than ten times under, so the
+  acceptance is met; of one core, 3.8 to 6.3 % in a release build (4.9 the middle of the runs;
+  the branch's verifier measured 4.4 to 5.2 %) and 5.5 to 11.0 % in the debug build
+  `cargo run` makes (6.4 the middle; the verifier 5.5 to 7.3 %). So per core neither build is
+  reliably under 5 % on this machine: release straddles it and debug is over. The machine's
+  other work moves the figure by more than the difference between the builds. A frame, timed
+  in place in the debug build (release in brackets): the console's drawing 0.38 ms (0.16),
+  egui's share of its pass 0.05 (0.04), tessellating the whole console 0.24 (0.2), encoding and
+  upload 0.09, the surface's acquire 0.05, the driver's submit and present 0.45 (0.43, most of
+  it CPU on the window's thread); an empty egui frame presented at 60 Hz costs 2.1 % of a core
+  by itself.
   Tried and not kept, because side by side it moved none of those phases: each icon's strokes
   tessellated once and the mesh reused, moved into place or kept where it is drawn (thin
   strokes tessellate about as fast as a mesh is copied; the record's earlier estimate of 1 % of
   a core for it was wrong). Earlier cuts with no difference measurable over the noise on
   Windows: egui's viewport facts asked only when they may have changed (which matters on X11,
-  a round trip each) and no scroll area for a well whose chain fits. What would bring a frame
-  under 5 % of a core on either build is not built, because it is the user's to choose: a
-  frame for the meters alone when nothing else changed, skipping egui's pass and keeping the
-  rest of the console's tessellation (about 0.6 ms of the debug build's 1.1, but a second
-  drawing path that must know everything that can change), or meters at a lower rate than
-  60 Hz. Under the per-machine reading the acceptance is met as it stands. For comparison, the
-  user's Wave Link took 18.3 % of one core over the same kind of sample.
+  a round trip each) and no scroll area for a well whose chain fits. A frame for the meters
+  alone when nothing else changed, skipping egui's pass and keeping the rest of the console's
+  tessellation (about 0.6 ms of the debug build's 1.1, but a second drawing path that must know
+  everything that can change), is the cut that would bring the per-core figure under 5 %; it
+  is left to a later round (handoff 09). For comparison, the user's Wave Link took 18.3 % of
+  one core over the same kind of sample.
 - **What the prototype does not have**: an input or output that is in use but absent is listed
   first, marked "not connected"; a new hardware channel starts with no input picked (the
   model's `AddChannel`; the prototype picked one); the keyboard focus ring follows a Tab, for
@@ -222,9 +224,8 @@ the root `Cargo.toml`.
   keyboard, mute, MON/MST, bypass, a drag within and between strips with and without Ctrl,
   browser search + Enter, an app tick that moves an app between channels, remove + undo.
 - `cargo run -p vix-mix -- --fake` on Windows runs against `FakeHost` with simulated meters at 60 fps
-  under 5 % CPU. *(Open: of the machine (met: 0.16 to 0.46 %) or of one core (release 3.8 to
-  6.3 %, debug 5.5 to 11.0 %, not met) is the user's to say; the record above has the
-  measurements and what each reading would need.)*
+  under 5 % CPU. Met, read per machine as the main session ruled (0.16 to 0.46 %; the record
+  above has the per-core figures too).
 - `reference/app.md` complete; `dev check` green.
 
 ## Out of scope
