@@ -15,9 +15,10 @@
 //! which gives the focus back to what it hangs from. A panel opens with the focus on its
 //! first control, as the prototype's `openSource` puts it: the name field of a channel just
 //! added, an app channel's search field, or the checked radio of a list of inputs or
-//! outputs (the first row when none is checked), so the keys work at once. A list of radios
-//! answers the keys as a browser's radio group does: Up and Down move to the row before or
-//! after, round the ends, and pick it; Space picks the focused row.
+//! outputs (the first row when none is checked), so the keys work at once; its list starts at
+//! its top, wherever the last panel left it. A list of radios answers the keys as a browser's
+//! radio group does: Up and Down move to the row before or after, round the ends, and pick it;
+//! Space picks the focused row.
 
 use egui::text::{CCursor, CCursorRange};
 use egui::{
@@ -146,7 +147,7 @@ impl Popover {
         }
     }
 
-    fn area_id(&self) -> Id {
+    pub(crate) fn area_id(&self) -> Id {
         Id::new((
             "popover",
             match self {
@@ -618,7 +619,7 @@ fn source_panel(ui: &mut Ui, panel: &mut SourcePanel, cx: &mut PopCx<'_>) -> Out
                 .filter(|p| p.app.name.to_lowercase().contains(&query))
                 .collect();
             let mut send = None;
-            list(ui, "app list", |ui| {
+            list(ui, "app list", fresh, |ui| {
                 if hits.is_empty() {
                     empty_row(
                         ui,
@@ -672,7 +673,7 @@ fn source_panel(ui: &mut Ui, panel: &mut SourcePanel, cx: &mut PopCx<'_>) -> Out
             let checked =
                 |device: &DeviceRef| current.as_ref().is_some_and(|c| c.name == device.name);
             let mut send = None;
-            list(ui, "input list", |ui| {
+            list(ui, "input list", fresh, |ui| {
                 if rows.is_empty() {
                     empty_row(ui, "No input is present: connect one and it shows here.");
                 }
@@ -775,22 +776,29 @@ fn devices(
     rows
 }
 
-/// A panel's scrolling list (`.ap-list`): padded, at most 300 points tall.
-fn list(ui: &mut Ui, salt: &str, add: impl FnOnce(&mut Ui)) {
+/// A panel's scrolling list (`.ap-list`): padded, at most 300 points tall; from its top when
+/// the panel opens (`top`), because every channel's panel shows the same list, which would
+/// otherwise keep where the last one was scrolled.
+fn list(ui: &mut Ui, salt: &str, top: bool, add: impl FnOnce(&mut Ui)) {
     let width = ui.available_width();
-    ScrollArea::vertical()
+    let area = ScrollArea::vertical()
         .id_salt(salt)
         .max_height(pop::LIST_MAX)
-        .auto_shrink([false, true])
-        .show(ui, |ui| {
-            ui.spacing_mut().item_spacing = Vec2::ZERO;
-            egui::Frame::NONE
-                .inner_margin(egui::Margin::same(pop::LIST_PAD as i8))
-                .show(ui, |ui| {
-                    ui.set_width(width - 2.0 * pop::LIST_PAD);
-                    add(ui);
-                });
-        });
+        .auto_shrink([false, true]);
+    let area = if top {
+        area.vertical_scroll_offset(0.0)
+    } else {
+        area
+    };
+    area.show(ui, |ui| {
+        ui.spacing_mut().item_spacing = Vec2::ZERO;
+        egui::Frame::NONE
+            .inner_margin(egui::Margin::same(pop::LIST_PAD as i8))
+            .show(ui, |ui| {
+                ui.set_width(width - 2.0 * pop::LIST_PAD);
+                add(ui);
+            });
+    });
 }
 
 /// An empty list's message (`.br-empty`).
@@ -827,7 +835,7 @@ fn output_panel(ui: &mut Ui, panel: &mut OutputPanel, cx: &mut PopCx<'_>) -> Out
     let rows = devices(cx.host, DeviceDirection::Output, current);
     let checked = |device: &DeviceRef| current.is_some_and(|c| c.name == device.name);
     let mut send = None;
-    list(ui, "output list", |ui| {
+    list(ui, "output list", fresh, |ui| {
         if mix == MixId::Master
             && list_row(
                 ui,
@@ -996,7 +1004,7 @@ fn prefs_panel(ui: &mut Ui, panel: &mut PrefsPanel, cx: &mut PopCx<'_>) -> Outco
     name_row(ui, NameRow::Fixed("Preferences"));
     heading_row(ui, "Quantum", false);
     let mut send = None;
-    list(ui, "quantum list", |ui| {
+    list(ui, "quantum list", false, |ui| {
         for quantum in Prefs::QUANTA {
             let on = prefs.quantum == quantum;
             if list_row(
@@ -1031,7 +1039,8 @@ fn prefs_panel(ui: &mut Ui, panel: &mut PrefsPanel, cx: &mut PopCx<'_>) -> Outco
         "Asked of PipeWire at 48 kHz; the graph has the last word.",
     );
     heading_row(ui, "Plugin folders", false);
-    list(ui, "folder list", |ui| {
+    // One panel with one list of folders: it keeps where it was scrolled.
+    list(ui, "folder list", false, |ui| {
         if prefs.plugin_dirs.is_empty() {
             empty_row(ui, "Only the standard places.");
         }

@@ -323,7 +323,9 @@ list of inputs or outputs (the first row when none is checked). A list of radios
 the outputs, the quanta) answers the keys as a browser's radio group does: Up and Down move to
 the row before or after, round the ends, and pick it (the command a press of it sends); Space
 picks the focused row; the arrows stay in the group rather than moving the focus to the console
-under the popover.
+under the popover. A panel's list (the apps, the inputs, the outputs) opens at its top: every
+channel's panel, and each mix's, shows the same list, which would otherwise keep where the last
+one was scrolled.
 
 - **The source panel** (270 wide), under a channel's header: the name field (the header shows
   what it holds as it is typed; `Rename` is sent once, when the panel closes, and not at all
@@ -359,12 +361,17 @@ has the focus ("Search 42 plugins by name, maker or type", the hint "↑ ↓ to 
 add" at its right). Typing searches every plugin, ranked as the prototype ranks: the name
 starts with it, then contains it, then the maker, then the type, each group by name; the match
 in the name is drawn in the accent, and All plugins is lit. Up and Down pick a row (the picked
-row on the accent at 22 %, scrolled into view); Enter adds it. With the field empty the nav
-picks the list: Favorites, Recent and All plugins with their counts, then "Type" with each
-type the catalog has, in the prototype's order, and "Maker" with each maker by name, each with
-its count; All plugins is grouped A to Z (`#` for a name that starts with no letter); Recent
-keeps its own order, the rest are by name. A row's star toggles the favourite through
-`Host::set_favorite`, which keeps it (the starred star filled in the accent); a press on the row, or Enter, sends `AddInsert { strip, plugin,
+row on the accent at 22 %, scrolled into view); Enter adds it. The list and the nav start at
+their tops when the browser opens, from whichever strip, and the list does again whenever the
+query or the filter makes a new list, as the prototype builds its list again with the first row
+picked: the row Enter adds is always one the list shows. Both scroll at once rather than eased,
+as the prototype's `scrollIntoView` does, so a scroll still under way never pulls a list that
+started again back down. With the field empty the nav picks the list: Favorites, Recent and All
+plugins with their counts, then "Type" with each type the catalog has, in the prototype's
+order, and "Maker" with each maker by name, each with its count; All plugins is grouped A to Z
+(`#` for a name that starts with no letter); Recent keeps its own order, the rest are by name.
+A row's star toggles the favourite through `Host::set_favorite`, which keeps it (the starred
+star filled in the accent); a press on the row, or Enter, sends `AddInsert { strip, plugin,
 at: len }` (the plugin as the catalog names it: id, bundle, name) and closes the browser. The
 footer says where it goes: "Adds to **<strip>**, slot N". An empty list says "No installed
 plugin matches “…”."
@@ -474,10 +481,19 @@ gesture sent):
   (Down to the last row, which scrolls in; Enter sends its `AddInsert`),
   `tab_walks_the_browser_s_list_into_rows_out_of_view` (Tab from the search field reaches the
   last row, and it scrolls in), `an_open_browser_lists_what_a_rescan_found` (a plugin renamed
-  by a rescan, as many as before, takes its new place A to Z);
+  by a rescan, as many as before, takes its new place A to Z),
+  `typing_after_a_scroll_shows_the_first_hit_that_enter_adds` (wheeled to the end, "e" shows
+  EchoBoy at the top, and Enter adds it),
+  `typing_while_a_picked_row_scrolls_in_still_shows_the_first_hit`,
+  `the_browser_opens_at_the_top_of_its_list_and_nav_on_any_strip` (wheeled to the end, closed,
+  opened from Mic: the A heading, Airwindows Consolidated and Favorites show, and Enter adds
+  Airwindows Consolidated), `a_nav_filter_picked_after_a_scroll_shows_its_first_row` (Dynamics,
+  longer than the list with twenty more compressors);
 - the source panel: `an_app_ticked_in_one_channel_leaves_another`,
   `an_app_search_that_finds_nothing_says_so`, `a_hardware_channel_picks_its_input`,
-  `the_name_field_renames_once_when_the_panel_closes`;
+  `the_name_field_renames_once_when_the_panel_closes`,
+  `a_panel_s_list_opens_at_its_top_on_any_channel` (Music's app list scrolled, then Browser's
+  panel: its first heading where it was);
   the output panel: `the_output_panel_picks_a_device_and_master_can_have_none`;
 - remove and Undo: `removing_an_insert_shows_undo_and_undo_puts_it_back` (its editor closed
   through the host first; Undo sends the host's `RestoreInsert`, the same insert back),
