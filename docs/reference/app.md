@@ -17,7 +17,7 @@ no setup, no audio, no plugin. It depends on `vixmix-host` and `vixmix-model` on
 | File | What it is |
 |---|---|
 | `main.rs` | the command line, then the event loop (or the capture) |
-| `app.rs` | the winit `ApplicationHandler`: the host, the window, one frame at a time, the meters carried between frames |
+| `app.rs` | the winit `ApplicationHandler`: the host and its polls, the window, one frame at a time, the meters carried between frames, the banner line |
 | `gpu.rs` | the surface, and the one paint path: `upload` (egui's textures) and `encode` (egui's frame into a target) |
 | `ui.rs` | what a frame draws: the header and its display, the banner, the console |
 | `console.rs` | the console row: channels, the add-channel column, the mixes, and its size |
@@ -45,8 +45,11 @@ The loop is `ControlFlow::Wait`. A frame is drawn when egui wants one for input,
 `repaint_delay` comes due, and — while the host's `BackendState::live()` (running or simulated)
 or a `--quit-after-frames` count is running — every `FRAME_INTERVAL` (16.667 ms). The next
 frame is never scheduled sooner than one interval after the last, so the window repaints at
-most 60 times a second; with no backend and nothing animating it is idle. Each frame reads the
-host's `MeterFrame` once into the window's `Meters`.
+most 60 times a second. Each frame polls the host and reads its `MeterFrame` once into the
+window's `Meters`. Between frames the host is polled on its own when it asks
+(`Host::next_poll`: PipeWire's news, the debounced save, an undo running out), with no frame
+unless the poll brought news; with nothing animating and nothing pending in the host the window
+is idle.
 
 ## The command line
 
@@ -102,9 +105,11 @@ for the round line cap. egui draws no SVG; this keeps each icon one string from 
   its 36-point bar and percentage; the rate drops a needless decimal (`48`, `44.1`), and
   every number is a dash until the host reports a rate. The prototype's in-app window buttons
   are not drawn: the desktop draws the window's decorations.
-- **The banner**, when the host's backend is `Absent`, with its reason ("No audio backend on
-  this platform" on Windows; on Linux, until handoff 06 plays through PipeWire, that PipeWire
-  answers but is not played through yet, or PipeWire's refusal).
+- **The banner line**: the host's `BackendState::banner()` when it has one ("No audio backend
+  on this platform" on Windows; on Linux PipeWire's refusal, the mixer idle with what would
+  drive it, or the daemon gone), else the newest toast for six seconds (`NOTE_FOR`), else the
+  first insert playing as a pass-through. Handoff 06 wired the last two into this one line
+  until the window's own toasts and slot marks (steps 6 and 3) take them.
 - **The console**, at the top left of what is left, at its natural size
   (`console::size`: 900 × 454 for six channels): black, with each channel strip in setup
   order, the add-channel column (a plus over "ADD CHANNEL" set vertically, as

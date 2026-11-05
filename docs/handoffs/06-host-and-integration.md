@@ -1,6 +1,89 @@
 # 06 — Host and integration
 
-**Record — not yet built.**
+**Record — shipped 2026-11-04.** `RealHost` is the orchestrator: it boots in order (the setup,
+the plugins rescanned against their cache, every insert's instance with its state, the engine
+prepared, then the backend with the setup's graph), keeps PipeWire for the whole run on Linux
+and routes every app the moment it appears and again whenever the setup moves it, acts on each
+command's `Applied` part by part, debounces the save, keeps a removed insert's instance for its
+undo, surfaces pass-throughs and notices, and shuts down in the kit's order; `FakeHost` stays
+the window's fixture. The contract is [reference/host.md](../reference/host.md); the first real
+test is [cookbook/by-hand-pass.md](../cookbook/by-hand-pass.md). `dev check` is green on
+Windows, and the Linux gate (fmt, clippy `-D warnings`, `cargo test --workspace` with both of
+the host's integration tests) is green in the `ubuntu:24.04` container with the headless
+daemon. **The acceptance's first bullet waits for the user's by-hand pass on Fedora** (handoff
+08 runs the cookbook); no agent can hear a mic in headphones, and its flow is proven headlessly
+instead by `tests/headless.rs`. Deviations from the steps below, each with its reason:
+
+- **Change request 2 is built, in the model** (`RestoreChannel { at, channel }` and
+  `RestoreInsert { to, insert }`, refused with `NotRemoved` and `NoPlace`). The toast's undo
+  could not live without it: `AddChannel` appends at the right end under a new id, so a channel
+  could not come back in its place, its sink would be renamed, and the engine's take-back of an
+  instance named again (built for exactly this) would never be reached. The property test draws
+  the undos from what each sequence removed. The host hands the undo out as
+  `HostEvent::Removed { message, undo }` and `FakeHost` does the same, so the window's toast
+  applies a command it was given rather than building one.
+- **Change request 8, in the backend**: `Backend::disconnect` returned on the quit before
+  writing the routings waiting beside it, so step 6's "clear routings, then disconnect" lost
+  them (measured: the app's `target.object` kept naming the sink that went). The control thread
+  now writes them and leaves after a core roundtrip, at most a second. Additive; its test fails
+  without the change.
+- **Step 1: `BootOptions` gained `audio` and `plugin_dirs`.** `AudioBackend::Null` is the
+  default so no test ever routes a desktop's apps (the backend's tests keep the same rule);
+  the app asks for `AudioBackend::APP`. Change request 7's interim banner is gone: on Linux the
+  state is the backend's, and a PipeWire that refuses is asked again every 5 seconds.
+- **Step 1 rescans the plugins at boot**, the plugins crate's start sequence, before the
+  window opens (the scan belongs to the UI thread); `plugins.ron` is written only when the scan
+  learned something, so "booting writes nothing" still holds for an unchanged start.
+- **A new quantum reconnects the backend.** `node.latency` is a stream's property from its
+  making and `BackendGraph` carries no quantum, so a preference change connects again; every
+  device and app is reported afresh and routed again.
+- **Step 3's save is debounced 500 ms and capped at 5 s** after the first unsaved change, so a
+  knob turned for a minute still reaches the disk; an editor's edit and a dirty plugin make it
+  due.
+- **Step 4 makes instances with `Instances::sync`** over the setup's inserts and the removed
+  ones kept for an undo, rather than one `create` and `retire` at a time, which gives Vix's
+  missing-plugin rule (said once, a pass-through, tried again after a rescan) for free. The
+  state of a removed or copied insert is taken from its live instance before the command,
+  worked out on a copy of the setup so a refusal changes nothing. A removed instance is kept
+  for `UNDO_TOAST` (5 s) and a second, at most 64 at once.
+- **Step 5 surfaces problems and notices through the trait**: `HostEvent::Problems` with
+  `Host::problems()` (the engine's `InsertProblem`, re-exported), and every notice as a
+  `Toast`. The window shows them only in its banner line (`app.rs`), as agreed with lane 05's
+  brief; the slot marks and toasts are lane 05's.
+- **`BackendState` gained `Idle { reason }`**, and `Disconnected` has a banner. The backend's
+  `TickSource` is a state the window must show: `Stopped`, or the Master source with nothing
+  recording it (the engine has not ticked for 250 ms), is idle with what would drive the mixer;
+  a move to Master out is a toast.
+- **The trait gained `problems`, `set_favorite`, `rescan_plugins` and `next_poll`.** The
+  browser's stars and the menu's Rescan plugins (lane 05, steps 5 and 6) need the first three,
+  since only the host holds the catalog. `next_poll` because the window idles when nothing
+  animates, and the host has work that comes by itself (PipeWire's news, the debounced save, an
+  undo running out): the window polls when the host asks, without drawing unless there is news.
+- **Step 6's order, refined**: the final save comes before the instances are retired, not
+  after — taking a plugin's state needs its live controller, and a plugin that crashes in its
+  teardown must not cost the setup. The graphs are dropped by preparing an empty snapshot
+  (every lent instance comes home on the UI thread, explicitly) rather than by dropping the
+  engine.
+- **Step 8 is two tests.** `tests/null_backend.rs` (both legs) runs the plugins crate's test
+  plugin through a channel chain with MON on and MST off on the null backend, through a save and
+  a reload, a removal and its undo, and a copy, fed through `RealHost::null_input`.
+  `tests/headless.rs` (Linux, the brief's adaptation of the Fedora bullet) runs the same flow on
+  the headless daemon with a `pw-play` app, the null sink and `pw-record` of the Master source,
+  and a relaunch. Found on the way: relaunched within milliseconds of the quit, while the graph
+  was still moving to the player's own quantum, `pw-play` in the container broke (its node erred
+  every cycle and went away); a second player was heard at once, so the test relaunches once the
+  player is back on the default device, as a person would. The by-hand pass watches for it.
+- **Two sentences of [reference/app.md](../reference/app.md)** (pacing, the banner line) and
+  its `app.rs` row changed with the wiring in `app.rs` they describe; `ui.rs` is untouched — the
+  banner line hands it an `Absent { reason }` for a note.
+- **Shared docs beyond the conflict rules' list**: the Cookbook row of `docs/README.md`'s trust
+  table said lane 06 "writes the next"; it now says it wrote the by-hand pass. The Reference
+  index line for `host.md` names what it now covers.
+- **Not done**: a first start does not pick Monitor's device (the backend does not report the
+  default sink, so the banner asks the user to); the boot scan has no progress display; an
+  `IoChanged` plugin is set up again on the same buses, the kit reading buses once at `create`
+  (handoff 04's note). Fedora installs native VST3s in `/usr/lib64/vst3`, which the kit's
+  standard places do not list: the cookbook says to add it in the preferences.
 **Needs:** 01, 02, 03, 04. **Runs alongside:** 05's later steps. **Size:** L.
 
 ## Goal
