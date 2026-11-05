@@ -87,11 +87,12 @@ Monitor out linked again after the daemon came back.
 Linux shell with realtime scheduling (WSL2 with its packages and rtkit, or the Fedora box)
 before it is called met. The container has none: Docker gives it no realtime budget, so `chrt
 -f` is refused even with `SYS_NICE` added, and the data threads run at ordinary priority. There
-`two_minutes_at_256_without_an_xrun` passed 6 times out of 9. Each pass: about 22 500 cycles,
-0 xruns, every ring check exactly one quantum ahead, Monitor out, Master out and the Master
-source each writing every cycle's own mix, 0 stale. The last four passes were after the
-verifier's round, with `pw-top`'s ERR compared over the window: no ERR added on any node,
-`pw-play`'s and `pw-record`'s included. Two of the failures were stalls of the whole machine,
+`two_minutes_at_256_without_an_xrun` passed 7 times out of 10, and 2 out of 2 in the
+verifier's second round. Each pass: about 22 500 cycles, 0 xruns, every ring check exactly one
+quantum ahead, Monitor out, Master out and the Master source each writing every cycle's own
+mix, 0 stale. The last five passes were after the verifier's first round (the latest on the
+branch rebased on master), with `pw-top`'s ERR compared over the window: no ERR added on any
+node, `pw-play`'s and `pw-record`'s included. Two of the failures were stalls of the whole machine,
 `pw-play` late in the same cycles as our nodes. In one, while other lanes were building on the
 machine, every node of the graph showed 26 ERR and the backend counted 5 xruns (it misses a
 late finish, [reference/pipewire.md](../reference/pipewire.md) § The rings). In the other, our
