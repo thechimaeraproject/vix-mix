@@ -9,7 +9,7 @@
 // check-docs, in that order, stopping at the first failure.
 
 /** Sections print in this order. */
-export const SECTIONS = ["Gate", "Cargo", "Docs"];
+export const SECTIONS = ["Gate", "Cargo", "Docs", "Package"];
 
 /** Retired ids answer with a pointer to their replacement. @type {Map<string, string>} */
 export const RETIRED = new Map();
@@ -45,5 +45,12 @@ export const TASKS = [
     section: "Docs",
     title: "the documentation standard (kit-check-docs)",
     commands: [{ exe: "{node}", args: ["node_modules/@chimaeraproject/tooling/bin/kit-check-docs.mjs", "--root", "."] }],
+  },
+  {
+    // docs/cookbook/install-on-fedora.md step 5. On any other system the script says so and exits 1.
+    id: "package",
+    section: "Package",
+    title: "Linux only: the release tarball in target/package/ (binary, desktop entry, icon, metainfo, install.sh)",
+    commands: [{ exe: "{bash}", args: ["scripts/package/linux-tarball.sh"] }],
   },
 ];
