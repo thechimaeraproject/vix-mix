@@ -100,6 +100,18 @@ against the headless daemon on Linux; the Fedora pass waits for the user. See
 `docs/reference/host.md`, `docs/cookbook/by-hand-pass.md` and
 [handoff 06](docs/handoffs/06-host-and-integration.md).
 
+**Packaging is implemented (2026-11-04); the first real test waits for Fedora KDE on the NV3:**
+[handoff 08](docs/handoffs/08-packaging-and-first-real-test.md) put the desktop entry, a
+scalable icon in the console's colours and the AppStream metadata, under one id
+(`org.chimaeraproject.vixmix`), in `packaging/linux/` with `install.sh`, and the release tarball
+in `scripts/package/linux-tarball.sh` (`dev package`): Vix Mix installs after
+`cargo install --path app --locked` or from the tarball, into `~/.local` or `/usr/local`, proven
+in the Ubuntu container. The charter's packaging finding recommends native (the tarball now, an
+RPM next, a COPR once public), not Flatpak. It does not own what the by-hand pass will fix: that
+pass (handoff 08 step 4) has not run, and
+[handoff 09](docs/handoffs/09-round-1-fixes.md) holds what it must check. See
+`docs/cookbook/install-on-fedora.md` and the two handoffs.
+
 ## Git workflow (read first)
 
 **Work on a branch, never on `master`/`main`.** Every change is a PR: `kit push --yes` runs
