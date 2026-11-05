@@ -2,7 +2,7 @@
 
 **Record — not yet built: waits for the first by-hand pass on Fedora KDE on the NV3 (handoff
 08 step 4), which writes its Goal.** Until the pass runs, this handoff holds what the earlier
-lanes' verifiers left open for it, each numbered under [Open going in](#open-going-in) with
+lanes left open for it, each numbered under [Open going in](#open-going-in) with
 where it lives and what to check; the pass strikes each one that holds and turns each one that
 does not into a step. **Needs:** 08 (its step 4 is this handoff's first step), 05.
 **Runs alongside:** 07. **Size:** set by the pass.
@@ -14,7 +14,7 @@ way Vix's
 [handoff 22](https://github.com/thechimaeraproject/Vix/blob/master/docs/handoffs/22-round-1-fixes.md)
 was filled: for each failure, what you did, what you saw and what you expected, in the order of
 [the by-hand pass](../cookbook/by-hand-pass.md); then the steps fix them, each in the crate
-that owns it. Going in, the goal is the twelve items below.
+that owns it. Going in, the goal is the fifteen items below.
 
 ## Read first
 
@@ -119,12 +119,14 @@ here.
    the machine's plugins and whether the wait reads as a hang; whether Monitor should start on
    the default output. Both are the user's call; a progress display needs the scan off the
    window's first frame (`vixmix-host` and the app).
-8. **What the window shows for the backend's states.** Lane 06 put the host's notes in one
-   banner line (`app/src/app.rs`, [reference/app.md](../reference/app.md) § What a frame
-   draws) until lane 05's toasts and slot marks replace it. Check each state on the real
-   desktop, and that each says what to do: connecting (the start), idle with nothing to drive
-   it (no output on either mix and nothing recording "Vix Mix Master"), idle with only the
-   Master source (an app recording it starts the mixer), running, the daemon gone
+8. **What the window shows for the backend's states.** The banner says the backend's state
+   (PipeWire's refusal, the mixer idle with what would drive it, the daemon gone), the host's
+   notices and refusals go to the toast line, and an insert playing as a pass-through is marked
+   on its slot with the host's why under the pointer (`app/src/ui.rs`, `app/src/toast.rs`,
+   `app/src/well.rs`; [reference/app.md](../reference/app.md) § What a frame draws). Check each
+   state on the real desktop, and that each says what to do: connecting (the start), idle with
+   nothing to drive it (no output on either mix and nothing recording "Vix Mix Master"), idle
+   with only the Master source (an app recording it starts the mixer), running, the daemon gone
    (`systemctl --user restart pipewire pipewire-pulse wireplumber`), Monitor's device gone, a
    plugin missing (a bundle renamed), a scan failure.
 9. **The window's entry in the task manager, and the launch feedback.** Where:
@@ -135,10 +137,11 @@ here.
    read the activation token the launcher hands it (`XDG_ACTIVATION_TOKEN` on Wayland,
    `DESKTOP_STARTUP_ID` on X11): `true` would promise it does, `false` would turn the feedback
    off where `StartupWMClass` ends it. Check: the running window's task-manager entry and title
-   bar show the icon, on Wayland today and on XWayland once handoff 05 step 7 creates the event
-   loop on X11; and after a start from the launcher, whether the bouncing cursor and the task
-   manager's launch entry go when the window appears or stay until Plasma's timeout. If the
-   icon is generic, the app names its window with winit's `with_name` (the app id
+   bar show the icon, on XWayland, where the window runs under KDE's Wayland session (its event
+   loop is X11 whenever `DISPLAY` is set, handoff 05), and on Wayland only with no X display;
+   and after a start from the launcher, whether the bouncing cursor and the task manager's
+   launch entry go when the window appears or stay until Plasma's timeout. If the icon is
+   generic, the app names its window with winit's `with_name` (the app id
    `org.chimaeraproject.vixmix` on Wayland, the class `vix-mix` on X11). If the feedback stays,
    the app reads the token with winit's `EventLoopExtStartupNotify::read_token_from_env`, makes
    its window `with_activation_token` (`WindowAttributesExtStartupNotify`), calls
@@ -161,6 +164,32 @@ here.
     and 2 point at install-on-fedora.md for the packages and the build, and start Vix Mix from
     the launcher rather than repeating the `dnf` list and `cargo run --release -p vix-mix`, so
     every later pass proves the install too.
+13. **A frame for the meters alone.** Where: `app/src/app.rs` and `app/src/ui.rs`;
+    [reference/app.md](../reference/app.md) § Verification (the CPU bullet) and
+    [handoff 05](05-app.md)'s CPU deviation. The main session ruled handoff 05's "60 fps under
+    5 % CPU" per machine, met at 0.16 to 0.46 % on the 24-core Windows machine; of one core the
+    window takes 3.8 to 6.3 % in a release build and 5.5 to 11 % in a debug one at 60 frames a
+    second. Build: when nothing but the meters changed since the last frame, draw the meters
+    over the console's last tessellation and skip egui's pass (about 0.6 ms of the debug
+    build's 1.1 ms frame), a second drawing path that must know everything that can change.
+    Check: the per-core figure, measured as the reference measures it, under 5 % in a release
+    build on Windows and on Fedora, and `--dump-png` still byte for byte the look gate's.
+14. **Change request 10.** Where: `crates/vixmix-host` (`Host::resize_editor` in both hosts,
+    `FakeHost`'s doing nothing), `crates/vixmix-model` (`Command::SetPrefs`) and
+    `app/src/editors.rs` (the call, on the editor window's `Resized`);
+    [build-map.md](../build-map.md) § Change requests, row 10, agreed 2026-11-04. Build: the
+    host tells an editor's plugin the size its window took (`EditorSession::resize`, which the
+    kit does asynchronously), and the model refuses a seventeenth extra plugin folder with the
+    window's words (remove one first), as `popover::MAX_PLUGIN_DIRS` holds it today. Check: an
+    editor whose plugin asks for a new size draws at that size with no strip of the old one, on
+    Windows and on Fedora; a seventeenth folder, sent by any means, is refused with the fix.
+
+15. **Preferences: the Tab order of the folder field and its Add button.** Where:
+    `app/src/popover.rs`, `folder_field` registers the Add button before the folder text field,
+    so Tab from the field goes to Done and Shift+Tab goes back to Add, the reverse of the
+    visual order (the field, then Add). Fix: lay the field out before the button, and pin it
+    with a test (Tab from the folder field focuses the add-folder button). Polish; it predates
+    lane 05's closing round.
 
 ## Files you own
 

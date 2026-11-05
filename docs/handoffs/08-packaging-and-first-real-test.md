@@ -8,8 +8,8 @@ with the Fedora prerequisites, in
 [cookbook/install-on-fedora.md](../cookbook/install-on-fedora.md). The packaging question is
 answered in [the charter](../charter.md) § Open: native, with the evidence and the three
 options. Fedora KDE is not on the NV3 yet, so the by-hand pass (step 4) has not run:
-[handoff 09](09-round-1-fixes.md) is the handoff that pass fills, seeded with the twelve items
-the earlier lanes' verifiers left open. Of the acceptance, the charter bullet is met; the
+[handoff 09](09-round-1-fixes.md) is the handoff that pass fills, seeded with the fifteen items
+the earlier lanes left open. Of the acceptance, the charter bullet is met; the
 install on Fedora and the pass wait for the machine. Proven in the `vixmix-linux-dev`
 container (Ubuntu, not Fedora): `cargo install --path app --locked --offline` and the tarball
 build, `install.sh` from the checkout and from the unpacked tarball into `~/.local` and

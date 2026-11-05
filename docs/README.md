@@ -99,4 +99,4 @@ on every push and in CI.
   the desktop entry and metainfo, an install path, Flatpak investigated, the first by-hand
   pass on Fedora.
 - [handoffs/09-round-1-fixes.md](handoffs/09-round-1-fixes.md) — what the first by-hand pass on
-  Fedora finds, fixed; seeded with the twelve items the earlier lanes left open for it.
+  Fedora finds, fixed; seeded with the fifteen items the earlier lanes left open for it.
