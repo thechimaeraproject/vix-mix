@@ -106,7 +106,9 @@ impl EditorWindows {
             format!("no window for {title} ({e}): close other windows and try again")
         })?;
         let handle = window.window_handle().map_err(|e| {
-            format!("the window for {title} has no handle a plugin can draw into ({e})")
+            format!(
+                "the window for {title} has no handle a plugin can draw into ({e}): close it and open the editor again"
+            )
         })?;
         let size = host
             .open_editor(instance, handle.as_raw())
