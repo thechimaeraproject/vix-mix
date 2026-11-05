@@ -436,11 +436,12 @@ slot N".
 
 ## What the window needs from the host
 
-The window codes against the `Host` trait as it is. Two things wait, proposed as the build
-map's change request 10: `resize_editor(instance, size)` on the host (the kit's resize is
-asynchronous: after the window has taken the size a plugin asked for, `EditorSession::resize`
-must tell the plugin, and today nothing does), and a bound on the model's extra plugin folders
-(`SetPrefs` takes any number; the window holds at most 16 and says to remove one first).
+The window codes against the `Host` trait as it is. Two things wait, the build map's change
+request 10, agreed by the main session and left to round 1 (handoff 09):
+`resize_editor(instance, size)` on the host (the kit's resize is asynchronous: after the window
+has taken the size a plugin asked for, `EditorSession::resize` must tell the plugin, and today
+nothing does), and a bound on the model's extra plugin folders (`SetPrefs` takes any number;
+the window holds at most 16 and says to remove one first).
 
 ## The capture
 
@@ -586,16 +587,21 @@ gesture sent):
   rebased branch. Of one core: 5.5 to 11.0 % in the debug build `cargo run` makes (6.4 the
   middle of the runs) and 3.8 to 6.3 % in a release build (4.9 the middle), on Vulkan; the
   branch's verifier measured 5.5 to 7.3 % and 4.4 to 5.2 % in the same way. Of the machine:
-  0.16 to 0.46 %. The figure moves with what else the machine runs, by more than the
-  difference between the builds. A frame, timed in place in a debug build (release beside
-  it): the console's drawing in egui's pass 0.38 ms (0.16), egui's own share of the pass 0.05
-  (0.04), tessellating the whole console 0.24 (0.2), encoding and upload 0.09, the surface's
-  acquire 0.05, the driver's submit and present 0.45 (0.43, most of it CPU on the window's
-  thread). An empty egui frame presented at 60 Hz costs 2.1 % of one core by itself. Tried and
-  not kept: tessellating each icon's strokes once and reusing the mesh, moved into place or
-  kept where it is drawn; side by side with the strokes tessellated every frame the frame's
-  phases did not move (strokes this thin tessellate about as fast as a mesh is copied), so the
-  icons stay as they are. Minimised, 0.00 %: no frame, the host served four times a second.
+  0.16 to 0.46 %, the task manager's figure: the main session ruled handoff 05's "under 5 %
+  CPU" per machine (the plan's intent being a window that is no CPU hog), so it is met. The
+  figure moves with what else the machine runs, by more than the difference between the
+  builds. A frame, timed in place in a debug build (release beside it): the console's drawing
+  in egui's pass 0.38 ms (0.16), egui's own share of the pass 0.05 (0.04), tessellating the
+  whole console 0.24 (0.2), encoding and upload 0.09, the surface's acquire 0.05, the driver's
+  submit and present 0.45 (0.43, most of it CPU on the window's thread). An empty egui frame
+  presented at 60 Hz costs 2.1 % of one core by itself. Tried and not kept: tessellating each
+  icon's strokes once and reusing the mesh, moved into place or kept where it is drawn; side
+  by side with the strokes tessellated every frame the frame's phases did not move (strokes
+  this thin tessellate about as fast as a mesh is copied), so the icons stay as they are. A
+  frame for the meters alone when nothing else changed, skipping egui's pass and keeping the
+  rest of the console's tessellation, is the cut that would bring the per-core figure under
+  5 %; it is left to a later round (handoff 09). Minimised, 0.00 %: no frame, the host served
+  four times a second.
 - Minimised and restored (`ShowWindowAsync` from PowerShell, with the window's handle taken
   before it was minimised): no frame while minimised, drawing again at once when restored.
 - `cargo run -p vix-mix -- --quit-after-frames 3` runs on the real host and exits 0.

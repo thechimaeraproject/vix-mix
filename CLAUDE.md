@@ -74,9 +74,10 @@ seen (nothing drawn while it is hidden); each gesture, the pacing and the editor
 lifecycle are asserted headless against `FakeHost`; rebased onto lane 06's host, Undo is the
 host's restore command, stars and Rescan plugins go to the host, a pass-through insert is
 marked on its slot, and the host is polled when it asks between frames. It owns no setup,
-audio or plugin (the host does), and waits on the host for telling an editor its size and on
-the model for a bound on plugin folders (change request 10); the CPU acceptance waits on the
-user's reading of "5 % CPU" (of the machine it is met, of one core it is not). See
+audio or plugin (the host does); telling an editor its size, the model's bound on plugin
+folders (change request 10, agreed) and a frame for the meters alone are left to round 1
+(handoff 09). Its CPU acceptance is met, read per machine as the main session ruled (0.16 to
+0.46 %; of one core, 3.8 to 6.3 % in a release build). See
 [docs/reference/app.md](docs/reference/app.md) and
 [handoff 05](docs/handoffs/05-app.md).
 
