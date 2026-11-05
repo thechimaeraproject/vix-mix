@@ -49,6 +49,9 @@ on every push and in CI.
 - [cookbook/by-hand-pass.md](cookbook/by-hand-pass.md) — the first real test on Fedora: the Wave
   Link scene on real devices and apps, checked by ear and with PipeWire's tools, the latency
   measured.
+- [cookbook/install-on-fedora.md](cookbook/install-on-fedora.md) — Vix Mix as a desktop app
+  on Fedora: the build prerequisites, `cargo install` or the release tarball, `install.sh`, and
+  the entry in the KDE launcher with its icon.
 - [cookbook/run-headless-pipewire.md](cookbook/run-headless-pipewire.md) — a PipeWire and
   WirePlumber daemon with a null sink and a null source in CI, WSL2, a VM or a container, and
   the backend's tests against it.
@@ -94,3 +97,5 @@ on every push and in CI.
 - [handoffs/08-packaging-and-first-real-test.md](handoffs/08-packaging-and-first-real-test.md) —
   the desktop entry and metainfo, an install path, Flatpak investigated, the first by-hand
   pass on Fedora.
+- [handoffs/09-round-1-fixes.md](handoffs/09-round-1-fixes.md) — what the first by-hand pass on
+  Fedora finds, fixed; seeded with the twelve items the earlier lanes left open for it.
