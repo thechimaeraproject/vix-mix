@@ -13,9 +13,10 @@
 //! meters move (the host's backend is running or simulated) or a `--quit-after-frames` count
 //! is still running — on a 60 Hz grid: a frame the timer wakes counts from when it was due,
 //! so neither drawing it nor the timer's lateness stretches the interval to the next. No
-//! frame, input's included, begins sooner than [`FRAME_INTERVAL`] after the last, so the
-//! window never repaints faster than 60 Hz; while a plugin editor is open it draws at least
-//! every [`EDITOR_POLL`]. With no backend, no editor and nothing to animate it is idle.
+//! frame, input's included, is due sooner than [`FRAME_INTERVAL`] after the last was due, so
+//! the window never draws more than 60 frames a second; while a plugin editor is open it
+//! draws at least every [`EDITOR_POLL`]. With no backend, no editor and nothing to animate
+//! it is idle.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};

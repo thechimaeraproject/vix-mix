@@ -7,6 +7,8 @@ use vixmix_model::{
     ChannelKind, Command, DeviceRef, MixId, SlotRef, Source, Strip, example, taper,
 };
 
+use vixmix_host::Host;
+
 use crate::fader::{FINE_DRAG, FINE_KEY_STEP, KEY_STEP, Target};
 use crate::popover::Popover;
 use crate::shell::Intent;
@@ -871,4 +873,30 @@ fn a_refusal_reaches_the_toast_line_with_its_fix() {
         "{:?}",
         h.drawn()
     );
+}
+
+#[test]
+fn the_window_keeps_room_for_the_header_over_a_narrow_console() {
+    let mut h = Harness::new();
+    // A first start: one channel, a console 370 points wide.
+    while h.setup().channels.len() > 1 {
+        let ch = h.channel(1);
+        let _ = h
+            .host
+            .inner
+            .apply(Command::RemoveChannel(ch))
+            .expect("removed");
+    }
+    h.idle(1);
+    let console = crate::console::size(1);
+    assert_eq!(console.x, 370.0);
+    let needed = h.shell.content;
+    assert!(needed.width() > console.x, "{needed:?}");
+    assert_eq!(needed.bottom(), size::HEADER + console.y);
+    // At that width the display clears the title.
+    h.screen = egui::Rect::from_min_size(Pos2::ZERO, needed.size());
+    h.idle(2);
+    let title = h.text_rect(crate::ui::TITLE);
+    let rate = h.text_rect("48");
+    assert!(title.right() < rate.left(), "{title:?} against {rate:?}");
 }

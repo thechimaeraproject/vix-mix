@@ -74,6 +74,7 @@ pub fn draw(root: &mut Ui, shell: &mut Shell, host: &dyn Host) -> Vec<Intent> {
     let mut out = Vec::new();
     let mut layout = Layout::default();
     let open = shell.popover.as_ref().map(Popover::anchor);
+    let mut header_width = 0.0;
 
     egui::Panel::top("vix-mix header")
         .exact_size(size::HEADER)
@@ -81,7 +82,7 @@ pub fn draw(root: &mut Ui, shell: &mut Shell, host: &dyn Host) -> Vec<Intent> {
         .show_separator_line(false)
         .frame(Frame::NONE.fill(colour::WIN))
         .show(root, |ui| {
-            header(
+            header_width = header(
                 ui,
                 host.stats(),
                 open,
@@ -131,7 +132,12 @@ pub fn draw(root: &mut Ui, shell: &mut Shell, host: &dyn Host) -> Vec<Intent> {
             open,
         };
         let (rect, began) = console::draw(ui, origin, &view, &mut cx);
-        shell.content = rect;
+        // The window needs the console under the header (and the banner), and the header's
+        // own width, whichever is wider.
+        shell.content = Rect::from_min_max(
+            Pos2::ZERO,
+            pos2(rect.right().max(header_width), rect.bottom()),
+        );
         started = began;
     });
 
@@ -195,7 +201,7 @@ pub fn draw(root: &mut Ui, shell: &mut Shell, host: &dyn Host) -> Vec<Intent> {
 }
 
 /// The header: the menu button and the title on the left, the display centred, the bottom
-/// edge in black.
+/// edge in black. Returns the width it needs so the display clears the title.
 fn header(
     ui: &Ui,
     stats: StatsFrame,
@@ -203,7 +209,7 @@ fn header(
     keyboard: bool,
     layout: &mut Layout,
     out: &mut Vec<Intent>,
-) {
+) -> f32 {
     let rect = ui.max_rect();
     let painter = ui.painter();
     painter.rect_filled(rect, CornerRadius::ZERO, colour::WIN);
@@ -242,8 +248,10 @@ fn header(
         Spacing::None,
     );
     let title_x = button.right() + size::MENU_GAP;
+    let title_right = title_x + title.size().x;
     strip::place(painter, title, Align2::LEFT_CENTER, pos2(title_x, y));
-    display(painter, pos2(rect.center().x, y), stats);
+    let display_width = display(painter, pos2(rect.center().x, y), stats);
+    2.0 * (title_right - rect.left() + size::HEADER_PAD_X) + display_width
 }
 
 /// The display's first three cells: each a number and what it counts. A dash until the
@@ -287,8 +295,8 @@ fn cell_width(items: &[Item]) -> f32 {
 }
 
 /// The display, centred on `centre`: rate, quantum and milliseconds, then DSP with its bar
-/// and percentage, in cells split by hairlines on black.
-fn display(painter: &Painter, centre: Pos2, stats: StatsFrame) {
+/// and percentage, in cells split by hairlines on black. Returns its width.
+fn display(painter: &Painter, centre: Pos2, stats: StatsFrame) -> f32 {
     let mut cells: Vec<Vec<Item>> = display_cells(stats)
         .into_iter()
         .map(|(value, unit)| {
@@ -348,6 +356,7 @@ fn display(painter: &Painter, centre: Pos2, stats: StatsFrame) {
             x += size::HAIRLINE;
         }
     }
+    total
 }
 
 /// A display run: a number (mono 500, bright) or a label (mono 400, faint).
