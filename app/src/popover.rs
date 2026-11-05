@@ -12,12 +12,17 @@
 //! - **The plugin browser** beside a well's "+ Add plugin" ([`crate::browser`]).
 //!
 //! A press outside a popover (and outside what it hangs from) closes it, as does Escape,
-//! which gives the focus back to what it hangs from.
+//! which gives the focus back to what it hangs from. A panel opens with the focus on its
+//! first control, as the prototype's `openSource` puts it: the name field of a channel just
+//! added, an app channel's search field, or the checked radio of a list of inputs or
+//! outputs (the first row when none is checked), so the keys work at once. A list of radios
+//! answers the keys as a browser's radio group does: Up and Down move to the row before or
+//! after, round the ends, and pick it; Space picks the focused row.
 
 use egui::text::{CCursor, CCursorRange};
 use egui::{
-    Align, Align2, Area, Context, Id, Key, Layout, Order, Pos2, Rect, ScrollArea, Sense, Ui, Vec2,
-    pos2, vec2,
+    Align, Align2, Area, Context, EventFilter, Id, Key, Layout, Order, Pos2, Rect, ScrollArea,
+    Sense, Ui, Vec2, pos2, vec2,
 };
 use vixmix_host::Host;
 use vixmix_model::{
@@ -37,12 +42,14 @@ use crate::widgets::{self, ButtonKind};
 pub const FIELD_LIMIT: usize = 64;
 /// The longest plugin folder the preferences take.
 pub const PATH_LIMIT: usize = 1024;
+/// The most extra plugin folders the preferences hold.
+pub const MAX_PLUGIN_DIRS: usize = 16;
 
 /// The open popover and what it holds between frames.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Popover {
     Source(SourcePanel),
-    Output(MixId),
+    Output(OutputPanel),
     AddChannel,
     Menu,
     Prefs(PrefsPanel),
@@ -60,6 +67,14 @@ pub struct SourcePanel {
     /// Put the focus in the name field with its text selected (a channel just added).
     pub focus_name: bool,
     /// Its first frame: the focus goes in.
+    pub fresh: bool,
+}
+
+/// A mix's output panel.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OutputPanel {
+    pub mix: MixId,
+    /// Its first frame: the focus goes to the checked output.
     pub fresh: bool,
 }
 
@@ -86,7 +101,7 @@ impl Popover {
     pub fn anchor(&self) -> Anchor {
         match self {
             Popover::Source(panel) => Anchor::Head(Strip::Channel(panel.ch)),
-            Popover::Output(mix) => Anchor::Head(Strip::Mix(*mix)),
+            Popover::Output(panel) => Anchor::Head(Strip::Mix(panel.mix)),
             Popover::AddChannel => Anchor::AddColumn,
             Popover::Menu | Popover::Prefs(_) => Anchor::Menu,
             Popover::Browser(browser) => Anchor::AddPlugin(browser.strip),
@@ -99,7 +114,7 @@ impl Popover {
             Anchor::Head(Strip::Channel(ch)) => {
                 Popover::Source(SourcePanel::new(ch, &setup.channel(ch)?.name, false))
             }
-            Anchor::Head(Strip::Mix(mix)) => Popover::Output(mix),
+            Anchor::Head(Strip::Mix(mix)) => Popover::Output(OutputPanel { mix, fresh: true }),
             Anchor::AddPlugin(strip) => Popover::Browser(Browser::new(strip)),
             Anchor::AddColumn => Popover::AddChannel,
             Anchor::Menu => Popover::Menu,
@@ -214,7 +229,7 @@ pub fn show(
                 ui.set_width(width);
                 outcome = match popover {
                     Popover::Source(panel) => source_panel(ui, panel, cx),
-                    Popover::Output(mix) => output_panel(ui, *mix, cx),
+                    Popover::Output(panel) => output_panel(ui, panel, cx),
                     Popover::AddChannel => add_channel_menu(ui, cx),
                     Popover::Menu => main_menu(ui, cx),
                     Popover::Prefs(panel) => prefs_panel(ui, panel, cx),
@@ -523,6 +538,39 @@ fn footer(ui: &mut Ui, remove: bool, keyboard: bool) -> (bool, bool) {
     (removed, done.clicked())
 }
 
+/// The row a list of radios gives the focus to as it opens: the checked one, else the first.
+fn focus_row(rows: &[(Id, bool)]) -> Option<Id> {
+    rows.iter()
+        .find(|(_, on)| *on)
+        .or_else(|| rows.first())
+        .map(|(id, _)| *id)
+}
+
+/// A radio group's keys, a browser's: with one of `rows` focused, Up and Down move the focus
+/// to the row before or after it, round the ends, and answer that row, which the caller
+/// picks. The arrows are the group's while it has the focus, so egui does not move the focus
+/// out of the popover with them.
+fn radio_keys(ui: &Ui, rows: &[Id]) -> Option<usize> {
+    let at = rows.iter().position(|id| ui.memory(|m| m.has_focus(*id)))?;
+    ui.memory_mut(|m| {
+        m.set_focus_lock_filter(
+            rows[at],
+            EventFilter {
+                vertical_arrows: true,
+                ..EventFilter::default()
+            },
+        );
+    });
+    let step =
+        ui.input(|i| i.num_presses(Key::ArrowDown) as isize - i.num_presses(Key::ArrowUp) as isize);
+    if step == 0 {
+        return None;
+    }
+    let to = (at as isize + step).rem_euclid(rows.len() as isize) as usize;
+    ui.memory_mut(|m| m.request_focus(rows[to]));
+    Some(to)
+}
+
 /// Puts the focus in `id` on a popover's first frame; with `select`, its text selected.
 fn focus_first(ui: &Ui, id: Id, select: Option<usize>) {
     ui.memory_mut(|m| m.request_focus(id));
@@ -623,16 +671,18 @@ fn source_panel(ui: &mut Ui, panel: &mut SourcePanel, cx: &mut PopCx<'_>) -> Out
         Source::Hardware(current) => {
             heading_row(ui, "Input", false);
             let rows = devices(cx.host, DeviceDirection::Input, current.as_ref());
+            let checked =
+                |device: &DeviceRef| current.as_ref().is_some_and(|c| c.name == device.name);
             let mut send = None;
             list(ui, "input list", |ui| {
                 if rows.is_empty() {
                     empty_row(ui, "No input is present: connect one and it shows here.");
                 }
                 for (device, present) in &rows {
-                    let on = current.as_ref().is_some_and(|c| c.name == device.name);
+                    let on = checked(device);
                     let pressed = list_row(
                         ui,
-                        Id::new(("input", &device.name)),
+                        input_id(device),
                         Mark::Radio(on),
                         None,
                         &device.description,
@@ -648,6 +698,24 @@ fn source_panel(ui: &mut Ui, panel: &mut SourcePanel, cx: &mut PopCx<'_>) -> Out
                     }
                 }
             });
+            let ids: Vec<_> = rows.iter().map(|(device, _)| input_id(device)).collect();
+            if fresh && !panel.focus_name {
+                let marked: Vec<_> = rows
+                    .iter()
+                    .map(|(device, _)| (input_id(device), checked(device)))
+                    .collect();
+                if let Some(id) = focus_row(&marked) {
+                    focus_first(ui, id, None);
+                }
+            }
+            if let Some(to) = radio_keys(ui, &ids)
+                && !checked(&rows[to].0)
+            {
+                send = Some(Command::SetSource {
+                    ch: panel.ch,
+                    source: Source::Hardware(Some(rows[to].0.clone())),
+                });
+            }
             if let Some(command) = send {
                 cx.out.push(Intent::Apply(command));
             }
@@ -662,6 +730,19 @@ fn source_panel(ui: &mut Ui, panel: &mut SourcePanel, cx: &mut PopCx<'_>) -> Out
         outcome = Outcome::Close;
     }
     outcome
+}
+
+/// The widget id of a hardware input's row.
+pub fn input_id(device: &DeviceRef) -> Id {
+    Id::new(("input", &device.name))
+}
+
+/// The widget id of an output's row; `None` is Master's "No device".
+pub fn output_id(device: Option<&DeviceRef>) -> Id {
+    match device {
+        Some(device) => Id::new(("output", &device.name)),
+        None => Id::new("no device"),
+    }
 }
 
 /// The apps of a channel with `app` ticked or not.
@@ -738,18 +819,21 @@ fn empty_row(ui: &mut Ui, text: &str) {
 }
 
 /// A mix's output panel.
-fn output_panel(ui: &mut Ui, mix: MixId, cx: &mut PopCx<'_>) -> Outcome {
+fn output_panel(ui: &mut Ui, panel: &mut OutputPanel, cx: &mut PopCx<'_>) -> Outcome {
+    let mix = panel.mix;
+    let fresh = std::mem::take(&mut panel.fresh);
     let setup = cx.host.setup();
     let current = setup.mix(mix).device.as_ref();
     name_row(ui, NameRow::Fixed(mix.name()));
     heading_row(ui, "Output", false);
     let rows = devices(cx.host, DeviceDirection::Output, current);
+    let checked = |device: &DeviceRef| current.is_some_and(|c| c.name == device.name);
     let mut send = None;
     list(ui, "output list", |ui| {
         if mix == MixId::Master
             && list_row(
                 ui,
-                Id::new("no device"),
+                output_id(None),
                 Mark::Radio(current.is_none()),
                 None,
                 "No device",
@@ -765,10 +849,10 @@ fn output_panel(ui: &mut Ui, mix: MixId, cx: &mut PopCx<'_>) -> Outcome {
             empty_row(ui, "No output is present: connect one and it shows here.");
         }
         for (device, present) in &rows {
-            let on = current.is_some_and(|c| c.name == device.name);
+            let on = checked(device);
             let pressed = list_row(
                 ui,
-                Id::new(("output", &device.name)),
+                output_id(Some(device)),
                 Mark::Radio(on),
                 None,
                 &device.description,
@@ -784,6 +868,34 @@ fn output_panel(ui: &mut Ui, mix: MixId, cx: &mut PopCx<'_>) -> Outcome {
             }
         }
     });
+    // The radios in order, "No device" first on Master, each with whether it is checked.
+    let choices: Vec<(Option<&DeviceRef>, bool)> = (mix == MixId::Master)
+        .then_some((None, current.is_none()))
+        .into_iter()
+        .chain(
+            rows.iter()
+                .map(|(device, _)| (Some(device), checked(device))),
+        )
+        .collect();
+    let ids: Vec<_> = choices.iter().map(|(d, _)| output_id(*d)).collect();
+    if fresh {
+        let marked: Vec<_> = ids
+            .iter()
+            .zip(&choices)
+            .map(|(id, (_, on))| (*id, *on))
+            .collect();
+        if let Some(id) = focus_row(&marked) {
+            focus_first(ui, id, None);
+        }
+    }
+    if let Some(to) = radio_keys(ui, &ids)
+        && !choices[to].1
+    {
+        send = Some(Command::SetMixDevice {
+            mix,
+            device: choices[to].0.cloned(),
+        });
+    }
     if mix == MixId::Master {
         note_row(ui, "Apps can also record Master as an input.");
     }
@@ -931,6 +1043,15 @@ fn prefs_panel(ui: &mut Ui, panel: &mut PrefsPanel, cx: &mut PopCx<'_>) -> Outco
             }
         }
     });
+    let ids = Prefs::QUANTA.map(|quantum| Id::new(("quantum", quantum)));
+    if let Some(to) = radio_keys(ui, &ids)
+        && Prefs::QUANTA[to] != prefs.quantum
+    {
+        send = Some(Prefs {
+            quantum: Prefs::QUANTA[to],
+            ..prefs.clone()
+        });
+    }
     note_row(
         ui,
         "Asked of PipeWire at 48 kHz; the graph has the last word.",
@@ -959,15 +1080,22 @@ fn prefs_panel(ui: &mut Ui, panel: &mut PrefsPanel, cx: &mut PopCx<'_>) -> Outco
     if added {
         let folder = panel.folder.trim();
         let path = std::path::PathBuf::from(folder);
-        if !folder.is_empty() && !prefs.plugin_dirs.contains(&path) {
+        if folder.is_empty() || prefs.plugin_dirs.contains(&path) {
+            panel.folder.clear();
+        } else if prefs.plugin_dirs.len() >= MAX_PLUGIN_DIRS {
+            // The field keeps what was typed, to add once a folder is removed.
+            cx.out.push(Intent::Notice(format!(
+                "{MAX_PLUGIN_DIRS} plugin folders is the most there can be: remove one, then add {folder}"
+            )));
+        } else {
             let mut plugin_dirs = prefs.plugin_dirs.clone();
             plugin_dirs.push(path);
             send = Some(Prefs {
                 plugin_dirs,
                 ..prefs.clone()
             });
+            panel.folder.clear();
         }
-        panel.folder.clear();
     }
     note_row(ui, "Scanned besides the standard places.");
     if let Some(prefs) = send {

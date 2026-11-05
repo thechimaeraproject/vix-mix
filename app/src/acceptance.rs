@@ -9,7 +9,7 @@ use vixmix_model::{
 };
 
 use crate::fader::{FINE_DRAG, FINE_KEY_STEP, KEY_STEP, Target};
-use crate::popover::Popover;
+use crate::popover::{self, MAX_PLUGIN_DIRS, Popover};
 use crate::shell::Intent;
 use crate::test_support::{Call, FakeWindows, Harness};
 use crate::theme::{pop, size};
@@ -867,6 +867,90 @@ fn an_editor_the_host_refuses_says_why_on_the_toast_line_and_keeps_no_window() {
     h.idle(1);
     let toast = "Pro-Q 3 \u{b7} Master \u{b7} slot 1: FakeHost has example data and no plugin instances: run with the real host to open a plugin's editor";
     assert!(h.find(toast).is_some(), "{:?}", h.drawn());
+}
+
+#[test]
+fn a_panel_opens_with_the_focus_on_its_checked_radio_and_the_arrows_pick() {
+    let mut h = Harness::new();
+    // Synth plays Scarlett In 2; the webcam is the input after it, and the last.
+    let synth = h.channel(5);
+    let _ = h.click(h.head(Strip::Channel(synth)).center());
+    h.idle(2);
+    let focused = |h: &Harness| h.ctx.memory(|m| m.focused());
+    let input = |i: usize| example::device(example::INPUTS[i], true);
+    assert_eq!(focused(&h), Some(popover::input_id(&input(2))));
+    // Down moves to the webcam and picks it, as a browser's radio group does.
+    let sent = h.key(Key::ArrowDown, Modifiers::NONE);
+    let pick = |i: usize| Command::SetSource {
+        ch: synth,
+        source: Source::Hardware(Some(input(i))),
+    };
+    assert_eq!(sent, vec![pick(3)]);
+    assert_eq!(focused(&h), Some(popover::input_id(&input(3))));
+    // Past the last row, round to the first; the focus stays in the panel.
+    let sent = h.key(Key::ArrowDown, Modifiers::NONE);
+    assert_eq!(sent, vec![pick(0)]);
+    assert_eq!(focused(&h), Some(popover::input_id(&input(0))));
+    // Space on the checked row picks nothing new.
+    assert!(h.key(Key::Space, Modifiers::NONE).is_empty());
+    let _ = h.key(Key::Escape, Modifiers::NONE);
+
+    // Master's output panel: its output checked, "No device" first, Phones between.
+    let _ = h.click(h.head(Strip::Mix(MixId::Master)).center());
+    h.idle(2);
+    let output = |i: usize| example::device(example::OUTPUTS[i], false);
+    assert_eq!(focused(&h), Some(popover::output_id(Some(&output(1)))));
+    let sent = h.key(Key::ArrowUp, Modifiers::NONE);
+    assert_eq!(
+        sent,
+        vec![Command::SetMixDevice {
+            mix: MixId::Master,
+            device: Some(output(0))
+        }]
+    );
+    let sent = h.key(Key::ArrowUp, Modifiers::NONE);
+    assert_eq!(
+        sent,
+        vec![Command::SetMixDevice {
+            mix: MixId::Master,
+            device: None
+        }]
+    );
+    assert_eq!(focused(&h), Some(popover::output_id(None)));
+}
+
+#[test]
+fn the_preferences_hold_at_most_sixteen_plugin_folders() {
+    let mut h = Harness::new();
+    let full: Vec<std::path::PathBuf> = (0..MAX_PLUGIN_DIRS)
+        .map(|i| std::path::PathBuf::from(format!("D:/VST3/{i}")))
+        .collect();
+    let prefs = vixmix_model::Prefs {
+        plugin_dirs: full.clone(),
+        ..h.setup().prefs.clone()
+    };
+    assert!(h.host.apply(Command::SetPrefs(prefs)).unwrap().changed());
+    let menu = Pos2::new(
+        size::HEADER_PAD_X + size::MENU_BUTTON[0] / 2.0,
+        size::HEADER / 2.0,
+    );
+    let _ = h.click(menu);
+    h.idle(2);
+    let _ = h.click(h.text("Preferences"));
+    h.idle(2);
+    let _ = h.click(h.text("Another folder to scan"));
+    let _ = h.type_text("E:/More");
+    let sent = h.key(Key::Enter, Modifiers::NONE);
+    assert!(sent.is_empty(), "{sent:?}");
+    h.idle(1);
+    let toast = "16 plugin folders is the most there can be: remove one, then add E:/More";
+    assert!(h.find(toast).is_some(), "{:?}", h.drawn());
+    assert_eq!(h.setup().prefs.plugin_dirs, full);
+    // The field keeps the folder, to add once there is room.
+    let Some(Popover::Prefs(panel)) = &h.shell.popover else {
+        panic!("{:?}", h.shell.popover)
+    };
+    assert_eq!(panel.folder, "E:/More");
 }
 
 #[test]
