@@ -1,6 +1,6 @@
 //! [`RealHost`]: the setup from `setup.ron`, the plugin instances it names, the engine
-//! prepared from it, and the backend — PipeWire on Linux once handoff 03 builds it, the null
-//! backend everywhere until then — wired together on the UI thread.
+//! prepared from it, and the backend — PipeWire on Linux once handoff 06 keeps it, the null
+//! backend until then and on every other platform — wired together on the UI thread.
 //!
 //! What it does today (handoff 00): boots, loads the setup and the plugin cache, creates the
 //! instances the catalog can find, prepares the engine, pumps the null backend one quantum a
@@ -147,7 +147,14 @@ impl RealHost {
     }
 }
 
-/// Linux: PipeWire, which answers "not built" until handoff 03. Elsewhere: nothing.
+/// The banner on Linux when PipeWire answers, until handoff 06 plays through it.
+#[cfg(target_os = "linux")]
+const PIPEWIRE_NOT_WIRED: &str =
+    "PipeWire answers, but this build does not play through it yet: the mixer runs silent";
+
+/// Linux: PipeWire, which is asked whether it answers and left again until handoff 06 keeps
+/// the backend and drives the engine from it; the null backend runs the engine meanwhile.
+/// Elsewhere: nothing.
 fn start_backend(engine: &Arc<Engine>) -> BackendState {
     #[cfg(target_os = "linux")]
     {
@@ -157,10 +164,12 @@ fn start_backend(engine: &Arc<Engine>) -> BackendState {
             Arc::clone(engine),
             events,
         ) {
-            // Handoff 06 keeps the backend and its receiver; nothing can connect before 03.
+            // Handoff 06 keeps the backend and its receiver, and the state becomes Connecting.
             Ok(backend) => {
                 backend.disconnect();
-                BackendState::Connecting
+                BackendState::Absent {
+                    reason: PIPEWIRE_NOT_WIRED.to_string(),
+                }
             }
             Err(error) => BackendState::Absent {
                 reason: format!("No audio backend: {error}"),
@@ -404,7 +413,9 @@ mod tests {
             })
             .expect("the first poll reports the backend");
         if cfg!(target_os = "linux") {
-            assert!(banner.contains("not built yet"), "{banner}");
+            // PipeWire answered (CI's headless daemon) or refused (no daemon): either way the
+            // banner names it, and the null backend runs the engine.
+            assert!(banner.contains("PipeWire"), "{banner}");
         } else {
             assert_eq!(banner, BackendState::NO_BACKEND);
         }

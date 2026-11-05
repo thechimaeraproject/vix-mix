@@ -80,9 +80,9 @@ and reconnect with backoff; it does not decide routing (the host does, on each a
 appearance) or compute the mix (the engine does). See `docs/reference/pipewire.md`, the
 cookbook `docs/cookbook/run-headless-pipewire.md` and
 [handoff 03](docs/handoffs/03-pipewire-backend.md), whose record lists the deviations and
-keeps the two-minute acceptance open until a shell with realtime scheduling. Change request 6
-is applied in its branch and waits to be agreed; change request 7 (the host's Linux boot test,
-red in `check (linux)` until it is applied) waits for the main session.
+keeps the two-minute acceptance open until a shell with realtime scheduling. Change requests 6
+(the backend's additions) and 7 (the host reports `Absent` with a banner until 06 keeps the
+backend) are agreed and applied.
 
 ## Git workflow (read first)
 
