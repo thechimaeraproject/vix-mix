@@ -3,9 +3,13 @@
 //! raw window handle, which Vix's shell already does.
 //!
 //! Modules: [`app`] is the winit application and the frame loop; [`gpu`] the surface and the
-//! egui renderer; [`ui`] what each frame draws: the header and the [`console`] of [`strip`]s,
-//! in the [`theme`]'s colours, sizes and fonts, with the prototype's [`icons`] and the
-//! [`meters`]' levels and peak-hold lines; [`capture`] the look gate's offscreen frame.
+//! egui renderer; [`ui`] what each frame draws and senses: the header and the [`console`] of
+//! [`strip`]s (each with its [`fader`]s and its FX [`well`], inserts dragged by [`drag`]),
+//! the [`popover`]s and the plugin [`browser`], the [`toast`] line, in the [`theme`]'s
+//! colours, sizes and fonts, with the prototype's [`icons`], the shared [`widgets`] and the
+//! [`meters`]' levels and peak-hold lines; [`shell`] the window's state between frames and
+//! what it does with a frame's gestures; [`editors`] the plugin editor windows; [`capture`]
+//! the look gate's offscreen frame.
 //!
 //! The command line is for checks, not for users: `--fake` runs against `FakeHost` (prototype
 //! v5's example data and simulated meters) instead of the real host,
@@ -15,18 +19,32 @@
 //!
 //! [`Host`]: vixmix_host::Host
 
+#[cfg(test)]
+mod acceptance;
 mod app;
+mod browser;
 mod capture;
 mod console;
+mod drag;
+mod editors;
+mod fader;
 mod gpu;
 mod icons;
 mod meters;
+mod popover;
+mod shell;
 mod strip;
+#[cfg(test)]
+mod test_support;
 mod theme;
+mod toast;
 mod ui;
+mod well;
+mod widgets;
 
 use std::path::PathBuf;
 
+use winit::error::EventLoopError;
 use winit::event_loop::EventLoop;
 
 const USAGE: &str = "\
@@ -115,7 +133,7 @@ fn main() {
             }
         }
     }
-    let event_loop = match EventLoop::new() {
+    let event_loop = match event_loop() {
         Ok(event_loop) => event_loop,
         Err(e) => {
             eprintln!("vix-mix: no event loop: {e}. Expected a desktop session with a display");
@@ -133,6 +151,24 @@ fn main() {
         eprintln!("vix-mix: {problem}");
         std::process::exit(1);
     }
+}
+
+/// The event loop. On Linux it runs on X11 (XWayland under a Wayland desktop) whenever there
+/// is an X display, because a VST3 editor embeds only in an X11 window and the kit refuses
+/// Wayland handles; with no X display it runs where it can and says that editors cannot
+/// open. (winit makes one event loop a process, so the choice is made before trying.)
+fn event_loop() -> Result<EventLoop<()>, EventLoopError> {
+    #[cfg(target_os = "linux")]
+    {
+        use winit::platform::x11::EventLoopBuilderExtX11;
+        if std::env::var_os("DISPLAY").is_some() {
+            return EventLoop::builder().with_x11().build();
+        }
+        log::warn!(
+            "no X display (DISPLAY is unset): the window runs on Wayland, where plugin editors cannot open; run a session with XWayland for them"
+        );
+    }
+    EventLoop::new()
 }
 
 #[cfg(test)]

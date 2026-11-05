@@ -10,7 +10,7 @@
 use std::f32::consts::{PI, TAU};
 use std::sync::OnceLock;
 
-use egui::epaint::PathShape;
+use egui::epaint::{Mesh, PathShape};
 use egui::{Color32, Painter, Pos2, Rect, Stroke, Vec2, pos2, vec2};
 
 /// The side of an icon's box, in SVG units.
@@ -19,6 +19,8 @@ const BOX: f32 = 24.0;
 const LINE: f32 = 1.9;
 /// The mute slash's `stroke-width`.
 const SLASH_LINE: f32 = 2.4;
+/// The tick's line: the browser's tick box mark (`accent-color` checkboxes draw it heavier).
+const TICK_LINE: f32 = 3.0;
 
 /// One element of an icon.
 #[derive(Clone, Copy, Debug)]
@@ -124,16 +126,12 @@ pub static APPS: Icon = Icon::new(&[
 /// An arrow to a bar: an output.
 #[cfg_attr(
     not(test),
-    expect(dead_code, reason = "the mix panel's output rows (step 4)")
+    expect(dead_code, reason = "prototype v5 defines it and draws it nowhere")
 )]
 pub static OUT: Icon = Icon::new(&[Part::Path("M4 12h12M12 7l5 5-5 5M20 4v16")]);
 /// A plus: "Add plugin", the add-channel column.
 pub static PLUS: Icon = Icon::new(&[Part::Path("M12 4v16M4 12h16")]);
 /// A gear: an insert's settings, on hover.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "an insert's hover controls (step 3)")
-)]
 pub static GEAR: Icon = Icon::new(&[
     Part::Circle {
         cx: 12.0,
@@ -145,22 +143,10 @@ pub static GEAR: Icon = Icon::new(&[
     ),
 ]);
 /// A bin: remove an insert, on hover.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "an insert's hover controls (step 3)")
-)]
 pub static TRASH: Icon = Icon::new(&[Part::Path("M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13")]);
 /// A caret: a strip header under the pointer.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "a strip header under the pointer (step 3)")
-)]
 pub static CARET: Icon = Icon::new(&[Part::Path("M6 9l6 6 6-6")]);
 /// A magnifier: the search fields.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the search fields (steps 4 and 5)")
-)]
 pub static SEARCH: Icon = Icon::new(&[
     Part::Circle {
         cx: 11.0,
@@ -170,16 +156,17 @@ pub static SEARCH: Icon = Icon::new(&[
     Part::Path("M16 16l4.5 4.5"),
 ]);
 /// A star: a favourite in the browser.
-#[cfg_attr(not(test), expect(dead_code, reason = "the plugin browser (step 5)"))]
 pub static STAR: Icon = Icon::new(&[Part::Path(
     "M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.8l-5.2 2.8 1-5.8-4.3-4.1 5.9-.8z",
 )]);
 /// Three lines: the header's menu.
 pub static MENU: Icon = Icon::new(&[Part::Path("M4 7h16M4 12h16M4 17h16")]);
+/// A tick: a ticked box in the app checklist.
+pub static TICK: Icon = Icon::with_line(&[Part::Path("M5.5 12.5l4.5 4.5 8.5-9.5")], TICK_LINE);
 
 /// Every icon, by name, for the tests.
 #[cfg(test)]
-pub static ALL: [(&str, &Icon); 16] = [
+pub static ALL: [(&str, &Icon); 17] = [
     ("PHONES", &PHONES),
     ("MASTER", &MASTER),
     ("SPEAKER", &SPEAKER),
@@ -196,6 +183,7 @@ pub static ALL: [(&str, &Icon); 16] = [
     ("SEARCH", &SEARCH),
     ("STAR", &STAR),
     ("MENU", &MENU),
+    ("TICK", &TICK),
 ];
 
 /// One stroked run of points in SVG units, and whether it closes on itself.
@@ -244,6 +232,30 @@ pub fn paint(painter: &Painter, icon: &Icon, rect: Rect, colour: Color32) {
             painter.add(PathShape::line(points, stroke));
         }
     }
+}
+
+/// Paints `icon` into `rect` filled as well as stroked (`fill: currentColor`): each closed
+/// run filled as a fan from its centre, which holds for the star-shaped icons filled (the
+/// browser's star).
+pub fn paint_filled(painter: &Painter, icon: &Icon, rect: Rect, colour: Color32) {
+    let scale = rect.width() / BOX;
+    let at = |p: Pos2| rect.min + p.to_vec2() * scale;
+    for run in icon.runs().iter().filter(|r| r.closed) {
+        let points: Vec<Pos2> = run.points.iter().map(|&p| at(p)).collect();
+        let centre =
+            points.iter().fold(Vec2::ZERO, |sum, p| sum + p.to_vec2()) / points.len() as f32;
+        let mut mesh = Mesh::default();
+        mesh.colored_vertex(centre.to_pos2(), colour);
+        for p in &points {
+            mesh.colored_vertex(*p, colour);
+        }
+        let n = points.len() as u32;
+        for i in 0..n {
+            mesh.add_triangle(0, 1 + i, 1 + (i + 1) % n);
+        }
+        painter.add(mesh);
+    }
+    paint(painter, icon, rect, colour);
 }
 
 fn rounded_rect(x: f32, y: f32, w: f32, h: f32, rx: f32) -> Run {

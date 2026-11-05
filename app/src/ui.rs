@@ -1,37 +1,32 @@
-//! What each frame draws: the 34-point header (the menu glyph, the title, the display with
-//! the rate, the quantum, its milliseconds and the DSP load), the banner that says when there
-//! is no audio backend, and the console under them, top left, at its natural size.
+//! What each frame draws and senses: the 34-point header (the menu button, the title, the
+//! display with the rate, the quantum, its milliseconds and the DSP load), the banner that
+//! says when there is no audio backend, the console under them, top left, at its natural
+//! size, then the open popover and the toast line over everything.
 //!
-//! Static for the look gate (handoff 05, step 1): the menu, the display and every control on
-//! the console draw but do not answer the pointer yet.
+//! [`draw`] reads the host and the window's [`Shell`], and returns what the gestures asked
+//! ([`Intent`]s); the shell carries them out after the frame, so a frame never changes the
+//! setup it is drawing.
 
 use std::sync::Arc;
 
 use egui::text::{LayoutJob, TextFormat, TextWrapping};
 use egui::{
-    Align2, Color32, CornerRadius, Frame, Galley, Margin, Painter, Pos2, Rect, RichText, Stroke,
-    Vec2, pos2, vec2,
+    Align2, Color32, CornerRadius, Event, Frame, Galley, Id, Key, Margin, Painter, Pos2, Rect,
+    RichText, Stroke, Ui, Vec2, pos2, vec2,
 };
-use vixmix_host::{AppPresence, BackendState, StatsFrame};
+use vixmix_host::{Host, StatsFrame};
 use vixmix_model::Setup;
 
-use crate::console::{self, ConsoleView};
+use crate::console::{self, Anchor, ConsoleView, Cx, Layout};
 use crate::icons;
-use crate::meters::Meters;
+use crate::popover::{self, Outcome, PopCx, Popover};
+use crate::shell::{Intent, Shell};
 use crate::strip::{self, Spacing};
 use crate::theme::{self, colour, font, size};
+use crate::widgets;
 
 /// The window's title in the header.
 pub const TITLE: &str = "Vix Mix";
-
-/// What one frame needs from the host and the window's own state.
-pub struct View<'a> {
-    pub backend: &'a BackendState,
-    pub stats: StatsFrame,
-    pub setup: &'a Setup,
-    pub meters: &'a Meters,
-    pub apps: &'a [AppPresence],
-}
 
 /// The window's content at its natural size: the console's width, the header and the
 /// console's height (no banner).
@@ -40,15 +35,62 @@ pub fn natural_size(setup: &Setup) -> Vec2 {
     vec2(console.x, size::HEADER + console.y)
 }
 
-/// Draws the whole window into `root`.
-pub fn draw(root: &mut egui::Ui, view: &View<'_>) {
+/// The widget a popover hangs from, which takes the focus back when Escape closes it.
+pub fn anchor_id(anchor: Anchor) -> Id {
+    match anchor {
+        Anchor::Head(strip) => strip::head_id(strip),
+        Anchor::AddPlugin(strip) => Id::new(("add plugin", strip)),
+        Anchor::AddColumn => Id::new("add channel"),
+        Anchor::Menu => Id::new("menu"),
+    }
+}
+
+/// Draws the whole window into `root` from `host` and `shell`, and returns what its
+/// gestures asked.
+pub fn draw(root: &mut Ui, shell: &mut Shell, host: &dyn Host) -> Vec<Intent> {
+    let ctx = root.ctx().clone();
+    shell.now = ctx.input(|i| i.time);
+    let (tab, pressed) = ctx.input(|i| {
+        (
+            i.events.iter().any(|e| {
+                matches!(
+                    e,
+                    Event::Key {
+                        key: Key::Tab,
+                        pressed: true,
+                        ..
+                    }
+                )
+            }),
+            i.pointer.any_pressed(),
+        )
+    });
+    if tab {
+        shell.keyboard = true;
+    }
+    if pressed {
+        shell.keyboard = false;
+    }
+    let mut out = Vec::new();
+    let mut layout = Layout::default();
+    let open = shell.popover.as_ref().map(Popover::anchor);
+
     egui::Panel::top("vix-mix header")
         .exact_size(size::HEADER)
         .resizable(false)
         .show_separator_line(false)
         .frame(Frame::NONE.fill(colour::WIN))
-        .show(root, |ui| header(ui.painter(), ui.max_rect(), view.stats));
-    if let Some(reason) = view.backend.banner() {
+        .show(root, |ui| {
+            header(
+                ui,
+                host.stats(),
+                open,
+                shell.keyboard,
+                &mut layout,
+                &mut out,
+            );
+        });
+    if let Some(reason) = shell.backend.banner() {
         egui::Panel::top("vix-mix banner")
             .resizable(false)
             .show_separator_line(false)
@@ -67,20 +109,98 @@ pub fn draw(root: &mut egui::Ui, view: &View<'_>) {
                 ui.label(RichText::new(reason).color(colour::TEXT));
             });
     }
+    let renaming = match &shell.popover {
+        Some(Popover::Source(panel)) => Some((panel.ch, panel.name.as_str())),
+        _ => None,
+    };
+    let mut started = false;
     egui::CentralPanel::no_frame().show(root, |ui| {
         let origin = ui.max_rect().min;
-        let console = ConsoleView {
-            setup: view.setup,
-            meters: view.meters,
-            apps: view.apps,
+        let view = ConsoleView {
+            setup: host.setup(),
+            meters: &shell.meters,
+            apps: host.apps(),
+            renaming,
         };
-        console::draw(ui.painter(), origin, &console);
+        let mut cx = Cx {
+            host,
+            out: &mut out,
+            gestures: &mut shell.gestures,
+            layout: &mut layout,
+            keyboard: shell.keyboard,
+            open,
+        };
+        let (rect, began) = console::draw(ui, origin, &view, &mut cx);
+        shell.content = rect;
+        started = began;
     });
+
+    // A drag closes the popover, as does a press outside it or Escape.
+    if started && let Some(popover) = shell.popover.take() {
+        out.extend(popover.closing(host.setup()).map(Intent::Apply));
+    }
+    let screen = ctx.content_rect();
+    if let Some(popover) = shell.popover.as_mut() {
+        let anchor = layout.anchor(popover.anchor());
+        let outcome = match anchor {
+            // What it hung from is gone (its channel was removed).
+            None => Outcome::Drop,
+            Some(anchor) => {
+                let favorites = &shell.favorites;
+                let is_favorite = |id: &str| favorites.is(host, id);
+                let mut pop_cx = PopCx {
+                    host,
+                    out: &mut out,
+                    keyboard: shell.keyboard,
+                    favorites: &is_favorite,
+                };
+                let (outcome, rect) = popover::show(&ctx, popover, anchor, screen, &mut pop_cx);
+                let outside = ctx.input(|i| {
+                    i.pointer.any_pressed()
+                        && i.pointer
+                            .interact_pos()
+                            .is_some_and(|p| !rect.contains(p) && !anchor.contains(p))
+                });
+                if outcome == Outcome::Stay && outside {
+                    Outcome::Close
+                } else {
+                    outcome
+                }
+            }
+        };
+        let escape = ctx.input(|i| i.key_pressed(Key::Escape));
+        match outcome {
+            Outcome::Stay => {}
+            Outcome::Drop => shell.popover = None,
+            Outcome::Close | Outcome::Open(_) => {
+                if let Some(old) = shell.popover.take() {
+                    out.extend(old.closing(host.setup()).map(Intent::Apply));
+                    if escape {
+                        ctx.memory_mut(|m| m.request_focus(anchor_id(old.anchor())));
+                    }
+                }
+                if let Outcome::Open(next) = outcome {
+                    shell.popover = Some(next);
+                }
+            }
+        }
+    }
+    shell.toasts.draw(&ctx, screen, shell.now, &mut out);
+    out
 }
 
-/// The header: the menu glyph and the title on the left, the display centred, the bottom
+/// The header: the menu button and the title on the left, the display centred, the bottom
 /// edge in black.
-fn header(painter: &Painter, rect: Rect, stats: StatsFrame) {
+fn header(
+    ui: &Ui,
+    stats: StatsFrame,
+    open: Option<Anchor>,
+    keyboard: bool,
+    layout: &mut Layout,
+    out: &mut Vec<Intent>,
+) {
+    let rect = ui.max_rect();
+    let painter = ui.painter();
     painter.rect_filled(rect, CornerRadius::ZERO, colour::WIN);
     painter.hline(
         rect.x_range(),
@@ -88,12 +208,27 @@ fn header(painter: &Painter, rect: Rect, stats: StatsFrame) {
         Stroke::new(size::HAIRLINE, colour::EDGE),
     );
     let y = rect.top() + (size::HEADER - size::HAIRLINE) / 2.0;
-    let [button_w, _] = size::MENU_BUTTON;
-    let menu = Rect::from_center_size(
+    let [button_w, button_h] = size::MENU_BUTTON;
+    let button = Rect::from_center_size(
         pos2(rect.left() + size::HEADER_PAD_X + button_w / 2.0, y),
-        vec2(size::MENU_ICON, size::MENU_ICON),
+        vec2(button_w, button_h),
     );
-    icons::paint(painter, &icons::MENU, menu, colour::DIM);
+    layout.anchors.push((Anchor::Menu, button));
+    let response = widgets::press(ui, button, anchor_id(Anchor::Menu)).on_hover_text("Menu");
+    if response.clicked() {
+        out.push(Intent::Toggle(Anchor::Menu));
+    }
+    let ink = if response.hovered() || open == Some(Anchor::Menu) {
+        painter.rect_filled(button, size::CORNER, colour::CTL);
+        colour::TEXT
+    } else {
+        colour::DIM
+    };
+    let menu = Rect::from_center_size(button.center(), vec2(size::MENU_ICON, size::MENU_ICON));
+    icons::paint(painter, &icons::MENU, menu, ink);
+    if keyboard && response.has_focus() {
+        widgets::ring(painter, button, size::FOCUS_OFFSET);
+    }
     let title = strip::galley(
         painter,
         TITLE,
@@ -101,7 +236,7 @@ fn header(painter: &Painter, rect: Rect, stats: StatsFrame) {
         colour::TEXT,
         Spacing::None,
     );
-    let title_x = rect.left() + size::HEADER_PAD_X + button_w + size::MENU_GAP;
+    let title_x = button.right() + size::MENU_GAP;
     strip::place(painter, title, Align2::LEFT_CENTER, pos2(title_x, y));
     display(painter, pos2(rect.center().x, y), stats);
 }
@@ -243,7 +378,7 @@ pub fn clear_colour() -> Color32 {
 mod tests {
     use super::*;
     use egui::epaint::Shape;
-    use vixmix_host::{FakeHost, Host};
+    use vixmix_host::{BackendState, FakeHost, Host};
 
     /// A drawn text: what it says, its colour, whether it is struck through.
     #[derive(Debug)]
@@ -283,18 +418,9 @@ mod tests {
     fn drawn_with(backend: BackendState, host: &FakeHost) -> Vec<Drawn> {
         let ctx = egui::Context::default();
         install(&ctx);
-        let meters = Meters::default();
-        let view = View {
-            backend: &backend,
-            stats: StatsFrame {
-                rate: 48_000,
-                quantum: 256,
-                dsp_load: 0.07,
-                xruns: 0,
-            },
-            setup: host.setup(),
-            meters: &meters,
-            apps: host.apps(),
+        let mut shell = Shell {
+            backend,
+            ..Shell::default()
         };
         let input = egui::RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, natural_size(host.setup()))),
@@ -303,7 +429,13 @@ mod tests {
         let mut out = Vec::new();
         // Two passes: egui lays out panels from the first frame's sizes.
         for _ in 0..2 {
-            let mut output = ctx.run_ui(input.clone(), |root| draw(root, &view));
+            let mut output = ctx.run_ui(input.clone(), |root| {
+                let asked = draw(root, &mut shell, host);
+                assert!(
+                    asked.is_empty(),
+                    "nothing pressed, nothing asked: {asked:?}"
+                );
+            });
             // A test has no renderer to hand the font atlas to; egui asserts it was handled.
             output.textures_delta.clear();
             out.clear();
@@ -328,10 +460,12 @@ mod tests {
 
     #[test]
     fn the_header_names_the_app_and_shows_the_display() {
-        let drawn = drawn(BackendState::Simulated);
+        let host = FakeHost::new();
+        let drawn = drawn_with(BackendState::Simulated, &host);
         let texts = texts(&drawn);
+        let load = format!("{:.0}%", host.stats().dsp_load * 100.0);
         for expected in [
-            TITLE, "48", "kHz", "256", "samples", "5.3", "ms", "DSP", "7%",
+            TITLE, "48", "kHz", "256", "samples", "5.3", "ms", "DSP", &load,
         ] {
             assert!(texts.contains(&expected), "no `{expected}` in {texts:?}");
         }

@@ -15,7 +15,8 @@ use egui_wgpu::ScreenDescriptor;
 use vixmix_host::{BackendState, FakeHost, Host};
 
 use crate::gpu;
-use crate::meters::{FRAME_MS, Meters};
+use crate::meters::FRAME_MS;
+use crate::shell::Shell;
 use crate::theme::colour;
 use crate::ui;
 
@@ -35,19 +36,17 @@ const DISK_FIX: &str =
 /// Draws the frame and writes it to `path`; returns its size in pixels.
 pub fn dump_png(path: &Path) -> Result<[u32; 2], String> {
     let mut host = FakeHost::new();
-    let mut meters = Meters::default();
+    let mut shell = Shell {
+        backend: BackendState::Simulated,
+        ..Shell::default()
+    };
     let frames = (WARM_UP_MS / FRAME_MS).round() as u32;
     for frame in 1..=frames {
         host.advance(FRAME_MS);
-        meters.update(&host.meters(), f64::from(frame) * FRAME_MS);
+        shell
+            .meters
+            .update(&host.meters(), f64::from(frame) * FRAME_MS);
     }
-    let view = ui::View {
-        backend: &BackendState::Simulated,
-        stats: host.stats(),
-        setup: host.setup(),
-        meters: &meters,
-        apps: host.apps(),
-    };
 
     let ctx = egui::Context::default();
     ui::install(&ctx);
@@ -66,7 +65,10 @@ pub fn dump_png(path: &Path) -> Result<[u32; 2], String> {
     let mut textures = egui::TexturesDelta::default();
     let mut output = None;
     for _ in 0..2 {
-        let mut pass = ctx.run_ui(input.clone(), |root| ui::draw(root, &view));
+        // Nothing presses anything: the frame asks for nothing.
+        let mut pass = ctx.run_ui(input.clone(), |root| {
+            let _ = ui::draw(root, &mut shell, &host);
+        });
         textures.append(std::mem::take(&mut pass.textures_delta));
         output = Some(pass);
     }
