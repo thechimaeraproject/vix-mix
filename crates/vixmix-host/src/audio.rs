@@ -286,7 +286,8 @@ pub(crate) mod linux {
         )
     }
 
-    /// The toast when Monitor's device goes and Master's output drives the mixer.
+    /// The toast when the device the setup names for Monitor is not there and Master's
+    /// output drives the mixer.
     pub(crate) const MONITOR_GONE: &str = "Monitor's output device is not there: Monitor is silent until it comes back or you pick another; Master still plays";
 
     pub(crate) struct PipeWire {
@@ -302,6 +303,9 @@ pub(crate) mod linux {
         lost: bool,
         /// Which output drives the engine; `None` until the backend says.
         tick: Option<TickSource>,
+        /// The Monitor device [`MONITOR_GONE`] was said for, until Monitor plays again: said
+        /// once, not again at each reconnect while it stays away.
+        told_gone: Option<String>,
         /// The newest routing the host asked for, per app stream playing now.
         routed: Vec<(u32, Option<String>)>,
         /// The engine's frame count, and whether it moved within [`TICK_GAP`].
@@ -337,6 +341,7 @@ pub(crate) mod linux {
                 running: None,
                 lost: false,
                 tick: None,
+                told_gone: None,
                 routed: Vec::new(),
                 frames: engine.stats().frames.load(Ordering::Relaxed),
                 moved_at: Instant::now(),
@@ -419,8 +424,21 @@ pub(crate) mod linux {
                     }
                 }
                 BackendEvent::TickSource(source) => {
-                    if source == TickSource::MasterOut && self.tick != Some(source) {
-                        heard.toasts.push(MONITOR_GONE.to_string());
+                    match source {
+                        // Monitor plays: a later loss of its device is news again.
+                        TickSource::Monitor => self.told_gone = None,
+                        // Master out ticks while the setup names a device for Monitor: that
+                        // device is not there. Before Monitor's device is picked (a first
+                        // start) there is nothing to say.
+                        TickSource::MasterOut => {
+                            if let Some(device) = &setup.monitor.device
+                                && self.told_gone.as_deref() != Some(device.name.as_str())
+                            {
+                                heard.toasts.push(MONITOR_GONE.to_string());
+                                self.told_gone = Some(device.name.clone());
+                            }
+                        }
+                        TickSource::MasterSource | TickSource::Stopped => {}
                     }
                     // The backend sends it once per connection: one that is not `Stopped`
                     // says the daemon is back, even before a tick can run.
@@ -545,7 +563,7 @@ pub(crate) mod linux {
     mod tests {
         use super::*;
         use vixmix_engine::{EngineConfig, MAX_QUANTUM};
-        use vixmix_model::{Command, DeviceDirection, DeviceRef, apply, example};
+        use vixmix_model::{Command, DeviceDirection, DeviceRef, MixId, apply, example};
         use vixmix_pipewire::AppStream;
 
         /// A backend's host half with no daemon behind it: what `hear` makes of each event.
@@ -570,6 +588,7 @@ pub(crate) mod linux {
                         running: None,
                         lost: false,
                         tick: None,
+                        told_gone: None,
                         routed: Vec::new(),
                         frames: 0,
                         moved_at: Instant::now(),
@@ -639,8 +658,14 @@ pub(crate) mod linux {
                     quantum: 512
                 }
             );
+            // A first start, before Monitor's device is picked: Master out ticks, and nothing
+            // is said (the model refuses taking Monitor's device away once it has one).
             let _ = pw.hear(BackendEvent::TickSource(TickSource::MasterOut));
-            assert_eq!(pw.heard.toasts, vec![MONITOR_GONE.to_string()]);
+            assert!(
+                pw.heard.toasts.is_empty(),
+                "Monitor has no device yet: {:?}",
+                pw.heard.toasts
+            );
             assert_eq!(
                 pw.hear(BackendEvent::Disconnected),
                 BackendState::Disconnected
@@ -672,6 +697,37 @@ pub(crate) mod linux {
             assert_eq!(pw.devices.len(), 1);
             let _ = pw.hear(BackendEvent::DeviceRemoved("alsa.headphones".into()));
             assert!(pw.devices.is_empty() && pw.heard.devices);
+        }
+
+        #[test]
+        fn monitor_gone_is_said_once_when_the_device_the_setup_names_is_not_there() {
+            let headphones = DeviceRef {
+                name: "alsa.headphones".into(),
+                description: "Headphones".into(),
+            };
+            let mut setup = Setup::default();
+            let _ = apply(
+                &mut setup,
+                Command::SetMixDevice {
+                    mix: MixId::Monitor,
+                    device: Some(headphones),
+                },
+            )
+            .unwrap();
+            let mut pw = Offline::new(setup);
+            let gone = || vec![MONITOR_GONE.to_string()];
+            // Started with the headphones unplugged: said once.
+            let _ = pw.hear(BackendEvent::TickSource(TickSource::MasterOut));
+            assert_eq!(pw.heard.toasts, gone());
+            // The daemon restarts while they are still away: not said again.
+            let _ = pw.hear(BackendEvent::Disconnected);
+            let _ = pw.hear(BackendEvent::TickSource(TickSource::Stopped));
+            let _ = pw.hear(BackendEvent::TickSource(TickSource::MasterOut));
+            assert_eq!(pw.heard.toasts, gone());
+            // Plugged in, Monitor plays; unplugged again, said again.
+            let _ = pw.hear(BackendEvent::TickSource(TickSource::Monitor));
+            let _ = pw.hear(BackendEvent::TickSource(TickSource::MasterOut));
+            assert_eq!(pw.heard.toasts, [gone(), gone()].concat());
         }
 
         #[test]

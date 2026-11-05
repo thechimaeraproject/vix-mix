@@ -146,8 +146,11 @@ again and each is routed again. At most 128 devices and 256 app streams are foll
 
 `poll()` pumps the null backend one quantum (256 frames), or handles PipeWire's events (at most
 1024 a poll): `Connected { rate }` calls `Engine::set_rate`, `TickSource` and `QuantumChanged`
-update the state, a move to `MasterOut` is a toast ("Monitor's output device is not there…"),
-devices and app streams update `devices()` and `apps()`, and each app that appeared is routed.
+update the state, Master out driving the tick while the setup names a device for Monitor is a
+toast ("Monitor's output device is not there…"), said once for that device until Monitor plays
+again (not at each reconnect while it stays away, and never on a first start before Monitor's
+device is picked), devices and app streams update `devices()` and `apps()`, and each app that
+appeared is routed.
 Then `Engine::reap` and `Instances::reap`; `Instances::tick` (an editor's edit goes to its
 processor and makes the autosave due; a dirty plugin is `SetupChanged` and due;
 `IoChanged(instance)` calls `Engine::set_up_again(instance)`); the instances kept for an undo
@@ -226,9 +229,13 @@ and `open_editor` answers `HostError::Simulated`.
   is the setup's channels in order with the Master source; an app goes to its channel's sink,
   follows a rename, and goes home when its channel is removed; the state follows what the
   backend says (connecting, idle while only an unrecorded Master source could drive the mixer,
-  running at the quantum it reports, a toast when Monitor's device goes, disconnected until the
-  daemon is back, idle when nothing drives it); every app is routed the moment it appears, to
-  its channel or home, follows a rename and is forgotten when it goes. `fake`: the first poll reports a simulated
+  running at the quantum it reports, nothing said when Master out ticks before Monitor has a
+  device, disconnected until the daemon is back, idle when nothing drives it); Monitor's device
+  gone is said once when the setup names it, not again at a reconnect while it stays away, and
+  again once Monitor played and lost it again
+  (`monitor_gone_is_said_once_when_the_device_the_setup_names_is_not_there`); every app is
+  routed the moment it appears, to its channel or home, follows a rename and is forgotten when
+  it goes. `fake`: the first poll reports a simulated
   backend with the example's apps and devices; meters move, a muted send and a muted mix read
   zero, the same seed gives the same frames; previewing shows the Master sum on Monitor; a
   removal hands out the undo that puts it back.
