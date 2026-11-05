@@ -56,6 +56,8 @@ pub struct Recorder {
     /// Answer no poll while set: what the host has to report waits for the first poll after,
     /// as a host busy on the window's thread (a rescan describing new bundles) answers late.
     pub busy: bool,
+    /// A catalog in place of `FakeHost`'s: what a rescan found.
+    pub catalog: Option<Catalog>,
 }
 
 impl Recorder {
@@ -75,6 +77,7 @@ impl Recorder {
             problems: Vec::new(),
             news: Vec::new(),
             busy: false,
+            catalog: None,
         }
     }
 
@@ -121,6 +124,9 @@ impl Host for Recorder {
         self.inner.stats()
     }
     fn catalog(&self) -> &Catalog {
+        if let Some(catalog) = &self.catalog {
+            return catalog;
+        }
         self.inner.catalog()
     }
     fn apps(&self) -> &[AppPresence] {

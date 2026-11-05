@@ -5,7 +5,14 @@
 //! picks the list: Favorites, Recent and All plugins with their counts, then each Type and
 //! each Maker; All is grouped A to Z. A row's star toggles the favourite; a press on the row
 //! adds it. The footer says where it goes: "Adds to <strip>, slot N".
+//!
+//! **A real catalog has hundreds of plugins.** The list and the nav are kept from frame to
+//! frame ([`Listing`]) and built again only when the query, the filter or the catalog
+//! changes, each name lower-cased once for the sort; and only the rows in view, with a row
+//! and a heading past each edge ([`pop::LIST_REACH`]), are drawn and sensed, the rest taking
+//! their space. Tab reaches the row just out of view, which scrolls in as it takes the focus.
 
+use egui::style::ScrollAnimation;
 use egui::text::{LayoutJob, TextFormat, TextWrapping};
 use egui::{Align2, EventFilter, Id, Key, Rect, ScrollArea, Sense, Stroke, Ui, Vec2, pos2, vec2};
 use vixmix_host::Host;
@@ -43,6 +50,9 @@ pub struct Browser {
     pub fresh: bool,
     /// The picked row moved by a key: scroll it into view.
     pub follow: bool,
+    /// The list and the nav as the last frame had them, with what they were built from
+    /// (boxed: a popover is passed by value, and the open one is mostly not the browser).
+    listing: Option<Box<Listing>>,
 }
 
 impl Browser {
@@ -55,7 +65,61 @@ impl Browser {
             active: 0,
             fresh: true,
             follow: false,
+            listing: None,
         }
+    }
+
+    /// The catalog changed under the browser (a rescan): the next frame builds its list and
+    /// its nav again.
+    pub fn forget(&mut self) {
+        self.listing = None;
+    }
+}
+
+/// The browser's list and nav, kept from frame to frame, because building them ranks or
+/// sorts the whole catalog. Built again when the query or the filter changes, or the catalog
+/// does: its plugins change only by a rescan, which the shell passes on
+/// ([`Browser::forget`]); a star changes how many favourites there are; an add changes the
+/// recent list. How many plugins there are is kept as well, as a guard.
+#[derive(Clone, Debug, PartialEq)]
+struct Listing {
+    query: String,
+    filter: Filter,
+    plugins: usize,
+    favorites: usize,
+    recent: Vec<String>,
+    /// The list, as indexes into the catalog's plugins, in order.
+    rows: Vec<usize>,
+    /// The nav's entries: what each picks, its label, its count.
+    nav: Vec<(Filter, String, usize)>,
+}
+
+/// The list and the nav for `browser`'s query and filter: the last frame's when nothing they
+/// are made of has changed, built again otherwise.
+fn listing(browser: &mut Browser, host: &dyn Host) -> Box<Listing> {
+    let catalog = host.catalog();
+    match browser.listing.take() {
+        Some(mut listing)
+            if listing.plugins == catalog.plugins.len()
+                && listing.favorites == catalog.favorites.len()
+                && listing.recent == catalog.recent =>
+        {
+            if listing.query != browser.query || listing.filter != browser.filter {
+                listing.rows = indexes(host, &browser.query, &browser.filter);
+                listing.query.clone_from(&browser.query);
+                listing.filter.clone_from(&browser.filter);
+            }
+            listing
+        }
+        _ => Box::new(Listing {
+            query: browser.query.clone(),
+            filter: browser.filter.clone(),
+            plugins: catalog.plugins.len(),
+            favorites: catalog.favorites.len(),
+            recent: catalog.recent.clone(),
+            rows: indexes(host, &browser.query, &browser.filter),
+            nav: nav(host),
+        }),
     }
 }
 
@@ -80,86 +144,81 @@ impl Row<'_> {
     }
 }
 
-/// Every plugin the catalog has, as rows.
-fn all(host: &dyn Host) -> Vec<Row<'_>> {
-    host.catalog()
-        .plugins
-        .iter()
-        .map(|p| Row {
-            id: &p.id,
-            name: &p.name,
-            vendor: &p.vendor,
-            kind: p.kind.label(),
-            bundle: &p.bundle,
-        })
-        .collect()
+/// The catalog's plugin at `index`, as the list shows it.
+fn row_at(host: &dyn Host, index: usize) -> Option<Row<'_>> {
+    host.catalog().plugins.get(index).map(|p| Row {
+        id: &p.id,
+        name: &p.name,
+        vendor: &p.vendor,
+        kind: p.kind.label(),
+        bundle: &p.bundle,
+    })
 }
 
-fn by_name(a: &Row<'_>, b: &Row<'_>) -> std::cmp::Ordering {
-    a.name.to_lowercase().cmp(&b.name.to_lowercase())
-}
-
-/// The list for `query` and `filter`: a query searches everything, whatever the filter,
-/// ranked (name starts with it, name contains it, maker, type; each by name); otherwise the
-/// filter's plugins by name, Recent in its own order.
-pub fn rows<'a>(
-    host: &'a dyn Host,
-    query: &str,
-    filter: &Filter,
-    favorite: &dyn Fn(&str) -> bool,
-) -> Vec<Row<'a>> {
+/// The list for `query` and `filter`, as indexes into the catalog's plugins: a query
+/// searches everything, whatever the filter, ranked (name starts with it, name contains it,
+/// maker, type; each by name); otherwise the filter's plugins by name, Recent in its own
+/// order. Each name is lower-cased once, not at every comparison.
+fn indexes(host: &dyn Host, query: &str, filter: &Filter) -> Vec<usize> {
+    let catalog = host.catalog();
+    let plugins = &catalog.plugins;
     let q = query.trim().to_lowercase();
-    let mut list = all(host);
     if !q.is_empty() {
-        let score = |r: &Row<'_>| {
-            let name = r.name.to_lowercase();
-            if name.starts_with(&q) {
-                Some(0)
-            } else if name.contains(&q) {
-                Some(1)
-            } else if r.vendor.to_lowercase().contains(&q) {
-                Some(2)
-            } else if r.kind.to_lowercase().contains(&q) {
-                Some(3)
-            } else {
-                None
-            }
-        };
-        let mut hits: Vec<(u8, Row<'a>)> = list
-            .into_iter()
-            .filter_map(|r| score(&r).map(|s| (s, r)))
+        let mut hits: Vec<(u8, String, usize)> = plugins
+            .iter()
+            .enumerate()
+            .filter_map(|(index, p)| {
+                let name = p.name.to_lowercase();
+                let rank = if name.starts_with(&q) {
+                    0
+                } else if name.contains(&q) {
+                    1
+                } else if p.vendor.to_lowercase().contains(&q) {
+                    2
+                } else if p.kind.label().to_lowercase().contains(&q) {
+                    3
+                } else {
+                    return None;
+                };
+                Some((rank, name, index))
+            })
             .collect();
-        hits.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| by_name(&a.1, &b.1)));
-        return hits.into_iter().map(|(_, r)| r).collect();
+        hits.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
+        return hits.into_iter().map(|(_, _, index)| index).collect();
     }
-    match filter {
+    let all = 0..plugins.len();
+    let mut list: Vec<usize> = match filter {
         Filter::Recent => {
-            return host
-                .catalog()
+            return catalog
                 .recent
                 .iter()
-                .filter_map(|id| list.iter().find(|r| r.id == id).copied())
+                .filter_map(|id| plugins.iter().position(|p| p.id == *id))
                 .collect();
         }
-        Filter::Favorites => list.retain(|r| favorite(r.id)),
-        Filter::All => {}
-        Filter::Kind(kind) => list.retain(|r| r.kind == kind),
-        Filter::Vendor(vendor) => list.retain(|r| r.vendor == vendor),
-    }
-    list.sort_by(by_name);
+        Filter::Favorites => all
+            .filter(|&i| catalog.favorites.contains(&plugins[i].id))
+            .collect(),
+        Filter::All => all.collect(),
+        Filter::Kind(kind) => all.filter(|&i| plugins[i].kind.label() == kind).collect(),
+        Filter::Vendor(vendor) => all.filter(|&i| plugins[i].vendor == *vendor).collect(),
+    };
+    list.sort_by_cached_key(|&i| plugins[i].name.to_lowercase());
     list
 }
 
 /// The nav's entries: Favorites, Recent, All plugins; then each type the catalog has, in
 /// the prototype's order; then each maker by name. Each with its count.
-pub fn nav(host: &dyn Host, favorite: &dyn Fn(&str) -> bool) -> Vec<(Filter, String, usize)> {
+pub fn nav(host: &dyn Host) -> Vec<(Filter, String, usize)> {
     let catalog = host.catalog();
     let plugins = &catalog.plugins;
     let mut out = vec![
         (
             Filter::Favorites,
             "Favorites".to_string(),
-            plugins.iter().filter(|p| favorite(&p.id)).count(),
+            plugins
+                .iter()
+                .filter(|p| catalog.favorites.contains(&p.id))
+                .count(),
         ),
         (
             Filter::Recent,
@@ -201,7 +260,7 @@ pub fn group(name: &str) -> char {
 /// The browser's frame: the search row, the nav and the list, the footer.
 pub fn show(ui: &mut Ui, browser: &mut Browser, cx: &mut PopCx<'_>) -> Outcome {
     let host = cx.host;
-    let favorite = &|id: &str| host.catalog().favorites.contains(id);
+    let favorite = |id: &str| host.catalog().favorites.contains(id);
     let (rect, _) = ui.allocate_exact_size(pop::BROWSER.into(), Sense::hover());
     let search = Rect::from_min_size(rect.min, vec2(rect.width(), pop::SEARCH_HEIGHT));
     let foot = Rect::from_min_max(
@@ -271,7 +330,8 @@ pub fn show(ui: &mut Ui, browser: &mut Browser, cx: &mut PopCx<'_>) -> Outcome {
         browser.active = 0;
     }
 
-    let list = rows(host, &browser.query, &browser.filter, favorite);
+    let listing = listing(browser, host);
+    let list = &listing.rows;
     let mut outcome = Outcome::Stay;
     let mut add = None;
     if response.has_focus() {
@@ -296,7 +356,7 @@ pub fn show(ui: &mut Ui, browser: &mut Browser, cx: &mut PopCx<'_>) -> Outcome {
         }
     }
     if response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
-        add = list.get(browser.active).copied();
+        add = list.get(browser.active).and_then(|&i| row_at(host, i));
     }
     browser.active = browser.active.min(list.len().saturating_sub(1));
 
@@ -306,7 +366,6 @@ pub fn show(ui: &mut Ui, browser: &mut Browser, cx: &mut PopCx<'_>) -> Outcome {
         nav_rect.y_range(),
         Stroke::new(size::HAIRLINE, colour::LINE),
     );
-    let entries = nav(host, favorite);
     let mut picked = None;
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(nav_rect.shrink(pop::LIST_PAD)));
     ScrollArea::vertical()
@@ -314,8 +373,9 @@ pub fn show(ui: &mut Ui, browser: &mut Browser, cx: &mut PopCx<'_>) -> Outcome {
         .auto_shrink([false, false])
         .show(&mut child, |ui| {
             ui.spacing_mut().item_spacing = Vec2::ZERO;
+            let reach = reach(ui);
             let mut section = 0;
-            for (filter, label, count) in &entries {
+            for (filter, label, count) in &listing.nav {
                 let heading = match filter {
                     Filter::Kind(_) if section < 1 => Some("Type"),
                     Filter::Vendor(_) if section < 2 => Some("Maker"),
@@ -323,20 +383,19 @@ pub fn show(ui: &mut Ui, browser: &mut Browser, cx: &mut PopCx<'_>) -> Outcome {
                 };
                 if let Some(heading) = heading {
                     section = if heading == "Type" { 1 } else { 2 };
-                    nav_heading(ui, heading);
+                    nav_heading(ui, heading, reach);
+                }
+                let (_, rect) = ui.allocate_space(vec2(ui.available_width(), pop::NAV_ROW));
+                if !reach.intersects(rect) {
+                    continue;
                 }
                 // Typing searches everything, and the nav says so: All plugins is lit.
                 let on = *filter == browser.filter;
-                if nav_item(ui, filter, label, *count, on, cx.keyboard) {
+                if nav_item(ui, rect, filter, label, *count, on, cx.keyboard) {
                     picked = Some(filter.clone());
                 }
             }
         });
-    if let Some(filter) = picked {
-        browser.filter = filter;
-        browser.query.clear();
-        browser.active = 0;
-    }
 
     // The list.
     let mut star = None;
@@ -354,32 +413,47 @@ pub fn show(ui: &mut Ui, browser: &mut Browser, cx: &mut PopCx<'_>) -> Outcome {
                 );
                 empty(ui, &text);
             }
+            let reach = reach(ui);
             let grouped = browser.query.trim().is_empty() && browser.filter == Filter::All;
             let mut letter = None;
-            for (index, row) in list.iter().enumerate() {
+            for (index, &plugin) in list.iter().enumerate() {
+                let Some(row) = row_at(host, plugin) else {
+                    continue;
+                };
                 if grouped && letter != Some(group(row.name)) {
                     letter = Some(group(row.name));
-                    group_heading(ui, group(row.name));
+                    group_heading(ui, group(row.name), reach);
                 }
                 let active = index == browser.active;
-                let (rect, pressed, starred) = plugin_row(
+                let (_, rect) = ui.allocate_space(vec2(ui.available_width(), pop::PLUGIN_ROW));
+                if active && follow {
+                    ui.scroll_to_rect(rect, None);
+                }
+                if !reach.intersects(rect) {
+                    continue;
+                }
+                let (pressed, starred) = plugin_row(
                     ui,
-                    row,
+                    rect,
+                    &row,
                     &browser.query,
                     active,
                     favorite(row.id),
                     cx.keyboard,
                 );
-                if active && follow {
-                    ui.scroll_to_rect(rect, None);
-                }
                 if starred {
-                    star = Some(*row);
+                    star = Some(row);
                 } else if pressed {
-                    add = Some(*row);
+                    add = Some(row);
                 }
             }
         });
+    browser.listing = Some(listing);
+    if let Some(filter) = picked {
+        browser.filter = filter;
+        browser.query.clear();
+        browser.active = 0;
+    }
     if let Some(row) = star {
         cx.out.push(Intent::Favorite {
             id: row.id.to_string(),
@@ -408,6 +482,12 @@ pub fn show(ui: &mut Ui, browser: &mut Browser, cx: &mut PopCx<'_>) -> Outcome {
         outcome = Outcome::Close;
     }
     outcome
+}
+
+/// What of a scrolled list is drawn and sensed: the part in view and [`pop::LIST_REACH`]
+/// above and below it.
+fn reach(ui: &Ui) -> Rect {
+    ui.clip_rect().expand2(vec2(0.0, pop::LIST_REACH))
 }
 
 /// "Adds to <strip>, slot N".
@@ -442,52 +522,47 @@ fn footer(painter: &egui::Painter, rect: Rect, name: &str, slot: usize) {
     );
 }
 
-/// A nav heading (`.nav-h`).
-fn nav_heading(ui: &mut Ui, text: &str) {
-    let painter = ui.painter().clone();
-    let line = widgets::heading_height(&painter);
-    let [top, bottom, across] = pop::NAV_HEADING;
-    let (rect, _) = ui.allocate_exact_size(
-        vec2(ui.available_width(), top + line + bottom),
-        Sense::hover(),
-    );
-    widgets::heading(
-        &painter,
-        rect.left() + across,
-        rect.top() + top + line / 2.0,
-        text,
-    );
+/// A nav heading (`.nav-h`), drawn when it is within `reach`.
+fn nav_heading(ui: &mut Ui, text: &str, reach: Rect) {
+    heading_row(ui, text, pop::NAV_HEADING, reach);
 }
 
-/// An A to Z group heading (`.br-group`).
-fn group_heading(ui: &mut Ui, letter: char) {
-    let painter = ui.painter().clone();
-    let line = widgets::heading_height(&painter);
-    let [top, bottom, across] = pop::GROUP;
-    let (rect, _) = ui.allocate_exact_size(
-        vec2(ui.available_width(), top + line + bottom),
-        Sense::hover(),
-    );
-    widgets::heading(
-        &painter,
-        rect.left() + across,
-        rect.top() + top + line / 2.0,
-        &letter.to_string(),
-    );
+/// An A to Z group heading (`.br-group`), drawn when it is within `reach`.
+fn group_heading(ui: &mut Ui, letter: char, reach: Rect) {
+    heading_row(ui, &letter.to_string(), pop::GROUP, reach);
 }
 
-/// A nav item (`.nav-i`): the label and its count; returns whether it was pressed.
+/// A heading's room in a list (`[top, bottom, across]` its padding), and the heading in it
+/// when the room is within `reach`.
+fn heading_row(ui: &mut Ui, text: &str, [top, bottom, across]: [f32; 3], reach: Rect) {
+    let painter = ui.painter().clone();
+    let line = widgets::heading_height(&painter);
+    let (_, rect) = ui.allocate_space(vec2(ui.available_width(), top + line + bottom));
+    if reach.intersects(rect) {
+        widgets::heading(
+            &painter,
+            rect.left() + across,
+            rect.top() + top + line / 2.0,
+            text,
+        );
+    }
+}
+
+/// A nav item (`.nav-i`) in `rect`: the label and its count; returns whether it was pressed.
 fn nav_item(
-    ui: &mut Ui,
+    ui: &Ui,
+    rect: Rect,
     filter: &Filter,
     label: &str,
     count: usize,
     on: bool,
     keyboard: bool,
 ) -> bool {
-    let (rect, _) =
-        ui.allocate_exact_size(vec2(ui.available_width(), pop::NAV_ROW), Sense::hover());
     let response = widgets::press(ui, rect, Id::new(("nav", filter)));
+    // Tab reaches an item just out of view; it scrolls in at once, so held Tab keeps up.
+    if response.gained_focus() {
+        ui.scroll_to_rect_animation(rect, None, ScrollAnimation::none());
+    }
     let painter = ui.painter();
     let (fill, ink) = if on {
         (Some(colour::CTL_HI), colour::TEXT)
@@ -529,18 +604,17 @@ fn nav_item(
     response.clicked()
 }
 
-/// A plugin row (`.br-row`): the star, the name with the query's match in the accent, the
-/// maker, the type. Returns its rect, whether the row was pressed, whether the star was.
+/// A plugin row (`.br-row`) in `rect`: the star, the name with the query's match in the
+/// accent, the maker, the type. Returns whether the row was pressed, whether the star was.
 fn plugin_row(
-    ui: &mut Ui,
+    ui: &Ui,
+    rect: Rect,
     row: &Row<'_>,
     query: &str,
     active: bool,
     starred: bool,
     keyboard: bool,
-) -> (Rect, bool, bool) {
-    let (rect, _) =
-        ui.allocate_exact_size(vec2(ui.available_width(), pop::PLUGIN_ROW), Sense::hover());
+) -> (bool, bool) {
     let response = widgets::press(ui, rect, Id::new(("plugin", row.id)));
     let painter = ui.painter();
     if active {
@@ -560,6 +634,10 @@ fn plugin_row(
     } else {
         "Add to favorites"
     });
+    // Tab reaches a row just out of view; it scrolls in at once, so held Tab keeps up.
+    if response.gained_focus() || star.gained_focus() {
+        ui.scroll_to_rect_animation(rect, None, ScrollAnimation::none());
+    }
     let icon = Rect::from_center_size(star_rect.center(), vec2(pop::STAR, pop::STAR));
     if starred {
         icons::paint_filled(painter, &icons::STAR, icon, colour::ACCENT);
@@ -592,7 +670,7 @@ fn plugin_row(
     if keyboard && response.has_focus() {
         widgets::ring(painter, rect, 0.0);
     }
-    (rect, response.clicked(), star.clicked())
+    (response.clicked(), star.clicked())
 }
 
 /// A plugin's name with the first match of `query` in the accent, cut to `width`.
@@ -654,19 +732,23 @@ mod tests {
     use super::*;
     use vixmix_host::FakeHost;
 
-    fn names(rows: &[Row<'_>]) -> Vec<String> {
-        rows.iter().map(|r| r.name.to_string()).collect()
+    /// The names `query` and `filter` list, in order.
+    fn names(host: &dyn Host, query: &str, filter: &Filter) -> Vec<String> {
+        indexes(host, query, filter)
+            .into_iter()
+            .filter_map(|i| row_at(host, i))
+            .map(|r| r.name.to_string())
+            .collect()
     }
 
     #[test]
     fn a_search_ranks_name_starts_then_contains_then_maker_then_type() {
         let host = FakeHost::new();
-        let none = |_: &str| false;
         // "pro": names that start with it (FabFilter's), each by name; no name only contains it.
         // The filter does not narrow a search.
-        let pro = rows(&host, "pro", &Filter::Favorites, &none);
+        let pro = names(&host, "pro", &Filter::Favorites);
         assert_eq!(
-            names(&pro)[..8],
+            pro[..8],
             [
                 "Pro-C 2",
                 "Pro-DS",
@@ -679,27 +761,25 @@ mod tests {
             ]
         );
         // Then MeldaProduction's, by their maker.
-        assert_eq!(names(&pro)[8..], ["MAutoPitch", "MEqualizer"]);
+        assert_eq!(pro[8..], ["MAutoPitch", "MEqualizer"]);
         // "verb": names that contain it, then nothing else (no maker or type has it bare).
-        let verb = rows(&host, "verb", &Filter::All, &none);
-        assert!(names(&verb).contains(&"ValhallaVintageVerb".to_string()));
+        let verb = names(&host, "verb", &Filter::All);
+        assert!(verb.contains(&"ValhallaVintageVerb".to_string()));
         // "fabfilter": the maker, by name.
-        let fab = rows(&host, "fabfilter", &Filter::All, &none);
+        let fab = names(&host, "fabfilter", &Filter::All);
         assert_eq!(fab.len(), 9);
-        assert_eq!(fab[0].name, "Pro-C 2");
+        assert_eq!(fab[0], "Pro-C 2");
         // "reverb": names with it first, then the rest of the Reverb type.
-        let reverb = rows(&host, "reverb", &Filter::All, &none);
-        assert_eq!(reverb[0].name, "Dragonfly Hall Reverb");
-        assert!(reverb.iter().any(|r| r.name == "Pro-R 2"), "by its type");
-        assert!(rows(&host, "zzz", &Filter::All, &none).is_empty());
+        let reverb = names(&host, "reverb", &Filter::All);
+        assert_eq!(reverb[0], "Dragonfly Hall Reverb");
+        assert!(reverb.iter().any(|r| r == "Pro-R 2"), "by its type");
+        assert!(names(&host, "zzz", &Filter::All).is_empty());
     }
 
     #[test]
     fn the_nav_counts_favorites_recent_types_and_makers() {
         let host = FakeHost::new();
-        let catalog = host.catalog();
-        let favorite = |id: &str| catalog.favorites.contains(id);
-        let entries = nav(&host, &favorite);
+        let entries = nav(&host);
         let count = |label: &str| {
             entries
                 .iter()
@@ -715,14 +795,23 @@ mod tests {
         let labels: Vec<&str> = entries.iter().map(|(_, l, _)| l.as_str()).collect();
         assert_eq!(labels[3..6], ["EQ", "Dynamics", "Reverb"]);
         assert_eq!(labels[12], "Utility");
-        // Recent keeps its own order; Favorites by name.
-        let recent = rows(&host, "", &Filter::Recent, &favorite);
-        assert_eq!(names(&recent)[..2], ["Pro-L 2", "OTT"]);
-        let favorites = rows(&host, "", &Filter::Favorites, &favorite);
+        // Recent keeps its own order; Favorites by name; All by name, case aside.
+        let recent = names(&host, "", &Filter::Recent);
+        assert_eq!(recent[..2], ["Pro-L 2", "OTT"]);
+        let favorites = names(&host, "", &Filter::Favorites);
         assert_eq!(
-            names(&favorites),
+            favorites,
             ["Noise Suppression for Voice", "OTT", "Pro-L 2", "Pro-Q 3"]
         );
+        let all = names(&host, "", &Filter::All);
+        assert_eq!(all[0], "Airwindows Consolidated");
+        assert_eq!(
+            all.last().map(String::as_str),
+            Some("Youlean Loudness Meter 2")
+        );
+        let khs = all.iter().position(|n| n == "kHs Chorus");
+        let kick = all.iter().position(|n| n == "Kickstart 2");
+        assert!(khs < kick, "kHs before Kickstart, as the prototype sorts");
     }
 
     #[test]
