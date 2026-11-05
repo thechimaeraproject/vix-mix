@@ -1,7 +1,8 @@
 # Model (`vixmix-model`)
 **Owns:** `crates/vixmix-model/`
 
-**Reference — the contract as [handoff 01](../handoffs/01-model.md) built it.**
+**Reference — the contract as [handoff 01](../handoffs/01-model.md) built it, with the undo
+commands of change request 2 that [handoff 06](../handoffs/06-host-and-integration.md) added.**
 `vixmix-model` is the whole setup as pure data: up to eight channels with their sources,
 chains and sends; the Monitor and Master mixes; the commands that change it, validated and
 applied whole or not at all, each saying exactly what it changed; the fader taper; RON
@@ -62,7 +63,9 @@ it and leaves the setup exactly as it was (not even an id is spent). The variant
 `RemoveInsert { instance }`, `MoveInsert { from, to, copy }` (two `SlotRef { strip, index }`),
 `SetInsertEnabled`, `SetInsertState`, `SetMixDevice { mix, device }`,
 `SetMixLevel { mix, position }`, `SetMixMute { mix, mute }`, `SetPreview(bool)`,
-`SetPrefs(Prefs)`. `Strip` is `Channel(ChannelId)` or `Mix(MixId)`.
+`SetPrefs(Prefs)`, and the two undos, `RestoreChannel { at, channel }` and
+`RestoreInsert { to, insert }` (change request 2). `Strip` is `Channel(ChannelId)` or
+`Mix(MixId)`.
 
 What each does, as the prototype does it:
 
@@ -80,6 +83,15 @@ What each does, as the prototype does it:
   below it, and otherwise removes, then inserts at the index adjusted for the removal; across
   strips the same instance moves (nothing is created or retired); with `copy` a new instance
   is made with the same plugin, enabled flag and state, and the original stays.
+- **Undo.** `RestoreChannel` puts a removed `Channel` back at index `at` with its id, its
+  chain and its instance ids, its name trimmed; `RestoreInsert` puts a removed `Insert` back
+  before `to` with its instance id, bypass and state. Only what this setup removed can come
+  back: an id in use, or at or past its counter (never handed out), is refused (`NotRemoved`:
+  "only a removed channel can be put back; add a new one instead"), as are a ninth channel,
+  a place past the last channel (`NoPlace`), a slot past the chain's end, a bad fader, name or
+  plugin. A restored channel's app that another channel took since stays there. No id is
+  spent. The host keeps the removed instances live while the undo toast shows, so `created`
+  names instances it still holds ([reference/host.md](host.md)).
 - **Devices, plugins, preferences.** `SetMixDevice { Monitor, None }` is refused
   (`MonitorNeedsDevice`); an `AddInsert` whose id is not `vst3:` and 32 hex digits
   (`NotAPluginId`), or whose bundle is a path (`BundleIsAPath`), is refused; a quantum other
@@ -100,7 +112,7 @@ when its part of the setup changed**:
 | `routing` | which app goes to which channel (the set of channel and app pairs) | routes the apps again |
 | `created` | instances whose inserts entered the setup, in chain order | creates them (with the state, for a copy) |
 | `removed` | instances whose inserts left the setup, in chain order | retires them, or keeps them while an undo toast shows |
-| `channel` | the channel `AddChannel` made | |
+| `channel` | the channel `AddChannel` made or `RestoreChannel` put back | |
 
 A command that changes nothing — a drop on its own place, a mute set to what it was, the same
 name, the same state — answers `Applied::default()`. By command:
@@ -119,6 +131,8 @@ name, the same state — answers `Applied::default()`. By command:
 | `MoveInsert` | unless a move (not a copy) is dropped in place | the same | no | no | `created` for a copy |
 | `SetMixDevice` | when it differs | no | when it differs | no | |
 | `SetPrefs` | when it differs | no | when the quantum differs | no | |
+| `RestoreChannel` | yes | yes | yes | when it keeps apps | `created`: its chain; `channel` |
+| `RestoreInsert` | yes | yes | no | no | `created` |
 
 A rename changes only `graph`, but the backend names a channel's sink after it, so applying
 the graph may move routed apps to the renamed node: that is the host's to do (handoff 06).
@@ -210,6 +224,8 @@ nine inserts. `FakeHost` serves it; nothing in a real run reads it.
   parts written in the test from the outside (the whole setup, the snapshot, the graph's
   inputs, the app and channel pairs, the instances, the new channel); and the setup reached
   round-trips through `to_ron` and `parse`, so every setup commands make keeps the load rules.
+  The undo commands draw from what the sequence removed so far (and from what it did not, to
+  be refused).
   `the_sequences_change_the_setup_through_every_command` holds the generator to landing every
   kind of command, and an exhaustive `match` there fails to compile when a `Command` variant is
   added without a seed.
@@ -219,7 +235,10 @@ nine inserts. `FakeHost` serves it; nothing in a real run reads it.
   command that changes nothing says so, for every kind that can; a fader moved within silence
   saved but not prepared; linked faders clamped at both ends; inserts moved within and between
   strips and copied with their state and bypass; a removed channel's instances retired and its
-  apps routed; plugins refused by id or path; Monitor keeps a device; the quantum.
+  apps routed; plugins refused by id or path; Monitor keeps a device; the quantum; a removed
+  channel back in its place with its ids, bypass and state while an app another channel took
+  stays there, a removed insert back in its gap, and a restore of anything not removed (in
+  use, never handed out, past the end, past eight channels, nameless) refused.
 - **`taper`** — every table point exact both ways, silence at or below 0.002, the ramp, the
   prototype's values between points, the clamps, the readout strings, and two properties (a
   position survives a round trip through decibels; louder never reads quieter).
