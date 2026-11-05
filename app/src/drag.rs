@@ -164,6 +164,7 @@ fn ghost(ui: &Ui, pointer: Pos2, name: &str, copy: bool) {
     let [pad_x, pad_y] = pop::GHOST_PAD;
     Area::new(Id::new("insert drag ghost"))
         .order(Order::Tooltip)
+        .fade_in(false)
         .interactable(false)
         .fixed_pos(pointer + vec2(dx, dy))
         .show(ui.ctx(), |ui| {

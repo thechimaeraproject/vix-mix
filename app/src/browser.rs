@@ -326,7 +326,8 @@ pub fn show(ui: &mut Ui, browser: &mut Browser, cx: &mut PopCx<'_>) -> Outcome {
                     section = if heading == "Type" { 1 } else { 2 };
                     nav_heading(ui, heading);
                 }
-                let on = browser.query.trim().is_empty() && *filter == browser.filter;
+                // Typing searches everything, and the nav says so: All plugins is lit.
+                let on = *filter == browser.filter;
                 if nav_item(ui, filter, label, *count, on, cx.keyboard) {
                     picked = Some(filter.clone());
                 }

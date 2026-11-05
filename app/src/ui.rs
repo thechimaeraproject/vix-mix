@@ -138,6 +138,7 @@ pub fn draw(root: &mut Ui, shell: &mut Shell, host: &dyn Host) -> Vec<Intent> {
     // A drag closes the popover, as does a press outside it or Escape.
     if started && let Some(popover) = shell.popover.take() {
         out.extend(popover.closing(host.setup()).map(Intent::Apply));
+        ctx.request_repaint();
     }
     let screen = ctx.content_rect();
     if let Some(popover) = shell.popover.as_mut() {
@@ -169,6 +170,10 @@ pub fn draw(root: &mut Ui, shell: &mut Shell, host: &dyn Host) -> Vec<Intent> {
             }
         };
         let escape = ctx.input(|i| i.key_pressed(Key::Escape));
+        if outcome != Outcome::Stay {
+            // This frame drew it; the next must not.
+            ctx.request_repaint();
+        }
         match outcome {
             Outcome::Stay => {}
             Outcome::Drop => shell.popover = None,

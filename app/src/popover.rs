@@ -201,8 +201,10 @@ pub fn show(
     let height = ctx.memory(|m| m.area_rect(id)).map_or(0.0, |r| r.height());
     let at = place(anchor, vec2(width, height), beside, screen);
     let mut outcome = Outcome::Stay;
+    // Shown at once, as the prototype's `hidden` attribute shows it: no fade.
     let response = Area::new(id)
         .order(Order::Foreground)
+        .fade_in(false)
         .fixed_pos(at)
         .show(ctx, |ui| {
             widgets::popover_frame().show(ui, |ui| {
@@ -228,31 +230,35 @@ pub fn show(
 /// The name row (`.nm-row`): a field for a channel, the fixed name for a mix.
 fn name_row(ui: &mut Ui, name: NameRow<'_>) -> Option<egui::Response> {
     let [pad_x, pad_y] = pop::NAME_PAD;
+    let painter = ui.painter().clone();
+    // A field's row is as tall as the field; a fixed name's as its line of text.
+    let fixed = match &name {
+        NameRow::Fixed(text) => Some(strip::galley(
+            &painter,
+            text,
+            font::sans_semibold(font::NAME),
+            colour::TEXT,
+            Spacing::None,
+        )),
+        NameRow::Field { .. } => None,
+    };
+    let inner = fixed.as_ref().map_or(pop::FIELD_HEIGHT, |g| g.size().y);
     let (rect, _) = ui.allocate_exact_size(
-        vec2(
-            ui.available_width(),
-            pop::FIELD_HEIGHT + 2.0 * pad_y + size::HAIRLINE,
-        ),
+        vec2(ui.available_width(), inner + 2.0 * pad_y + size::HAIRLINE),
         Sense::hover(),
     );
-    let painter = ui.painter().clone();
     widgets::rule(&painter, rect.x_range(), rect.bottom() - size::HAIRLINE);
-    let y = rect.top() + pad_y + pop::FIELD_HEIGHT / 2.0;
+    let y = rect.top() + pad_y + inner / 2.0;
     match name {
-        NameRow::Fixed(text) => {
-            let text = strip::galley(
-                &painter,
-                text,
-                font::sans_semibold(font::NAME),
-                colour::TEXT,
-                Spacing::None,
-            );
-            strip::place(
-                &painter,
-                text,
-                Align2::LEFT_CENTER,
-                pos2(rect.left() + pad_x, y),
-            );
+        NameRow::Fixed(_) => {
+            if let Some(text) = fixed {
+                strip::place(
+                    &painter,
+                    text,
+                    Align2::LEFT_CENTER,
+                    pos2(rect.left() + pad_x, y),
+                );
+            }
             None
         }
         NameRow::Field { id, text } => {

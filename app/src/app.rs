@@ -8,11 +8,14 @@
 //! keeps at least the console's size.
 //!
 //! **Pacing.** The event loop is `ControlFlow::Wait`. A frame is drawn when egui wants one
-//! for input, when egui's own `repaint_delay` (a tooltip, the toast's fade, a text cursor)
-//! comes due, and — while the meters move (the host's backend is running or simulated) or a
-//! `--quit-after-frames` count is still running — at most every [`FRAME_INTERVAL`], so the
-//! window never repaints faster than 60 Hz; while a plugin editor is open, at least every
-//! [`EDITOR_POLL`]. With no backend, no editor and nothing to animate the process is idle.
+//! (input, or its `repaint_delay` coming due: a tooltip, the toast's fade, a text cursor),
+//! straight after a frame that acted (what a command changed shows at once), and — while the
+//! meters move (the host's backend is running or simulated) or a `--quit-after-frames` count
+//! is still running — on a 60 Hz grid: a frame the timer wakes counts from when it was due,
+//! so neither drawing it nor the timer's lateness stretches the interval to the next. No
+//! frame, input's included, begins sooner than [`FRAME_INTERVAL`] after the last, so the
+//! window never repaints faster than 60 Hz; while a plugin editor is open it draws at least
+//! every [`EDITOR_POLL`]. With no backend, no editor and nothing to animate it is idle.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -71,7 +74,13 @@ struct Running {
     first_frame: bool,
     frames: u64,
     quit_after_frames: Option<u64>,
+    /// When the last frame that reached the screen began (or was due, when the timer woke
+    /// it): the next is never sooner than one interval after.
     last_frame: Instant,
+    /// When the timer is set to wake the next frame.
+    due: Option<Instant>,
+    /// When the first frame reached the screen.
+    first_drawn: Option<Instant>,
     /// The least size the window has been given, in points: what the content needs.
     min_size: egui::Vec2,
 }
@@ -122,7 +131,7 @@ impl ApplicationHandler for App {
         }
         let response = running.egui_state.on_window_event(&running.window, &event);
         if response.repaint {
-            running.window.request_redraw();
+            running.wake(event_loop);
         }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
@@ -202,11 +211,21 @@ impl Running {
             frames: 0,
             quit_after_frames: startup.quit_after_frames,
             last_frame: Instant::now(),
+            due: None,
+            first_drawn: None,
             min_size: natural,
         })
     }
 
     fn frame(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
+        // Frames are spaced from start to start, so a frame's own drawing and presenting do
+        // not stretch the interval to the next; a frame woken by the timer counts from when
+        // it was due, so the timer's lateness does not either.
+        let started = Instant::now();
+        let slot = match self.due.take() {
+            Some(due) if started >= due && started - due < FRAME_INTERVAL => due,
+            _ => started,
+        };
         for event in self.host.poll() {
             self.shell.event(event, &mut self.editors);
         }
@@ -257,41 +276,61 @@ impl Running {
             .render(&self.egui_ctx, shapes, textures_delta, pixels_per_point)?;
         if drawn {
             self.frames += 1;
-            self.last_frame = Instant::now();
+            self.last_frame = slot;
+            self.first_drawn.get_or_insert(started);
         }
         if self.quit_after_frames.is_some_and(|n| self.frames >= n) {
+            let took = self.first_drawn.map_or(0.0, |t| t.elapsed().as_secs_f64());
             log::info!(
-                "drew {} frames; closing as --quit-after-frames asked",
-                self.frames
+                "drew {} frames in {took:.2} s after the first ({:.1} a second); closing as --quit-after-frames asked",
+                self.frames,
+                (self.frames - 1) as f64 / took.max(f64::EPSILON),
             );
             event_loop.exit();
             return Ok(());
         }
 
-        // Pacing: the next frame now, at a time, or not until something happens.
-        let egui_delay = viewport_output
+        // Pacing: the next frame at a time, or not until something happens. egui's own
+        // delay counts from now; the meters' and the editors' cadence from when the last
+        // frame began, so drawing a frame does not stretch the interval to the next.
+        let now = Instant::now();
+        let mut due = viewport_output
             .get(&egui::ViewportId::ROOT)
-            .map_or(Duration::MAX, |v| v.repaint_delay);
-        let animating = self.shell.backend.live() || self.quit_after_frames.is_some();
-        let mut delay = if animating {
-            egui_delay.min(FRAME_INTERVAL)
-        } else {
-            egui_delay
-        };
-        if acted {
-            delay = Duration::ZERO;
+            .map(|v| v.repaint_delay)
+            .filter(|d| *d != Duration::MAX)
+            .map(|d| now + d);
+        let mut sooner = |at: Instant| due = Some(due.map_or(at, |d| d.min(at)));
+        if self.shell.backend.live() || self.quit_after_frames.is_some() {
+            sooner(self.last_frame + FRAME_INTERVAL);
         }
         if !self.editors.is_empty() {
-            delay = delay.min(EDITOR_POLL);
+            sooner(self.last_frame + EDITOR_POLL);
         }
-        if delay == Duration::MAX {
-            event_loop.set_control_flow(ControlFlow::Wait);
-        } else {
-            // Never sooner than one frame interval after the last frame: at most 60 Hz.
-            let at = (Instant::now() + delay).max(self.last_frame + FRAME_INTERVAL);
-            event_loop.set_control_flow(ControlFlow::WaitUntil(at));
+        if acted {
+            sooner(now);
+        }
+        match due {
+            None => event_loop.set_control_flow(ControlFlow::Wait),
+            // Never sooner than one frame interval after the last frame began: at most 60 Hz.
+            Some(at) => {
+                let at = at.max(self.last_frame + FRAME_INTERVAL);
+                self.due = Some(at);
+                event_loop.set_control_flow(ControlFlow::WaitUntil(at));
+            }
         }
         Ok(())
+    }
+
+    /// Asks for a frame as soon as the 60 Hz cap allows: at once, or one interval after the
+    /// last frame began. Input never draws faster than the meters do.
+    fn wake(&mut self, event_loop: &ActiveEventLoop) {
+        let at = self.last_frame + FRAME_INTERVAL;
+        if Instant::now() >= at {
+            self.window.request_redraw();
+        } else if self.due.is_none_or(|due| at < due) {
+            self.due = Some(at);
+            event_loop.set_control_flow(ControlFlow::WaitUntil(at));
+        }
     }
 
     /// Keeps the window at least as big as the content the last frame drew (the console,
