@@ -10,10 +10,11 @@
 //! so a test sees the same signal every run.
 
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use chimaeraproject_vst3_host::{EditorEvent, EditorSize};
 use raw_window_handle::RawWindowHandle;
+use vixmix_engine::InsertProblem;
 use vixmix_model::{
     Applied, ChannelId, Command, DeviceDirection, DeviceInfo, InstanceId, MAX_CHANNELS, Refused,
     Setup, Source, apply, example, taper,
@@ -24,6 +25,7 @@ use crate::host::{
     AppPresence, BackendState, ChannelLevels, Host, HostError, HostEvent, MeterFrame, StatsFrame,
     Stereo,
 };
+use crate::undo::removal;
 
 /// One animation frame of the prototype's `requestAnimationFrame` loop.
 const FRAME_MS: f64 = 1000.0 / 60.0;
@@ -312,7 +314,22 @@ impl Host for FakeHost {
     }
 
     fn apply(&mut self, cmd: Command) -> Result<Applied, Refused> {
+        // The same undo the real host hands out, so the window's toast works against either.
+        let gone = removal(&self.setup, &cmd);
+        let added = match &cmd {
+            Command::AddInsert { plugin, .. } => Some(plugin.id.clone()),
+            _ => None,
+        };
         let applied = apply(&mut self.setup, cmd)?;
+        if let Some(gone) = gone.filter(|_| applied.changed()) {
+            self.events.push(HostEvent::Removed {
+                message: gone.message,
+                undo: gone.undo,
+            });
+        }
+        if let Some(id) = added {
+            self.catalog.used(&id);
+        }
         if applied.changed() {
             self.events.push(HostEvent::SetupChanged);
         }
@@ -360,6 +377,23 @@ impl Host for FakeHost {
     fn close_editor(&mut self, _instance: InstanceId) {}
 
     fn save_now(&mut self) {}
+
+    fn problems(&self) -> &[InsertProblem] {
+        &[]
+    }
+
+    fn set_favorite(&mut self, plugin_id: &str, favorite: bool) {
+        self.catalog.set_favorite(plugin_id, favorite);
+    }
+
+    fn rescan_plugins(&mut self) {
+        self.events.push(HostEvent::PluginsRescanned);
+    }
+
+    /// Never: its meters are live, so the window draws (and polls) at its frame rate.
+    fn next_poll(&self) -> Option<Duration> {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -409,6 +443,37 @@ mod tests {
         });
         a.advance(100.0);
         assert_eq!(a.meters().master, Stereo::default());
+    }
+
+    #[test]
+    fn a_removal_hands_out_the_undo_that_puts_it_back() {
+        let mut host = FakeHost::with_seed(5);
+        let before = host.setup().clone();
+        let ch = before.channels[1].id;
+        let _ = host.poll();
+        let _ = host.apply(Command::RemoveChannel(ch)).unwrap();
+        let undo = host
+            .poll()
+            .into_iter()
+            .find_map(|e| match e {
+                HostEvent::Removed { message, undo } => {
+                    assert_eq!(
+                        message,
+                        format!("Removed channel {}", before.channels[1].name)
+                    );
+                    Some(undo)
+                }
+                _ => None,
+            })
+            .expect("the removal's undo");
+        let _ = host.apply(undo).unwrap();
+        assert_eq!(host.setup(), &before);
+        let id = host.catalog().plugins[0].id.clone();
+        host.set_favorite(&id, true);
+        assert!(host.catalog().favorites.contains(&id));
+        host.rescan_plugins();
+        assert!(host.poll().contains(&HostEvent::PluginsRescanned));
+        assert!(host.problems().is_empty() && host.next_poll().is_none());
     }
 
     #[test]

@@ -4,12 +4,19 @@
 //! for input, when egui's own `repaint_delay` (a tooltip fade) comes due, and — while the
 //! meters move (the host's backend is running or simulated) or a `--quit-after-frames` count
 //! is still running — at most every [`FRAME_INTERVAL`], so the window never repaints faster
-//! than 60 Hz. With no backend and nothing to animate the process is idle.
+//! than 60 Hz. Between frames the host is polled on its own when it asks
+//! ([`Host::next_poll`]: the backend's news, the debounced save, an undo running out), without
+//! a frame unless the poll brought news. With nothing to animate and nothing pending in the
+//! host the process is idle.
+//!
+//! **The banner line** shows the backend's banner, else the newest toast for [`NOTE_FOR`],
+//! else the first insert playing as a pass-through: one line for everything the user must read
+//! until the window's own toasts and slot marks (handoff 05) take them.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use vixmix_host::{BackendState, BootOptions, FakeHost, Host, HostEvent, RealHost};
+use vixmix_host::{AudioBackend, BackendState, BootOptions, FakeHost, Host, HostEvent, RealHost};
 use winit::application::ApplicationHandler;
 use winit::event::{StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
@@ -22,6 +29,9 @@ use crate::ui;
 
 /// The shortest time between two frames: 60 Hz.
 pub const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
+
+/// How long a toast stays in the banner line.
+pub const NOTE_FOR: Duration = Duration::from_secs(6);
 
 /// The winit application.
 pub struct App {
@@ -61,6 +71,11 @@ struct Running {
     frames: u64,
     quit_after_frames: Option<u64>,
     last_frame: Instant,
+    /// The newest toast and when it came, for the banner line.
+    note: Option<(String, Instant)>,
+    /// When the next frame is due, and when the host wants its next poll.
+    frame_at: Option<Instant>,
+    poll_at: Option<Instant>,
 }
 
 impl ApplicationHandler for App {
@@ -80,10 +95,25 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn new_events(&mut self, _event_loop: &ActiveEventLoop, cause: StartCause) {
+    fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) {
+        let (StartCause::ResumeTimeReached { .. }, Some(running)) = (cause, &mut self.running)
+        else {
+            return;
+        };
+        let now = Instant::now();
         // The frame timer (meters, a quit count) or egui's `repaint_delay` has come due.
-        if let (StartCause::ResumeTimeReached { .. }, Some(running)) = (cause, &self.running) {
+        if running.frame_at.is_some_and(|at| at <= now) {
             running.window.request_redraw();
+            return;
+        }
+        // Only the host's poll is due: a frame only if it brought news.
+        if running.poll_at.is_some_and(|at| at <= now) {
+            if running.poll_host() {
+                running.window.request_redraw();
+                return;
+            }
+            running.poll_at = running.host.next_poll().map(|wait| now + wait);
+            running.schedule(event_loop);
         }
     }
 
@@ -133,6 +163,8 @@ impl Running {
                 RealHost::boot(BootOptions {
                     config_dir: None,
                     debug_build: cfg!(debug_assertions),
+                    audio: AudioBackend::APP,
+                    plugin_dirs: None,
                 })
                 .map_err(|e| e.to_string())?,
             )
@@ -172,21 +204,67 @@ impl Running {
             frames: 0,
             quit_after_frames: startup.quit_after_frames,
             last_frame: Instant::now(),
+            note: None,
+            frame_at: None,
+            poll_at: None,
         })
     }
 
-    fn frame(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
-        for event in self.host.poll() {
+    /// Polls the host and takes in what it reports; whether it reported anything.
+    fn poll_host(&mut self) -> bool {
+        let events = self.host.poll();
+        let news = !events.is_empty();
+        for event in events {
             match event {
                 HostEvent::Backend(state) => self.backend = state,
-                HostEvent::Toast(message) => log::warn!("{message}"),
+                HostEvent::Toast(message) => {
+                    log::warn!("{message}");
+                    self.note = Some((message, Instant::now()));
+                }
+                HostEvent::Removed { message, .. } => {
+                    log::info!("{message}");
+                    self.note = Some((message, Instant::now()));
+                }
                 _ => {}
             }
         }
+        news
+    }
+
+    /// What the banner line shows: the backend's banner, else the newest toast, else the
+    /// first insert playing as a pass-through. The window's own toasts and slot marks
+    /// (handoff 05) replace the last two.
+    fn banner(&self) -> BackendState {
+        if self.backend.banner().is_some() {
+            return self.backend.clone();
+        }
+        let toast = self
+            .note
+            .as_ref()
+            .filter(|(_, at)| at.elapsed() < NOTE_FOR)
+            .map(|(message, _)| message.clone());
+        let problem = || self.host.problems().first().map(|p| p.message.clone());
+        match toast.or_else(problem) {
+            Some(reason) => BackendState::Absent { reason },
+            None => self.backend.clone(),
+        }
+    }
+
+    /// Sleeps until the next frame or the host's next poll, whichever comes first.
+    fn schedule(&self, event_loop: &ActiveEventLoop) {
+        match [self.frame_at, self.poll_at].into_iter().flatten().min() {
+            Some(at) => event_loop.set_control_flow(ControlFlow::WaitUntil(at)),
+            None => event_loop.set_control_flow(ControlFlow::Wait),
+        }
+    }
+
+    fn frame(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
+        self.poll_host();
         let now_ms = self.opened.elapsed().as_secs_f64() * 1000.0;
         self.meters.update(&self.host.meters(), now_ms);
+        let shown = self.banner();
         let view = ui::View {
-            backend: &self.backend,
+            backend: &shown,
             stats: self.host.stats(),
             setup: self.host.setup(),
             meters: &self.meters,
@@ -232,19 +310,24 @@ impl Running {
         let egui_delay = viewport_output
             .get(&egui::ViewportId::ROOT)
             .map_or(Duration::MAX, |v| v.repaint_delay);
+        // A toast in the banner line is redrawn when it runs out.
+        let note_delay = self
+            .note
+            .as_ref()
+            .and_then(|(_, at)| NOTE_FOR.checked_sub(at.elapsed()))
+            .unwrap_or(Duration::MAX);
         let animating = self.backend.live() || self.quit_after_frames.is_some();
         let delay = if animating {
             egui_delay.min(FRAME_INTERVAL)
         } else {
-            egui_delay
+            egui_delay.min(note_delay)
         };
-        if delay == Duration::MAX {
-            event_loop.set_control_flow(ControlFlow::Wait);
-        } else {
-            // Never sooner than one frame interval after the last frame: at most 60 Hz.
-            let at = (Instant::now() + delay).max(self.last_frame + FRAME_INTERVAL);
-            event_loop.set_control_flow(ControlFlow::WaitUntil(at));
-        }
+        let now = Instant::now();
+        // Never sooner than one frame interval after the last frame: at most 60 Hz.
+        self.frame_at =
+            (delay != Duration::MAX).then(|| (now + delay).max(self.last_frame + FRAME_INTERVAL));
+        self.poll_at = self.host.next_poll().map(|wait| now + wait);
+        self.schedule(event_loop);
         Ok(())
     }
 }
