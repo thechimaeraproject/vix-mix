@@ -18,7 +18,8 @@ completes it when it ships ([build map](../build-map.md)).
 - [host.md](host.md) — the orchestrator: the `Host` trait, `RealHost`, `FakeHost`.
 - [model.md](model.md) — the setup as data: types, commands, the taper, `setup.ron`, the
   snapshot.
-- [pipewire.md](pipewire.md) — the Linux backend's contract and the design handoff 03 builds.
+- [pipewire.md](pipewire.md) — the Linux backend: the contract and the design as handoff 03
+  built them.
 - [plugins.md](plugins.md) — catalog, rack, instances, editor sessions.
 
 [Back to the docs index](../README.md)

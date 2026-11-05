@@ -71,8 +71,13 @@ forced by what the daemon did:
   that test alone.
 - **Shared docs beyond the conflict rules' list:** the trust table's Cookbook row in
   `docs/README.md` said no cookbook was written; it now says lane 03 wrote the first, so the
-  index stays true once this lane's cookbook is in. The index lines and
-  `docs/reference/README.md` otherwise keep their wording.
+  index stays true once this lane's cookbook is in. `docs/reference/README.md`'s line for
+  `pipewire.md` said it held "the design handoff 03 builds"; it now says "as handoff 03 built
+  them", so it is not stale once this merges. That file is not on the conflict rules' list, and
+  lane 04 put its own line there back to master's wording (`f44bf9e`) to keep the indexes
+  append-only; the line is the one this lane's reference owns, but it is adjacent to
+  `plugins.md`'s and `model.md`'s, so a lane that rewords either meets a one-line conflict
+  (keep both). The other index lines keep their wording.
 - **The integration tests** need the marker the daemon script exports: without it they say how
   to start the daemon and pass without touching anything (a desktop session must never get
   their routings), and under `CI` they fail. The two-minute run and a daemon restart are
@@ -88,8 +93,8 @@ Monitor out linked again after the daemon came back.
 Linux shell with realtime scheduling (WSL2 with its packages and rtkit, or the Fedora box)
 before it is called met. The container has none: Docker gives it no realtime budget, so `chrt
 -f` is refused even with `SYS_NICE` added, and the data threads run at ordinary priority. There
-`two_minutes_at_256_without_an_xrun` passed 7 times out of 10, and 2 out of 2 in the
-verifier's second round. Each pass: about 22 500 cycles, 0 xruns, every ring check exactly one
+`two_minutes_at_256_without_an_xrun` passed 7 times out of 10, and 3 out of 3 in the
+verifier's second and third rounds. Each pass: about 22 500 cycles, 0 xruns, every ring check exactly one
 quantum ahead, Monitor out, Master out and the Master source each writing every cycle's own
 mix, 0 stale. The last five passes were after the verifier's first round (the latest on the
 branch rebased on master), with `pw-top`'s ERR compared over the window: no ERR added on any
