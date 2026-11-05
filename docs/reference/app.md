@@ -103,7 +103,8 @@ for the round line cap. egui draws no SVG; this keeps each icon one string from 
   every number is a dash until the host reports a rate. The prototype's in-app window buttons
   are not drawn: the desktop draws the window's decorations.
 - **The banner**, when the host's backend is `Absent`, with its reason ("No audio backend on
-  this platform" on Windows; the not-built message on Linux until handoff 03).
+  this platform" on Windows; on Linux, until handoff 06 plays through PipeWire, that PipeWire
+  answers but is not played through yet, or PipeWire's refusal).
 - **The console**, at the top left of what is left, at its natural size
   (`console::size`: 900 × 454 for six channels): black, with each channel strip in setup
   order, the add-channel column (a plus over "ADD CHANNEL" set vertically, as

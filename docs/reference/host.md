@@ -55,9 +55,11 @@ window keeps one editor window per instance and must know which one to resize.
 loads `setup.ron` and `plugins.ron` (an unreadable file becomes a toast and the default),
 makes the engine (48 kHz, `MAX_QUANTUM`), the rack and the instances, creates every insert's
 instance the catalog can find (each failure a toast that says to rescan), prepares the engine,
-and starts the backend: on Linux `vixmix_pipewire::Backend::connect`, which answers
-`NotBuilt` until handoff 03, so the state is `Absent` with that message; elsewhere `Absent`
-with "No audio backend on this platform". Booting writes nothing.
+and starts the backend: on Linux it asks `vixmix_pipewire::Backend::connect` whether PipeWire
+answers and leaves again (handoff 06 keeps the backend), so the state is `Absent` with
+"PipeWire answers, but this build does not play through it yet" when it answers and "No audio
+backend: " with PipeWire's refusal when it does not; elsewhere `Absent` with "No audio backend
+on this platform". Booting writes nothing.
 
 `apply` runs the model's `apply`, retires `removed` instances, creates `created` ones (with
 their state, for a copy), prepares the engine when anything audible changed, and reports
@@ -86,7 +88,7 @@ prototype's. It never writes a file, and `open_editor` answers `HostError::Simul
 ## Verification
 
 `cargo test -p vixmix-host`: `RealHost` boots on the null backend, reports the banner first
-(the not-built message on Linux, "No audio backend on this platform" elsewhere), pumps a quantum
+(naming PipeWire on Linux, "No audio backend on this platform" elsewhere), pumps a quantum
 a poll and writes nothing; a command changes the setup and a save restores it at the next
 boot; an unreadable setup is kept aside rather than saved over. `FakeHost`'s first poll reports
 a simulated backend with the example's apps and devices; its meters move, a muted send and a

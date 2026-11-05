@@ -61,14 +61,13 @@ forced by what the daemon did:
   `channel_node_name` taking the channel's id, `monitor_out_node_name`,
   `master_out_node_name`, `DISPLAY_NAME`, `Backend: Send + Sync`; `BackendError::NotBuilt` is
   gone.
-- **`vixmix-host`'s Linux test `it_boots_on_the_null_backend_and_says_so_first` now fails**: it
-  asserts the "not built yet" banner, and `connect` succeeds against CI's daemon, which
+- **`vixmix-host`'s Linux test `it_boots_on_the_null_backend_and_says_so_first` failed** on
+  this branch: it asserted the "not built yet" banner, and `connect` succeeds against CI's daemon, which
   `start_backend` turns into `Connecting`: no banner, and the null backend no longer pumped.
   This lane may not edit lane 06's crate, so change request 7 carries the fix, proven on this
   branch in the container (the whole Linux gate green with it): until 06 keeps the backend,
   the host reports `Absent` with a banner saying PipeWire answers but is not played through
-  yet, and the null backend keeps the meters live. Until it is applied, `check (linux)` fails on
-  that test alone.
+  yet, and the null backend keeps the meters live. The main session applied it with the merge.
 - **Shared docs beyond the conflict rules' list:** the trust table's Cookbook row in
   `docs/README.md` said no cookbook was written; it now says lane 03 wrote the first, so the
   index stays true once this lane's cookbook is in. `docs/reference/README.md`'s line for
