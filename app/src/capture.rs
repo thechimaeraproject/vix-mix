@@ -26,6 +26,11 @@ pub const WARM_UP_MS: f64 = 2_500.0;
 /// The texture format the frame is drawn in: non-sRGB, as the window's surface, so the PNG
 /// holds the bytes the window would show.
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+/// What to do when the GPU fails the capture part-way: once may be a driver hiccup.
+const GPU_FIX: &str = "run it again, and if it fails again update the GPU driver or set WGPU_BACKEND to another backend this machine has (vulkan, dx12, metal or gl)";
+/// What to do when the PNG cannot be written once the file is open.
+const DISK_FIX: &str =
+    "check the disk has room and nothing else holds the file open, then run it again";
 
 /// Draws the frame and writes it to `path`; returns its size in pixels.
 pub fn dump_png(path: &Path) -> Result<[u32; 2], String> {
@@ -99,7 +104,7 @@ fn render(
         label: Some("vix-mix capture"),
         ..Default::default()
     }))
-    .map_err(|e| format!("the adapter refused a device: {e}"))?;
+    .map_err(|e| format!("the adapter refused a device ({e}); {}", gpu::DRIVER_FIX))?;
     let info = adapter.get_info();
     log::info!("capture adapter: {} ({:?})", info.name, info.backend);
 
@@ -184,14 +189,14 @@ fn render(
     });
     device
         .poll(wgpu::PollType::wait_indefinitely())
-        .map_err(|e| format!("the GPU did not finish the frame: {e}"))?;
+        .map_err(|e| format!("the GPU did not finish the frame ({e}); {GPU_FIX}"))?;
     receiver
         .recv()
-        .map_err(|_| "the GPU dropped the read-back before answering".to_string())?
-        .map_err(|e| format!("the frame could not be read back from the GPU: {e}"))?;
+        .map_err(|_| format!("the GPU dropped the read-back before answering; {GPU_FIX}"))?
+        .map_err(|e| format!("the frame could not be read back from the GPU ({e}); {GPU_FIX}"))?;
     let mapped = buffer
         .get_mapped_range(..)
-        .map_err(|e| format!("the read-back buffer is not readable: {e}"))?;
+        .map_err(|e| format!("the read-back buffer is not readable ({e}); {GPU_FIX}"))?;
     Ok(unpad(&mapped, width, height, padded))
 }
 
@@ -223,15 +228,21 @@ fn write_png(path: &Path, width: u32, height: u32, rgba: &[u8]) -> Result<(), St
     let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), width, height);
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
-    let mut writer = encoder
-        .write_header()
-        .map_err(|e| format!("cannot write the PNG header of {} ({e})", path.display()))?;
-    writer
-        .write_image_data(rgba)
-        .map_err(|e| format!("cannot write the pixels of {} ({e})", path.display()))?;
+    let mut writer = encoder.write_header().map_err(|e| {
+        format!(
+            "cannot write the PNG header of {} ({e}); {DISK_FIX}",
+            path.display()
+        )
+    })?;
+    writer.write_image_data(rgba).map_err(|e| {
+        format!(
+            "cannot write the pixels of {} ({e}); {DISK_FIX}",
+            path.display()
+        )
+    })?;
     writer
         .finish()
-        .map_err(|e| format!("cannot finish {} ({e})", path.display()))
+        .map_err(|e| format!("cannot finish {} ({e}); {DISK_FIX}", path.display()))
 }
 
 #[cfg(test)]

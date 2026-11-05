@@ -12,6 +12,9 @@ use std::sync::Arc;
 use egui_wgpu::ScreenDescriptor;
 use winit::window::Window;
 
+/// What to do when the GPU or its driver refuses the window's drawing.
+pub const DRIVER_FIX: &str = "update the GPU driver, or set WGPU_BACKEND to another backend this machine has (vulkan, dx12, metal or gl)";
+
 /// What the frame loop needs from wgpu.
 pub struct Gpu {
     surface: wgpu::Surface<'static>,
@@ -32,26 +35,26 @@ impl Gpu {
             ));
         let surface = instance
             .create_surface(Arc::clone(&window))
-            .map_err(|e| format!("no surface on the window: {e}"))?;
+            .map_err(|e| format!("no surface on the window ({e}); {DRIVER_FIX}"))?;
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::LowPower,
             compatible_surface: Some(&surface),
             ..Default::default()
         }))
-        .map_err(|e| format!("no GPU adapter can present to the window: {e}"))?;
+        .map_err(|e| format!("no GPU adapter can present to the window ({e}); {DRIVER_FIX}"))?;
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("vix-mix"),
             ..Default::default()
         }))
-        .map_err(|e| format!("the adapter refused a device: {e}"))?;
+        .map_err(|e| format!("the adapter refused a device ({e}); {DRIVER_FIX}"))?;
 
         let caps = surface.get_capabilities(&adapter);
         let format = egui_wgpu::preferred_framebuffer_format(&caps.formats)
-            .map_err(|e| format!("no framebuffer format egui can draw into: {e}"))?;
+            .map_err(|e| format!("no framebuffer format egui can draw into ({e}); {DRIVER_FIX}"))?;
         let size = window.inner_size();
         let mut config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
-            .ok_or_else(|| "the adapter cannot present to this surface".to_string())?;
+            .ok_or_else(|| format!("the adapter cannot present to this surface; {DRIVER_FIX}"))?;
         config.format = format;
         config.present_mode = wgpu::PresentMode::Fifo;
         surface.configure(&device, &config);

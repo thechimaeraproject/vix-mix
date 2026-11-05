@@ -1,6 +1,9 @@
 # 05 — App
 
-**Record — look gate rendered 2026-11-04, awaiting the user's verdict; steps 2–9 not started.**
+**Record — look gate passed 2026-11-04; steps 2–9 in progress.** The user judged
+[egui-look-gate.png](../design/prototype/egui-look-gate.png) beside the prototype's
+[screenshot.png](../design/prototype/screenshot.png): "looks great, somehow better than the
+reference". Egui stays; Slint is not needed.
 Step 1 is built: the theme as named constants (`app/src/theme.rs`: every colour, the meter
 gradient, the corners, the strip and header sizes, the font sizes), IBM Plex Sans Condensed
 400/500/600 and Plex Mono 400/500 embedded with their OFL licence (`app/assets/fonts/`), the

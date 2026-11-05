@@ -3,8 +3,12 @@
 //! keeps the prototype's path data verbatim and [`paint`] follows it with egui's painter: the
 //! subset of path syntax the icons use (`M L H V A C Z`, absolute and relative), plus the
 //! `rect` and `circle` elements. Arcs and curves become short polylines.
+//!
+//! **Read once.** Each icon is a `static` that parses its path data the first time it is
+//! painted and keeps the runs ([`Icon::runs`]); every later frame only scales them into place.
 
 use std::f32::consts::{PI, TAU};
+use std::sync::OnceLock;
 
 use egui::epaint::PathShape;
 use egui::{Color32, Painter, Pos2, Rect, Stroke, Vec2, pos2, vec2};
@@ -33,15 +37,47 @@ pub enum Part {
     Circle { cx: f32, cy: f32, r: f32 },
 }
 
-/// An icon: its parts and its line width.
-#[derive(Clone, Copy, Debug)]
+/// An icon: its parts, its line width, and its runs once read.
+#[derive(Debug)]
 pub struct Icon {
     pub parts: &'static [Part],
     pub line: f32,
+    runs: OnceLock<Vec<Run>>,
 }
 
-const fn icon(parts: &'static [Part]) -> Icon {
-    Icon { parts, line: LINE }
+impl Icon {
+    /// An icon of `parts` in the prototype's 1.9-unit line.
+    const fn new(parts: &'static [Part]) -> Icon {
+        Icon::with_line(parts, LINE)
+    }
+
+    const fn with_line(parts: &'static [Part], line: f32) -> Icon {
+        Icon {
+            parts,
+            line,
+            runs: OnceLock::new(),
+        }
+    }
+
+    /// The icon's runs in SVG units, read from its parts the first time and kept: a run's
+    /// repeated points dropped, a closed run's closing point too.
+    pub fn runs(&self) -> &[Run] {
+        self.runs.get_or_init(|| {
+            runs(self)
+                .into_iter()
+                .filter_map(|mut run| {
+                    // A rounded end whose straight side has no length repeats a point; the
+                    // tessellator wants distinct ones.
+                    run.points.dedup_by(|a, b| a.distance_sq(*b) < 1e-6);
+                    let n = run.points.len();
+                    if run.closed && n > 2 && run.points[0].distance_sq(run.points[n - 1]) < 1e-6 {
+                        run.points.pop();
+                    }
+                    (run.points.len() > 1).then_some(run)
+                })
+                .collect()
+        })
+    }
 }
 
 const fn rect(x: f32, y: f32, w: f32, h: f32, rx: f32) -> Part {
@@ -49,40 +85,37 @@ const fn rect(x: f32, y: f32, w: f32, h: f32, rx: f32) -> Part {
 }
 
 /// Headphones: Monitor's header, a channel's Monitor mute.
-pub const PHONES: Icon = icon(&[
+pub static PHONES: Icon = Icon::new(&[
     Part::Path("M4 15v-3a8 8 0 0 1 16 0v3"),
     rect(3.0, 14.0, 4.5, 6.5, 1.0),
     rect(16.5, 14.0, 4.5, 6.5, 1.0),
 ]);
 /// Four bars: Master's header, a channel's Master mute.
-pub const MASTER: Icon = icon(&[Part::Path("M5 4v16M10 8v12M15 12v8M20 6v14")]);
+pub static MASTER: Icon = Icon::new(&[Part::Path("M5 4v16M10 8v12M15 12v8M20 6v14")]);
 /// A speaker: a mix's mute.
-pub const SPEAKER: Icon = icon(&[
+pub static SPEAKER: Icon = Icon::new(&[
     Part::Path("M4 9.5h3.5L12 5.5v13l-4.5-4H4z"),
     Part::Path("M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"),
 ]);
 /// An ear: Master's preview button.
-pub const EAR: Icon = icon(&[
+pub static EAR: Icon = Icon::new(&[
     Part::Path("M7 9.5a5 5 0 0 1 10 0c0 3.2-3 4.2-3 7a2.8 2.8 0 0 1-5 1.6"),
     Part::Path("M10 9.5a2 2 0 0 1 4 0c0 1.2-1 1.6-1.5 2.4"),
 ]);
 /// The slash over a pressed mute's icon.
-pub const SLASH: Icon = Icon {
-    parts: &[Part::Path("M4 4l16 16")],
-    line: SLASH_LINE,
-};
+pub static SLASH: Icon = Icon::with_line(&[Part::Path("M4 4l16 16")], SLASH_LINE);
 /// Two chain links: a channel's link toggle.
-pub const LINK: Icon = icon(&[
+pub static LINK: Icon = Icon::new(&[
     Part::Path("M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"),
     Part::Path("M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"),
 ]);
 /// A microphone: a hardware channel's header.
-pub const MIC: Icon = icon(&[
+pub static MIC: Icon = Icon::new(&[
     rect(9.0, 3.0, 6.0, 11.0, 3.0),
     Part::Path("M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"),
 ]);
 /// Four squares: an app channel's header.
-pub const APPS: Icon = icon(&[
+pub static APPS: Icon = Icon::new(&[
     rect(4.0, 4.0, 7.0, 7.0, 1.0),
     rect(13.0, 4.0, 7.0, 7.0, 1.0),
     rect(4.0, 13.0, 7.0, 7.0, 1.0),
@@ -93,15 +126,15 @@ pub const APPS: Icon = icon(&[
     not(test),
     expect(dead_code, reason = "the mix panel's output rows (step 4)")
 )]
-pub const OUT: Icon = icon(&[Part::Path("M4 12h12M12 7l5 5-5 5M20 4v16")]);
+pub static OUT: Icon = Icon::new(&[Part::Path("M4 12h12M12 7l5 5-5 5M20 4v16")]);
 /// A plus: "Add plugin", the add-channel column.
-pub const PLUS: Icon = icon(&[Part::Path("M12 4v16M4 12h16")]);
+pub static PLUS: Icon = Icon::new(&[Part::Path("M12 4v16M4 12h16")]);
 /// A gear: an insert's settings, on hover.
 #[cfg_attr(
     not(test),
     expect(dead_code, reason = "an insert's hover controls (step 3)")
 )]
-pub const GEAR: Icon = icon(&[
+pub static GEAR: Icon = Icon::new(&[
     Part::Circle {
         cx: 12.0,
         cy: 12.0,
@@ -116,19 +149,19 @@ pub const GEAR: Icon = icon(&[
     not(test),
     expect(dead_code, reason = "an insert's hover controls (step 3)")
 )]
-pub const TRASH: Icon = icon(&[Part::Path("M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13")]);
+pub static TRASH: Icon = Icon::new(&[Part::Path("M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13")]);
 /// A caret: a strip header under the pointer.
 #[cfg_attr(
     not(test),
     expect(dead_code, reason = "a strip header under the pointer (step 3)")
 )]
-pub const CARET: Icon = icon(&[Part::Path("M6 9l6 6 6-6")]);
+pub static CARET: Icon = Icon::new(&[Part::Path("M6 9l6 6 6-6")]);
 /// A magnifier: the search fields.
 #[cfg_attr(
     not(test),
     expect(dead_code, reason = "the search fields (steps 4 and 5)")
 )]
-pub const SEARCH: Icon = icon(&[
+pub static SEARCH: Icon = Icon::new(&[
     Part::Circle {
         cx: 11.0,
         cy: 11.0,
@@ -138,31 +171,31 @@ pub const SEARCH: Icon = icon(&[
 ]);
 /// A star: a favourite in the browser.
 #[cfg_attr(not(test), expect(dead_code, reason = "the plugin browser (step 5)"))]
-pub const STAR: Icon = icon(&[Part::Path(
+pub static STAR: Icon = Icon::new(&[Part::Path(
     "M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.8l-5.2 2.8 1-5.8-4.3-4.1 5.9-.8z",
 )]);
 /// Three lines: the header's menu.
-pub const MENU: Icon = icon(&[Part::Path("M4 7h16M4 12h16M4 17h16")]);
+pub static MENU: Icon = Icon::new(&[Part::Path("M4 7h16M4 12h16M4 17h16")]);
 
 /// Every icon, by name, for the tests.
 #[cfg(test)]
-pub const ALL: [(&str, Icon); 16] = [
-    ("PHONES", PHONES),
-    ("MASTER", MASTER),
-    ("SPEAKER", SPEAKER),
-    ("EAR", EAR),
-    ("SLASH", SLASH),
-    ("LINK", LINK),
-    ("MIC", MIC),
-    ("APPS", APPS),
-    ("OUT", OUT),
-    ("PLUS", PLUS),
-    ("GEAR", GEAR),
-    ("TRASH", TRASH),
-    ("CARET", CARET),
-    ("SEARCH", SEARCH),
-    ("STAR", STAR),
-    ("MENU", MENU),
+pub static ALL: [(&str, &Icon); 16] = [
+    ("PHONES", &PHONES),
+    ("MASTER", &MASTER),
+    ("SPEAKER", &SPEAKER),
+    ("EAR", &EAR),
+    ("SLASH", &SLASH),
+    ("LINK", &LINK),
+    ("MIC", &MIC),
+    ("APPS", &APPS),
+    ("OUT", &OUT),
+    ("PLUS", &PLUS),
+    ("GEAR", &GEAR),
+    ("TRASH", &TRASH),
+    ("CARET", &CARET),
+    ("SEARCH", &SEARCH),
+    ("STAR", &STAR),
+    ("MENU", &MENU),
 ];
 
 /// One stroked run of points in SVG units, and whether it closes on itself.
@@ -172,9 +205,9 @@ pub struct Run {
     pub closed: bool,
 }
 
-/// The icon's runs in SVG units. A path the parser cannot read draws nothing (and the test
-/// over [`ALL`] says which).
-pub fn runs(icon: &Icon) -> Vec<Run> {
+/// The icon's runs in SVG units, read afresh. A path the parser cannot read draws nothing
+/// (and the test over [`ALL`] says which).
+fn runs(icon: &Icon) -> Vec<Run> {
     let mut out = Vec::new();
     for part in icon.parts {
         match *part {
@@ -199,15 +232,8 @@ pub fn paint(painter: &Painter, icon: &Icon, rect: Rect, colour: Color32) {
     let width = icon.line * scale;
     let stroke = Stroke::new(width, colour);
     let at = |p: Pos2| rect.min + p.to_vec2() * scale;
-    for run in runs(icon) {
-        let mut points: Vec<Pos2> = run.points.iter().map(|&p| at(p)).collect();
-        // A rounded end whose straight side has no length repeats a point; the tessellator
-        // wants distinct ones.
-        points.dedup_by(|a, b| a.distance_sq(*b) < 1e-6);
-        if run.closed && points.len() > 2 && points[0].distance_sq(points[points.len() - 1]) < 1e-6
-        {
-            points.pop();
-        }
+    for run in icon.runs() {
+        let points: Vec<Pos2> = run.points.iter().map(|&p| at(p)).collect();
         if run.closed {
             painter.add(PathShape::closed_line(points, stroke));
         } else {
@@ -476,9 +502,13 @@ mod tests {
                     assert!(path(d).is_some(), "{name}: the parser cannot read `{d}`");
                 }
             }
-            let runs = runs(&icon);
+            let runs = icon.runs();
             assert!(!runs.is_empty(), "{name} draws nothing");
-            for run in &runs {
+            assert!(
+                std::ptr::eq(runs, icon.runs()),
+                "{name} is read once and kept"
+            );
+            for run in runs {
                 assert!(run.points.len() > 1, "{name} has a run of one point");
                 for p in &run.points {
                     assert!(

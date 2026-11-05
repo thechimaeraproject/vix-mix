@@ -55,10 +55,13 @@ pub fn draw(root: &mut egui::Ui, view: &View<'_>) {
             .frame(
                 Frame::NONE
                     .fill(colour::STRIP)
-                    .stroke(Stroke::new(1.0, colour::MUTE))
+                    .stroke(Stroke::new(size::HAIRLINE, colour::MUTE))
                     .corner_radius(CornerRadius::same(size::CORNER))
-                    .inner_margin(Margin::symmetric(10, 6))
-                    .outer_margin(Margin::symmetric(8, 6)),
+                    .inner_margin(Margin::symmetric(size::BANNER_PAD[0], size::BANNER_PAD[1]))
+                    .outer_margin(Margin::symmetric(
+                        size::BANNER_MARGIN[0],
+                        size::BANNER_MARGIN[1],
+                    )),
             )
             .show(root, |ui| {
                 ui.label(RichText::new(reason).color(colour::TEXT));
@@ -81,10 +84,10 @@ fn header(painter: &Painter, rect: Rect, stats: StatsFrame) {
     painter.rect_filled(rect, CornerRadius::ZERO, colour::WIN);
     painter.hline(
         rect.x_range(),
-        rect.bottom() - 0.5,
-        Stroke::new(1.0, colour::EDGE),
+        rect.bottom() - size::HAIRLINE_INSET,
+        Stroke::new(size::HAIRLINE, colour::EDGE),
     );
-    let y = rect.top() + (size::HEADER - 1.0) / 2.0;
+    let y = rect.top() + (size::HEADER - size::HAIRLINE) / 2.0;
     let [button_w, _] = size::MENU_BUTTON;
     let menu = Rect::from_center_size(
         pos2(rect.left() + size::HEADER_PAD_X + button_w / 2.0, y),
@@ -167,7 +170,7 @@ fn display(painter: &Painter, centre: Pos2, stats: StatsFrame) {
         Item::Text(run(painter, &percent, true)),
     ]);
     let hairlines = cells.len().saturating_sub(1) as f32;
-    let total = cells.iter().map(|c| cell_width(c)).sum::<f32>() + hairlines;
+    let total = cells.iter().map(|c| cell_width(c)).sum::<f32>() + hairlines * size::HAIRLINE;
     let rect = Rect::from_center_size(centre, vec2(total, size::DISPLAY_HEIGHT));
     painter.rect_filled(rect, size::CORNER, colour::BLACK);
     let mut x = rect.left();
@@ -197,8 +200,12 @@ fn display(painter: &Painter, centre: Pos2, stats: StatsFrame) {
         }
         x += width;
         if index + 1 < count {
-            painter.vline(x + 0.5, rect.y_range(), Stroke::new(1.0, colour::LINE));
-            x += 1.0;
+            painter.vline(
+                x + size::HAIRLINE_INSET,
+                rect.y_range(),
+                Stroke::new(size::HAIRLINE, colour::LINE),
+            );
+            x += size::HAIRLINE;
         }
     }
 }

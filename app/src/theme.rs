@@ -75,6 +75,18 @@ pub mod size {
     /// Every control's corner: flat, 2 px. Popovers alone have a shadow (handoff 05, step 4).
     pub const CORNER: u8 = 2;
 
+    /// A hairline: the header's bottom edge, the FX header's rule, the display's separators,
+    /// a scale tick's thickness, an off bypass square's outline, a muted readout's strike.
+    pub const HAIRLINE: f32 = 1.0;
+    /// Where a hairline's centre sits inside the edge it runs along: half its width, so it
+    /// fills one whole row of points rather than straddling two.
+    pub const HAIRLINE_INSET: f32 = HAIRLINE / 2.0;
+
+    /// The banner under the header when there is no audio backend: its padding and its
+    /// margin, each across then down, and its outline (a hairline in the mute colour).
+    pub const BANNER_PAD: [i8; 2] = [10, 6];
+    pub const BANNER_MARGIN: [i8; 2] = [8, 6];
+
     /// The header bar, its bottom edge included.
     pub const HEADER: f32 = 34.0;
     /// The header's side padding.
@@ -158,6 +170,13 @@ pub mod size {
     pub const FADER_INSET: f32 = 6.0;
     /// The fader line's thickness.
     pub const FADER_LINE: f32 = 2.0;
+    /// How far the fader line reaches past its column's far side (`.vf.l .ln{right:-1px}`).
+    pub const FADER_LINE_OVERHANG: f32 = 1.0;
+    /// How much further short of its triangle a mix's line stops (`.vf.big.r .ln{right:7px}`
+    /// against a channel's 6).
+    pub const BIG_LINE_SHORTFALL: f32 = 1.0;
+    /// The peak-hold line's thickness.
+    pub const PEAK_LINE: f32 = 1.0;
     /// The fader triangle: its depth and its height.
     pub const TRIANGLE: [f32; 2] = [6.0, 8.0];
     /// A scale tick's length.
