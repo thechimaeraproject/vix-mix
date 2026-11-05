@@ -7,7 +7,7 @@
 //! The parts are written here from the outside, from what each consumer reads: `save` the
 //! whole setup, `engine` the snapshot, `graph` what the backend's nodes derive from, `routing`
 //! which app goes to which channel, `created` and `removed` the instances in the chains,
-//! `channel` the channel that appeared.
+//! `channel` the channel that appeared. The undo commands put back what the sequence removed.
 
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
@@ -15,8 +15,8 @@ use proptest::test_runner::TestRunner;
 use vixmix_model::persist::{parse, to_ron};
 use vixmix_model::taper::UNITY;
 use vixmix_model::{
-    AppRef, Applied, ChannelId, ChannelKind, Command, DeviceRef, InstanceId, MixId, PluginRef,
-    Prefs, Setup, SlotRef, Source, Strip, apply, example, snapshot,
+    AppRef, Applied, Channel, ChannelId, ChannelKind, Command, DeviceRef, Insert, InstanceId,
+    MixId, PluginRef, Prefs, Setup, SlotRef, Source, Strip, apply, example, snapshot,
 };
 
 // --- What each part of `Applied` answers for -------------------------------------------------
@@ -115,6 +115,50 @@ enum Seed {
     SetMixMute(bool, bool),
     SetPreview(bool),
     SetPrefs(u8, bool),
+    /// One of the channels removed so far (or, past them, one that is still there), put back
+    /// at a place.
+    RestoreChannel(Pick, u8),
+    /// One of the inserts removed so far (or, past them, one never handed out), put back in
+    /// the gap it left (an even second pick) or anywhere.
+    RestoreInsert(Pick, Pick, u8),
+}
+
+/// What the sequence removed so far, for the undo commands to put back: each channel with the
+/// place it had, each insert removed alone with the gap it left.
+#[derive(Default)]
+struct Removed {
+    channels: Vec<(usize, Channel)>,
+    inserts: Vec<(SlotRef, Insert)>,
+}
+
+impl Removed {
+    /// Notes what `cmd` removed from `before`, once it applied.
+    fn note(&mut self, cmd: &Command, before: &Setup) {
+        match cmd {
+            Command::RemoveChannel(ch) => {
+                if let Some(at) = before.channels.iter().position(|c| c.id == *ch) {
+                    self.channels.push((at, before.channels[at].clone()));
+                }
+            }
+            Command::RemoveInsert { instance } => {
+                let strips = before
+                    .channels
+                    .iter()
+                    .map(|c| (Strip::Channel(c.id), &c.chain))
+                    .chain([
+                        (Strip::Mix(MixId::Monitor), &before.monitor.chain),
+                        (Strip::Mix(MixId::Master), &before.master.chain),
+                    ]);
+                for (strip, chain) in strips {
+                    if let Some(index) = chain.iter().position(|i| i.instance == *instance) {
+                        self.inserts
+                            .push((SlotRef { strip, index }, chain[index].clone()));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// The index of each variant, by an exhaustive match: a new `Command` fails to compile here
@@ -139,10 +183,12 @@ fn kind(cmd: &Command) -> usize {
         Command::SetMixMute { .. } => 15,
         Command::SetPreview(_) => 16,
         Command::SetPrefs(_) => 17,
+        Command::RestoreChannel { .. } => 18,
+        Command::RestoreInsert { .. } => 19,
     }
 }
 
-const KINDS: usize = 18;
+const KINDS: usize = 20;
 
 const NAMES: [&str; 6] = ["Mic", "Game", "  ", "Voice chat", " Music ", "Synth"];
 
@@ -240,7 +286,7 @@ fn mix(master: bool) -> MixId {
     }
 }
 
-fn command(seed: &Seed, setup: &Setup) -> Command {
+fn command(seed: &Seed, setup: &Setup, removed: &Removed) -> Command {
     match seed.clone() {
         Seed::AddChannel(apps) => Command::AddChannel {
             kind: if apps {
@@ -328,6 +374,53 @@ fn command(seed: &Seed, setup: &Setup) -> Command {
                 Vec::new()
             },
         }),
+        Seed::RestoreChannel(pick, at) => {
+            let n = removed.channels.len();
+            let (place, channel) = match usize::from(pick) % (n + 1) {
+                i if i < n => removed.channels[i].clone(),
+                // One that was never removed: refused as in use (or as never handed out).
+                _ => (
+                    0,
+                    setup.channels.first().cloned().unwrap_or_else(|| Channel {
+                        id: ChannelId(9_999),
+                        ..Setup::default().channels[0].clone()
+                    }),
+                ),
+            };
+            let len = setup.channels.len();
+            Command::RestoreChannel {
+                at: if at % 2 == 0 {
+                    place
+                } else {
+                    usize::from(at) % (len + 2)
+                },
+                channel,
+            }
+        }
+        Seed::RestoreInsert(pick, to, index) => {
+            let n = removed.inserts.len();
+            let (gap, insert) = match usize::from(pick) % (n + 1) {
+                i if i < n => removed.inserts[i].clone(),
+                _ => (
+                    SlotRef {
+                        strip: Strip::Mix(MixId::Master),
+                        index: 0,
+                    },
+                    Insert {
+                        instance: InstanceId(9_999),
+                        plugin: plugin(0),
+                        enabled: true,
+                        state: None,
+                    },
+                ),
+            };
+            let to = if to % 2 == 0 {
+                gap
+            } else {
+                slot(setup, strip(setup, to), index)
+            };
+            Command::RestoreInsert { to, insert }
+        }
     }
 }
 
@@ -374,6 +467,8 @@ fn seed() -> impl Strategy<Value = Seed> {
         1 => (any::<bool>(), any::<bool>()).prop_map(|(m, x)| Seed::SetMixMute(m, x)),
         1 => any::<bool>().prop_map(Seed::SetPreview),
         1 => (any::<u8>(), any::<bool>()).prop_map(|(q, d)| Seed::SetPrefs(q, d)),
+        1 => (pick(), any::<u8>()).prop_map(|(c, at)| Seed::RestoreChannel(c, at)),
+        1 => (pick(), pick(), any::<u8>()).prop_map(|(i, s, at)| Seed::RestoreInsert(i, s, at)),
     ]
 }
 
@@ -391,8 +486,9 @@ fn check(example: bool, seeds: &[Seed]) -> Result<[bool; KINDS], TestCaseError> 
         Setup::default()
     };
     let mut changed = [false; KINDS];
+    let mut removed = Removed::default();
     for seed in seeds {
-        let cmd = command(seed, &setup);
+        let cmd = command(seed, &setup, &removed);
         let before = setup.clone();
         match apply(&mut setup, cmd.clone()) {
             Err(refused) => {
@@ -407,6 +503,7 @@ fn check(example: bool, seeds: &[Seed]) -> Result<[bool; KINDS], TestCaseError> 
                 prop_assert!(message.contains(':'), "{} says no fix", message);
             }
             Ok(applied) => {
+                removed.note(&cmd, &before);
                 prop_assert_eq!(&applied, &expected(&before, &setup), "{:?}", cmd);
                 prop_assert_eq!(applied.changed(), applied.save);
                 changed[kind(&cmd)] |= applied.save;

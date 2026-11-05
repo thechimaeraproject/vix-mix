@@ -92,6 +92,15 @@ pub enum Command {
     SetPreview(bool),
     /// The preferences dialog.
     SetPrefs(Prefs),
+    /// The undo of a [`RemoveChannel`](Command::RemoveChannel): `channel` back at index `at`
+    /// with its id, chain and instance ids, as it was removed. Refused when its id or an
+    /// instance id is in use or was never handed out, past the channel limit, or past the
+    /// end; an app another channel took since stays there.
+    RestoreChannel { at: usize, channel: Channel },
+    /// The undo of a [`RemoveInsert`](Command::RemoveInsert): `insert` back before `to` (the
+    /// gap it was removed from) with its instance id, bypass and state. Refused when its
+    /// instance id is in use or was never handed out, or past the chain's end.
+    RestoreInsert { to: SlotRef, insert: Insert },
 }
 
 /// What a command changed, each part set exactly when its part of the setup changed. Every
@@ -114,7 +123,7 @@ pub struct Applied {
     pub created: Vec<InstanceId>,
     /// Instances the host must retire, in chain order: their inserts left the setup.
     pub removed: Vec<InstanceId>,
-    /// The channel an `AddChannel` made.
+    /// The channel an `AddChannel` made or a `RestoreChannel` put back.
     pub channel: Option<ChannelId>,
 }
 
@@ -210,6 +219,14 @@ pub enum Refused {
         "this setup has handed out every {what} id there is: move setup.ron aside and start from a new setup"
     )]
     OutOfIds { what: &'static str },
+    #[error(
+        "the setup has {len} channels, so a channel cannot go back at place {at}: put it back at {len} or before"
+    )]
+    NoPlace { at: usize, len: usize },
+    #[error(
+        "{what} {id} is not one this setup removed (it is in use, or was never handed out): only a removed {what} can be put back; add a new one instead"
+    )]
+    NotRemoved { what: &'static str, id: u32 },
 }
 
 /// Applies `cmd` to `setup` whole, or refuses it and leaves `setup` as it was.
@@ -304,6 +321,8 @@ pub fn apply(setup: &mut Setup, cmd: Command) -> Result<Applied, Refused> {
                 ..Applied::saved()
             })
         }
+        Command::RestoreChannel { at, channel } => restore_channel(setup, at, channel),
+        Command::RestoreInsert { to, insert } => restore_insert(setup, to, insert),
     }
 }
 
@@ -518,6 +537,114 @@ fn move_insert(
     Ok(Applied {
         engine: true,
         ..Applied::saved()
+    })
+}
+
+fn restore_channel(setup: &mut Setup, at: usize, channel: Channel) -> Result<Applied, Refused> {
+    let len = setup.channels.len();
+    if len >= MAX_CHANNELS {
+        return Err(Refused::TooManyChannels { max: MAX_CHANNELS });
+    }
+    if at > len {
+        return Err(Refused::NoPlace { at, len });
+    }
+    let id = channel.id;
+    if setup.channel(id).is_some() || id.0 >= setup.next_channel.0 {
+        return Err(Refused::NotRemoved {
+            what: "channel",
+            id: id.0,
+        });
+    }
+    let name = channel.name.trim();
+    if name.is_empty() {
+        return Err(Refused::EmptyName);
+    }
+    let monitor = check_send(channel.monitor)?;
+    let master = check_send(channel.master)?;
+    for (index, insert) in channel.chain.iter().enumerate() {
+        check_removed_insert(setup, insert)?;
+        if channel.chain[..index]
+            .iter()
+            .any(|i| i.instance == insert.instance)
+        {
+            return Err(Refused::NotRemoved {
+                what: "plugin instance",
+                id: insert.instance.0,
+            });
+        }
+    }
+    // An app plays into one channel only: one another channel took since stays there.
+    let source = match channel.source {
+        Source::Apps(apps) => {
+            let mut kept: Vec<AppRef> = Vec::with_capacity(apps.len());
+            for app in apps {
+                if setup.channel_of_app(&app).is_none() && !kept.iter().any(|a| a.matches(&app)) {
+                    kept.push(app);
+                }
+            }
+            Source::Apps(kept)
+        }
+        hardware => hardware,
+    };
+    let restored = Channel {
+        id,
+        name: name.to_string(),
+        source,
+        monitor,
+        master,
+        ..channel
+    };
+    let routing = !apps_of(&restored.source).is_empty();
+    let created = restored.chain.iter().map(|i| i.instance).collect();
+    setup.channels.insert(at, restored);
+    Ok(Applied {
+        engine: true,
+        graph: true,
+        routing,
+        created,
+        channel: Some(id),
+        ..Applied::saved()
+    })
+}
+
+fn restore_insert(setup: &mut Setup, to: SlotRef, insert: Insert) -> Result<Applied, Refused> {
+    let len = chain_mut(setup, to.strip)?.len();
+    if to.index > len {
+        return Err(Refused::NoSlot {
+            strip: to.strip,
+            index: to.index,
+            len,
+        });
+    }
+    check_removed_insert(setup, &insert)?;
+    let instance = insert.instance;
+    chain_mut(setup, to.strip)?.insert(to.index, insert);
+    Ok(Applied {
+        engine: true,
+        created: vec![instance],
+        ..Applied::saved()
+    })
+}
+
+/// Whether `insert` can be put back: its plugin stored as a setup stores one, and its
+/// instance an id this setup handed out and no insert holds now.
+fn check_removed_insert(setup: &Setup, insert: &Insert) -> Result<(), Refused> {
+    check_plugin(&insert.plugin)?;
+    let id = insert.instance;
+    if setup.inserts().any(|i| i.instance == id) || id.0 >= setup.next_instance.0 {
+        return Err(Refused::NotRemoved {
+            what: "plugin instance",
+            id: id.0,
+        });
+    }
+    Ok(())
+}
+
+/// `send` with a fader position, -0 read as 0.
+fn check_send(send: Send) -> Result<Send, Refused> {
+    Ok(Send {
+        position: check_position(send.position)?,
+        ..send
     })
 }
 
@@ -1318,5 +1445,231 @@ mod tests {
         )
         .unwrap();
         assert!(applied.save && !applied.graph);
+    }
+
+    #[test]
+    fn a_removed_channel_comes_back_in_its_place_as_it_was() {
+        let mut setup = Setup::default();
+        let ch = add(&mut setup, ChannelKind::Apps);
+        let after = add(&mut setup, ChannelKind::Hardware);
+        let made = apply(
+            &mut setup,
+            Command::AddInsert {
+                strip: Strip::Channel(ch),
+                plugin: plugin("EQ"),
+                at: 0,
+            },
+        )
+        .unwrap()
+        .created;
+        let instance = made[0];
+        for cmd in [
+            Command::SetSource {
+                ch,
+                source: Source::Apps(vec![app("spotify"), app("firefox")]),
+            },
+            Command::SetInsertEnabled {
+                instance,
+                enabled: false,
+            },
+            Command::SetInsertState {
+                instance,
+                state: Some(vec![1, 2, 3]),
+            },
+        ] {
+            let _ = apply(&mut setup, cmd).unwrap();
+        }
+        let at = setup.channels.iter().position(|c| c.id == ch).unwrap();
+        let gone = setup.channels[at].clone();
+        let _ = apply(&mut setup, Command::RemoveChannel(ch)).unwrap();
+        // Firefox goes to another channel while the toast shows; it stays there.
+        let _ = apply(
+            &mut setup,
+            Command::SetSource {
+                ch: after,
+                source: Source::Apps(vec![app("firefox")]),
+            },
+        )
+        .unwrap();
+        let applied = apply(
+            &mut setup,
+            Command::RestoreChannel {
+                at,
+                channel: gone.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            applied.created, made,
+            "its instances come back under their ids"
+        );
+        assert_eq!(applied.channel, Some(ch));
+        assert!(applied.engine && applied.graph && applied.routing && applied.save);
+        let back = &setup.channels[at];
+        assert_eq!(back.id, ch, "in its place, under its id");
+        assert_eq!(back.chain, gone.chain, "bypass and state as they were");
+        assert_eq!(back.source, Source::Apps(vec![app("spotify")]));
+        assert_eq!(setup.channel_of_app(&app("firefox")), Some(after));
+        assert_eq!(setup.next_channel, ChannelId(after.0 + 1), "no id is spent");
+        // Put back once; a second time it is in use.
+        let again = apply(&mut setup, Command::RestoreChannel { at, channel: gone });
+        assert_eq!(
+            again,
+            Err(Refused::NotRemoved {
+                what: "channel",
+                id: ch.0
+            })
+        );
+    }
+
+    #[test]
+    fn a_removed_insert_comes_back_in_its_gap_as_it_was() {
+        let mut setup = Setup::default();
+        let ch = setup.channels[0].id;
+        let strip = Strip::Channel(ch);
+        let mut made = Vec::new();
+        for (at, name) in ["A", "B", "C"].into_iter().enumerate() {
+            made.extend(
+                apply(
+                    &mut setup,
+                    Command::AddInsert {
+                        strip,
+                        plugin: plugin(name),
+                        at,
+                    },
+                )
+                .unwrap()
+                .created,
+            );
+        }
+        let _ = apply(
+            &mut setup,
+            Command::SetInsertState {
+                instance: made[1],
+                state: Some(vec![7]),
+            },
+        )
+        .unwrap();
+        let gone = setup.channels[0].chain[1].clone();
+        let _ = apply(&mut setup, Command::RemoveInsert { instance: made[1] }).unwrap();
+        let applied = apply(
+            &mut setup,
+            Command::RestoreInsert {
+                to: SlotRef { strip, index: 1 },
+                insert: gone.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(applied.created, vec![made[1]]);
+        assert!(applied.engine && applied.save && !applied.graph && !applied.routing);
+        assert_eq!(names(&setup.channels[0].chain), ["A", "B", "C"]);
+        assert_eq!(setup.channels[0].chain[1], gone);
+    }
+
+    #[test]
+    fn only_what_was_removed_can_be_put_back() {
+        let mut setup = Setup::default();
+        let ch = setup.channels[0].id;
+        let strip = Strip::Channel(ch);
+        let made = apply(
+            &mut setup,
+            Command::AddInsert {
+                strip,
+                plugin: plugin("EQ"),
+                at: 0,
+            },
+        )
+        .unwrap()
+        .created;
+        let live = setup.channels[0].chain[0].clone();
+        let mut never = live.clone();
+        never.instance = setup.next_instance;
+        let channel = setup.channels[0].clone();
+        let mut unknown = channel.clone();
+        unknown.id = setup.next_channel;
+        unknown.chain.clear();
+        let before = setup.clone();
+        for (cmd, refused) in [
+            (
+                Command::RestoreInsert {
+                    to: SlotRef { strip, index: 0 },
+                    insert: live,
+                },
+                Refused::NotRemoved {
+                    what: "plugin instance",
+                    id: made[0].0,
+                },
+            ),
+            (
+                Command::RestoreInsert {
+                    to: SlotRef { strip, index: 0 },
+                    insert: never.clone(),
+                },
+                Refused::NotRemoved {
+                    what: "plugin instance",
+                    id: never.instance.0,
+                },
+            ),
+            (
+                Command::RestoreInsert {
+                    to: SlotRef { strip, index: 2 },
+                    insert: never,
+                },
+                Refused::NoSlot {
+                    strip,
+                    index: 2,
+                    len: 1,
+                },
+            ),
+            (
+                Command::RestoreChannel {
+                    at: 0,
+                    channel: channel.clone(),
+                },
+                Refused::NotRemoved {
+                    what: "channel",
+                    id: ch.0,
+                },
+            ),
+            (
+                Command::RestoreChannel {
+                    at: 0,
+                    channel: unknown.clone(),
+                },
+                Refused::NotRemoved {
+                    what: "channel",
+                    id: unknown.id.0,
+                },
+            ),
+        ] {
+            let message = refused.to_string();
+            assert!(message.contains(": "), "{message} says no fix");
+            assert_eq!(apply(&mut setup, cmd), Err(refused));
+            assert_eq!(setup, before, "a refused restore changes nothing");
+        }
+        let _ = apply(&mut setup, Command::RemoveChannel(ch)).unwrap();
+        let place = apply(
+            &mut setup,
+            Command::RestoreChannel {
+                at: 1,
+                channel: channel.clone(),
+            },
+        );
+        assert_eq!(place, Err(Refused::NoPlace { at: 1, len: 0 }));
+        let mut nameless = channel.clone();
+        nameless.name = "  ".to_string();
+        let name = apply(
+            &mut setup,
+            Command::RestoreChannel {
+                at: 0,
+                channel: nameless,
+            },
+        );
+        assert_eq!(name, Err(Refused::EmptyName));
+        for _ in 0..MAX_CHANNELS {
+            add(&mut setup, ChannelKind::Apps);
+        }
+        let full = apply(&mut setup, Command::RestoreChannel { at: 0, channel });
+        assert_eq!(full, Err(Refused::TooManyChannels { max: MAX_CHANNELS }));
     }
 }
