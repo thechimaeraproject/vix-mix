@@ -1,0 +1,417 @@
+//! What the window's headless tests build on (Vix's `test_support.rs` pattern): a
+//! [`Harness`] that runs the window's own frame — [`ui::draw`] then [`Shell::dispatch`] —
+//! in egui without a window or a GPU, against `FakeHost` wrapped in a [`Recorder`] that
+//! keeps every call the window made, so a test presses, drags and types as a user does and
+//! asserts the [`Command`] that went to the host.
+
+use egui::{Color32, Event, Key, Modifiers, PointerButton, Pos2, Rect, vec2};
+use vixmix_host::{AppPresence, FakeHost, Host, HostError, HostEvent, MeterFrame, StatsFrame};
+use vixmix_model::{
+    Applied, ChannelId, Command, DeviceInfo, InstanceId, MixId, Refused, Setup, Strip,
+};
+use vixmix_plugins::Catalog;
+use winit::raw_window_handle::RawWindowHandle;
+
+use crate::console;
+use crate::editors::EditorWindows;
+use crate::fader::Target;
+use crate::shell::{Intent, Shell};
+use crate::strip::{self, Rows};
+use crate::theme::size;
+use crate::ui;
+
+/// What the window asked of the host, in order.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Call {
+    Apply(Command),
+    CloseEditor(InstanceId),
+}
+
+/// `FakeHost`, keeping every call the window made.
+pub struct Recorder {
+    pub inner: FakeHost,
+    pub calls: Vec<Call>,
+}
+
+impl Recorder {
+    /// The commands the window sent since call `from`.
+    pub fn sent_since(&self, from: usize) -> Vec<Command> {
+        self.calls[from..]
+            .iter()
+            .filter_map(|c| match c {
+                Call::Apply(cmd) => Some(cmd.clone()),
+                Call::CloseEditor(_) => None,
+            })
+            .collect()
+    }
+}
+
+impl Host for Recorder {
+    // `FakeHost`'s answers, until the Recorder records these calls itself.
+    fn problems(&self) -> &[vixmix_host::InsertProblem] {
+        self.inner.problems()
+    }
+    fn set_favorite(&mut self, plugin_id: &str, favorite: bool) {
+        self.inner.set_favorite(plugin_id, favorite);
+    }
+    fn rescan_plugins(&mut self) {
+        self.inner.rescan_plugins();
+    }
+    fn next_poll(&self) -> Option<std::time::Duration> {
+        self.inner.next_poll()
+    }
+    fn setup(&self) -> &Setup {
+        self.inner.setup()
+    }
+    fn apply(&mut self, cmd: Command) -> Result<Applied, Refused> {
+        self.calls.push(Call::Apply(cmd.clone()));
+        self.inner.apply(cmd)
+    }
+    fn poll(&mut self) -> Vec<HostEvent> {
+        self.inner.poll()
+    }
+    fn meters(&self) -> MeterFrame {
+        self.inner.meters()
+    }
+    fn stats(&self) -> StatsFrame {
+        self.inner.stats()
+    }
+    fn catalog(&self) -> &Catalog {
+        self.inner.catalog()
+    }
+    fn apps(&self) -> &[AppPresence] {
+        self.inner.apps()
+    }
+    fn devices(&self) -> &[DeviceInfo] {
+        self.inner.devices()
+    }
+    fn open_editor(
+        &mut self,
+        instance: InstanceId,
+        parent: RawWindowHandle,
+    ) -> Result<chimaeraproject_vst3_host::EditorSize, HostError> {
+        self.inner.open_editor(instance, parent)
+    }
+    fn tick_editors(&mut self) -> Vec<(InstanceId, chimaeraproject_vst3_host::EditorEvent)> {
+        self.inner.tick_editors()
+    }
+    fn close_editor(&mut self, instance: InstanceId) {
+        self.calls.push(Call::CloseEditor(instance));
+        self.inner.close_editor(instance);
+    }
+    fn save_now(&mut self) {
+        self.inner.save_now();
+    }
+}
+
+/// The window without a window: egui, the shell and the recorded host.
+pub struct Harness {
+    pub ctx: egui::Context,
+    pub host: Recorder,
+    pub shell: Shell,
+    pub editors: EditorWindows,
+    /// The modifier keys held during the next frames.
+    pub modifiers: Modifiers,
+    /// The modifiers egui was last told of.
+    sent_modifiers: Modifiers,
+    /// The screen: room for the console and a popover beside its last channel.
+    pub screen: Rect,
+    /// The window's clock, a 60 Hz frame a pass.
+    time: f64,
+    /// Every text the last frame painted: what it says, where, in which colour.
+    pub texts: Vec<(String, Rect, Color32)>,
+    /// What the last frame's gestures asked.
+    pub intents: Vec<Intent>,
+}
+
+impl Harness {
+    /// `FakeHost`'s example console on a simulated backend, one frame drawn so the next can
+    /// be pressed.
+    pub fn new() -> Harness {
+        let ctx = egui::Context::default();
+        ui::install(&ctx);
+        let mut harness = Harness {
+            ctx,
+            host: Recorder {
+                inner: FakeHost::new(),
+                calls: Vec::new(),
+            },
+            shell: Shell {
+                backend: vixmix_host::BackendState::Simulated,
+                ..Shell::default()
+            },
+            editors: EditorWindows::default(),
+            modifiers: Modifiers::NONE,
+            sent_modifiers: Modifiers::NONE,
+            screen: Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 700.0)),
+            time: 1.0,
+            texts: Vec::new(),
+            intents: Vec::new(),
+        };
+        harness.idle(1);
+        harness
+    }
+
+    /// One frame with `events`; answers the commands the window sent the host in it.
+    pub fn pass(&mut self, events: Vec<Event>) -> Vec<Command> {
+        let from = self.host.calls.len();
+        // A change of the modifiers held is an event of its own, first, as a window sends it.
+        let changed = (self.modifiers != self.sent_modifiers)
+            .then_some(Event::ModifiersChanged(self.modifiers));
+        self.sent_modifiers = self.modifiers;
+        let input = egui::RawInput {
+            screen_rect: Some(self.screen),
+            time: Some(self.time),
+            events: changed.into_iter().chain(events).collect(),
+            ..Default::default()
+        };
+        self.time += 1.0 / 60.0;
+        let mut intents = Vec::new();
+        let (shell, host) = (&mut self.shell, &self.host);
+        let mut output = self.ctx.run_ui(input, |root| {
+            intents = ui::draw(root, shell, host);
+        });
+        // Nothing uploads the font atlas here, and egui asserts a delta was handled.
+        output.textures_delta.clear();
+        self.texts.clear();
+        for clipped in &output.shapes {
+            collect(&clipped.shape, &mut self.texts);
+        }
+        self.intents = intents.clone();
+        let acted = !intents.is_empty();
+        self.shell
+            .dispatch(&mut self.host, &mut self.editors, intents);
+        if acted {
+            // The window draws again at once after acting, so what it shows (and where a
+            // press lands next) is the setup the command made.
+            self.again();
+        }
+        self.host.sent_since(from)
+    }
+
+    /// The frame the window draws right after one that acted: no input, its own gestures
+    /// carried out but not followed by another.
+    fn again(&mut self) {
+        let input = egui::RawInput {
+            screen_rect: Some(self.screen),
+            time: Some(self.time),
+            ..Default::default()
+        };
+        self.time += 1.0 / 60.0;
+        let mut intents = Vec::new();
+        let (shell, host) = (&mut self.shell, &self.host);
+        let mut output = self.ctx.run_ui(input, |root| {
+            intents = ui::draw(root, shell, host);
+        });
+        output.textures_delta.clear();
+        self.texts.clear();
+        for clipped in &output.shapes {
+            collect(&clipped.shape, &mut self.texts);
+        }
+        self.shell
+            .dispatch(&mut self.host, &mut self.editors, intents);
+    }
+
+    /// One frame per entry, the commands of all of them in order.
+    pub fn passes(&mut self, frames: Vec<Vec<Event>>) -> Vec<Command> {
+        frames.into_iter().flat_map(|f| self.pass(f)).collect()
+    }
+
+    /// `n` frames with nothing happening (a popover's first frame sizes it unseen).
+    pub fn idle(&mut self, n: usize) {
+        for _ in 0..n {
+            let _ = self.pass(Vec::new());
+        }
+    }
+
+    /// Lets `seconds` go by on the window's clock, then draws a frame.
+    pub fn wait(&mut self, seconds: f64) {
+        self.time += seconds;
+        self.idle(1);
+    }
+
+    /// The pointer moves to `at` and stays a frame.
+    pub fn hover(&mut self, at: Pos2) -> Vec<Command> {
+        self.pass(vec![Event::PointerMoved(at)])
+    }
+
+    /// A click at `at` in one frame: move there, press, release.
+    pub fn click(&mut self, at: Pos2) -> Vec<Command> {
+        let m = self.modifiers;
+        self.pass(vec![
+            Event::PointerMoved(at),
+            button(at, true, m),
+            button(at, false, m),
+        ])
+    }
+
+    /// Two clicks at `at`, a frame apart.
+    pub fn double_click(&mut self, at: Pos2) -> Vec<Command> {
+        let mut sent = self.click(at);
+        sent.extend(self.click(at));
+        sent
+    }
+
+    /// A press at `from`, a move through each of `to` a frame each, the release at the last.
+    pub fn drag(&mut self, from: Pos2, to: &[Pos2]) -> Vec<Command> {
+        let m = self.modifiers;
+        let mut frames = vec![vec![Event::PointerMoved(from), button(from, true, m)]];
+        frames.extend(to.iter().map(|at| vec![Event::PointerMoved(*at)]));
+        let last = *to.last().unwrap_or(&from);
+        frames.push(vec![button(last, false, m)]);
+        self.passes(frames)
+    }
+
+    /// `key` pressed and released with `modifiers`.
+    pub fn key(&mut self, key: Key, modifiers: Modifiers) -> Vec<Command> {
+        let event = |pressed| Event::Key {
+            key,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers,
+        };
+        self.pass(vec![event(true), event(false)])
+    }
+
+    /// `text` typed into the focused field.
+    pub fn type_text(&mut self, text: &str) -> Vec<Command> {
+        self.pass(vec![Event::Text(text.to_string())])
+    }
+
+    /// The middle of the last frame's text that reads exactly `text`, the last painted when
+    /// several do (a popover paints over the console).
+    pub fn text(&self, text: &str) -> Pos2 {
+        self.find(text)
+            .unwrap_or_else(|| panic!("no `{text}` drawn; drew {:?}", self.drawn()))
+    }
+
+    /// The rect of the last frame's text that reads exactly `text`.
+    pub fn text_rect(&self, text: &str) -> Rect {
+        self.texts
+            .iter()
+            .rev()
+            .find(|(t, _, _)| t == text)
+            .map(|(_, rect, _)| *rect)
+            .unwrap_or_else(|| panic!("no `{text}` drawn; drew {:?}", self.drawn()))
+    }
+
+    /// The same, or `None`.
+    pub fn find(&self, text: &str) -> Option<Pos2> {
+        self.texts
+            .iter()
+            .rev()
+            .find(|(t, _, _)| t == text)
+            .map(|(_, rect, _)| rect.center())
+    }
+
+    /// Every text the last frame drew.
+    pub fn drawn(&self) -> Vec<&str> {
+        self.texts.iter().map(|(t, _, _)| t.as_str()).collect()
+    }
+
+    /// The setup as the host has it now.
+    pub fn setup(&self) -> &Setup {
+        self.host.setup()
+    }
+
+    /// The channel at position `index`.
+    pub fn channel(&self, index: usize) -> ChannelId {
+        self.setup().channels[index].id
+    }
+
+    /// Where `strip` is drawn: the console's top-left corner sits under the header.
+    pub fn strip(&self, strip: Strip) -> Rect {
+        let origin = Pos2::new(0.0, size::HEADER);
+        let (rects, _) = console::strips(origin, self.setup());
+        rects
+            .into_iter()
+            .find(|(s, _)| *s == strip)
+            .map(|(_, r)| r)
+            .expect("the strip is on the console")
+    }
+
+    /// Where the add-channel column is drawn.
+    pub fn add_column(&self) -> Rect {
+        let origin = Pos2::new(0.0, size::HEADER);
+        console::strips(origin, self.setup())
+            .1
+            .expect("the console has room for a channel")
+    }
+
+    /// A fader's column.
+    pub fn fader(&self, target: Target) -> Rect {
+        match target {
+            Target::Send { ch, mix } => {
+                let rows = Rows::of(self.strip(Strip::Channel(ch)));
+                let [left, _, right] = strip::channel_columns(rows.faders);
+                match mix {
+                    MixId::Monitor => left,
+                    MixId::Master => right,
+                }
+            }
+            Target::Level(mix) => {
+                strip::mix_columns(Rows::of(self.strip(Strip::Mix(mix))).faders)[0]
+            }
+        }
+    }
+
+    /// The point on a fader's column where its line sits now.
+    pub fn fader_line(&self, target: Target) -> Pos2 {
+        let column = self.fader(target);
+        let position = match target {
+            Target::Send { ch, mix } => self.setup().channel(ch).unwrap().send(mix).position,
+            Target::Level(mix) => self.setup().mix(mix).level.position,
+        };
+        Pos2::new(column.center().x, strip::fader_y(column, position))
+    }
+
+    /// Insert `index`'s slot in `strip`'s well (the well unscrolled).
+    pub fn slot(&self, strip: Strip, index: usize) -> Rect {
+        let fx = Rows::of(self.strip(strip)).fx;
+        let top = fx.top() + size::FX_HEAD + size::SLOTS_PAD + size::SLOT * index as f32;
+        Rect::from_min_size(
+            Pos2::new(fx.left() + size::SLOTS_PAD, top),
+            vec2(fx.width() - 2.0 * size::SLOTS_PAD, size::SLOT),
+        )
+    }
+
+    /// A strip's header.
+    pub fn head(&self, strip: Strip) -> Rect {
+        Rows::of(self.strip(strip)).head
+    }
+
+    /// A strip's button row.
+    pub fn buttons(&self, strip: Strip) -> Rect {
+        Rows::of(self.strip(strip)).buttons
+    }
+}
+
+fn button(pos: Pos2, pressed: bool, modifiers: Modifiers) -> Event {
+    Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers,
+    }
+}
+
+fn collect(shape: &egui::Shape, out: &mut Vec<(String, Rect, Color32)>) {
+    match shape {
+        egui::Shape::Text(text) => {
+            let colour = text
+                .galley
+                .job
+                .sections
+                .first()
+                .map_or(Color32::PLACEHOLDER, |s| s.format.color);
+            out.push((
+                text.galley.text().to_owned(),
+                text.galley.rect.translate(text.pos.to_vec2()),
+                colour,
+            ));
+        }
+        egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, out)),
+        _ => {}
+    }
+}

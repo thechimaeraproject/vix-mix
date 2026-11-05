@@ -1,37 +1,37 @@
-//! The winit application: the window, the host, and one frame at a time.
+//! The winit application: the window, the host, the plugin editor windows, and one frame at
+//! a time.
+//!
+//! **A frame.** The host's events (the backend's state, a toast, an editor it closed), its
+//! meters into the window's [`Meters`](crate::meters::Meters), the open editors served;
+//! then egui runs [`ui::draw`], which returns what the gestures asked; the [`Shell`] carries
+//! that out against the host; editors it queued open in windows of their own; the window
+//! keeps at least the console's size.
 //!
 //! **Pacing.** The event loop is `ControlFlow::Wait`. A frame is drawn when egui wants one
-//! for input, when egui's own `repaint_delay` (a tooltip fade) comes due, and — while the
-//! meters move (the host's backend is running or simulated) or a `--quit-after-frames` count
-//! is still running — at most every [`FRAME_INTERVAL`], so the window never repaints faster
-//! than 60 Hz. Between frames the host is polled on its own when it asks
-//! ([`Host::next_poll`]: the backend's news, the debounced save, an undo running out), without
-//! a frame unless the poll brought news. With nothing to animate and nothing pending in the
-//! host the process is idle.
-//!
-//! **The banner line** shows the backend's banner, else the newest toast for [`NOTE_FOR`],
-//! else the first insert playing as a pass-through: one line for everything the user must read
-//! until the window's own toasts and slot marks (handoff 05) take them.
+//! for input, when egui's own `repaint_delay` (a tooltip, the toast's fade, a text cursor)
+//! comes due, and — while the meters move (the host's backend is running or simulated) or a
+//! `--quit-after-frames` count is still running — at most every [`FRAME_INTERVAL`], so the
+//! window never repaints faster than 60 Hz; while a plugin editor is open, at least every
+//! [`EDITOR_POLL`]. With no backend, no editor and nothing to animate the process is idle.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use vixmix_host::{AudioBackend, BackendState, BootOptions, FakeHost, Host, HostEvent, RealHost};
+use vixmix_host::{AudioBackend, BootOptions, FakeHost, Host, RealHost};
 use winit::application::ApplicationHandler;
 use winit::event::{StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::{Window, WindowId};
 
 use crate::Startup;
+use crate::editors::{EDITOR_POLL, EditorWindows};
 use crate::gpu::Gpu;
-use crate::meters::Meters;
+use crate::shell::Shell;
+use crate::theme::pop;
 use crate::ui;
 
 /// The shortest time between two frames: 60 Hz.
 pub const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
-
-/// How long a toast stays in the banner line.
-pub const NOTE_FOR: Duration = Duration::from_secs(6);
 
 /// The winit application.
 pub struct App {
@@ -62,20 +62,18 @@ struct Running {
     egui_ctx: egui::Context,
     egui_state: egui_winit::State,
     host: Box<dyn Host>,
-    backend: BackendState,
-    /// The meters' levels and peak-hold lines, carried from frame to frame.
-    meters: Meters,
+    /// The window's state between frames: meters, gestures, the popover, the toasts.
+    shell: Shell,
+    /// The plugin editors' windows.
+    editors: EditorWindows,
     /// When the window opened: the peak-hold clock.
     opened: Instant,
     first_frame: bool,
     frames: u64,
     quit_after_frames: Option<u64>,
     last_frame: Instant,
-    /// The newest toast and when it came, for the banner line.
-    note: Option<(String, Instant)>,
-    /// When the next frame is due, and when the host wants its next poll.
-    frame_at: Option<Instant>,
-    poll_at: Option<Instant>,
+    /// The least size the window has been given, in points: what the content needs.
+    min_size: egui::Vec2,
 }
 
 impl ApplicationHandler for App {
@@ -95,25 +93,10 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) {
-        let (StartCause::ResumeTimeReached { .. }, Some(running)) = (cause, &mut self.running)
-        else {
-            return;
-        };
-        let now = Instant::now();
-        // The frame timer (meters, a quit count) or egui's `repaint_delay` has come due.
-        if running.frame_at.is_some_and(|at| at <= now) {
+    fn new_events(&mut self, _event_loop: &ActiveEventLoop, cause: StartCause) {
+        // The frame timer (meters, a quit count, editors) or egui's `repaint_delay` is due.
+        if let (StartCause::ResumeTimeReached { .. }, Some(running)) = (cause, &self.running) {
             running.window.request_redraw();
-            return;
-        }
-        // Only the host's poll is due: a frame only if it brought news.
-        if running.poll_at.is_some_and(|at| at <= now) {
-            if running.poll_host() {
-                running.window.request_redraw();
-                return;
-            }
-            running.poll_at = running.host.next_poll().map(|wait| now + wait);
-            running.schedule(event_loop);
         }
     }
 
@@ -122,6 +105,10 @@ impl ApplicationHandler for App {
             return;
         };
         if id != running.window.id() {
+            // A plugin editor's window: closing it closes its editor through the host first.
+            running
+                .editors
+                .window_event(running.host.as_mut(), id, &event);
             return;
         }
         // The redraw itself is not input: egui-winit answers it with `repaint: true`, and
@@ -145,9 +132,17 @@ impl ApplicationHandler for App {
     }
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
-        // The host goes first (its editors close before their windows), then the window.
+        // Every editor closes through the host before its window; then the host goes (its
+        // instances after their editors), then the window.
         if let Some(running) = self.running.take() {
-            let Running { host, window, .. } = running;
+            let Running {
+                mut host,
+                mut editors,
+                window,
+                ..
+            } = running;
+            editors.close_all(host.as_mut());
+            drop(editors);
             drop(host);
             drop(window);
         }
@@ -169,11 +164,14 @@ impl Running {
                 .map_err(|e| e.to_string())?,
             )
         };
+        // The console's own size, as the prototype's window is; the first frame grows it to
+        // fit a banner.
+        let natural = ui::natural_size(host.setup());
         let attributes = Window::default_attributes()
             .with_title("Vix Mix")
             .with_theme(Some(winit::window::Theme::Dark))
-            .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0))
-            .with_min_inner_size(winit::dpi::LogicalSize::new(480.0, 320.0));
+            .with_inner_size(winit::dpi::LogicalSize::new(natural.x, natural.y))
+            .with_min_inner_size(winit::dpi::LogicalSize::new(natural.x, natural.y));
         let window = Arc::new(
             event_loop
                 .create_window(attributes)
@@ -197,79 +195,24 @@ impl Running {
             egui_ctx,
             egui_state,
             host,
-            backend: BackendState::Connecting,
-            meters: Meters::default(),
+            shell: Shell::default(),
+            editors: EditorWindows::default(),
             opened: Instant::now(),
             first_frame: true,
             frames: 0,
             quit_after_frames: startup.quit_after_frames,
             last_frame: Instant::now(),
-            note: None,
-            frame_at: None,
-            poll_at: None,
+            min_size: natural,
         })
     }
 
-    /// Polls the host and takes in what it reports; whether it reported anything.
-    fn poll_host(&mut self) -> bool {
-        let events = self.host.poll();
-        let news = !events.is_empty();
-        for event in events {
-            match event {
-                HostEvent::Backend(state) => self.backend = state,
-                HostEvent::Toast(message) => {
-                    log::warn!("{message}");
-                    self.note = Some((message, Instant::now()));
-                }
-                HostEvent::Removed { message, .. } => {
-                    log::info!("{message}");
-                    self.note = Some((message, Instant::now()));
-                }
-                _ => {}
-            }
-        }
-        news
-    }
-
-    /// What the banner line shows: the backend's banner, else the newest toast, else the
-    /// first insert playing as a pass-through. The window's own toasts and slot marks
-    /// (handoff 05) replace the last two.
-    fn banner(&self) -> BackendState {
-        if self.backend.banner().is_some() {
-            return self.backend.clone();
-        }
-        let toast = self
-            .note
-            .as_ref()
-            .filter(|(_, at)| at.elapsed() < NOTE_FOR)
-            .map(|(message, _)| message.clone());
-        let problem = || self.host.problems().first().map(|p| p.message.clone());
-        match toast.or_else(problem) {
-            Some(reason) => BackendState::Absent { reason },
-            None => self.backend.clone(),
-        }
-    }
-
-    /// Sleeps until the next frame or the host's next poll, whichever comes first.
-    fn schedule(&self, event_loop: &ActiveEventLoop) {
-        match [self.frame_at, self.poll_at].into_iter().flatten().min() {
-            Some(at) => event_loop.set_control_flow(ControlFlow::WaitUntil(at)),
-            None => event_loop.set_control_flow(ControlFlow::Wait),
-        }
-    }
-
     fn frame(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
-        self.poll_host();
+        for event in self.host.poll() {
+            self.shell.event(event, &mut self.editors);
+        }
         let now_ms = self.opened.elapsed().as_secs_f64() * 1000.0;
-        self.meters.update(&self.host.meters(), now_ms);
-        let shown = self.banner();
-        let view = ui::View {
-            backend: &shown,
-            stats: self.host.stats(),
-            setup: self.host.setup(),
-            meters: &self.meters,
-            apps: self.host.apps(),
-        };
+        self.shell.meters.update(&self.host.meters(), now_ms);
+        self.editors.tick(self.host.as_mut());
 
         let mut raw_input = self.egui_state.take_egui_input(&self.window);
         let info = raw_input
@@ -278,9 +221,28 @@ impl Running {
             .or_default();
         egui_winit::update_viewport_info(info, &self.egui_ctx, &self.window, self.first_frame);
         self.first_frame = false;
-        let output = self
-            .egui_ctx
-            .run_ui(raw_input, |root| ui::draw(root, &view));
+        let mut intents = Vec::new();
+        let (shell, host) = (&mut self.shell, &*self.host);
+        let output = self.egui_ctx.run_ui(raw_input, |root| {
+            intents = ui::draw(root, shell, host);
+        });
+        // A frame that acted draws again at once: what it changed shows on the next.
+        let acted = !intents.is_empty();
+        self.shell
+            .dispatch(self.host.as_mut(), &mut self.editors, intents);
+        for instance in std::mem::take(&mut self.shell.to_open) {
+            if let Err(problem) = self.editors.open(event_loop, self.host.as_mut(), instance) {
+                log::warn!("{problem}");
+                self.shell
+                    .toasts
+                    .show(problem, None, self.shell.now, pop::TOAST_HOST_S);
+            }
+        }
+        if !self.editors.is_empty() {
+            self.editors.follow(self.host.as_mut());
+        }
+        self.fit();
+
         let egui::FullOutput {
             platform_output,
             textures_delta,
@@ -310,24 +272,46 @@ impl Running {
         let egui_delay = viewport_output
             .get(&egui::ViewportId::ROOT)
             .map_or(Duration::MAX, |v| v.repaint_delay);
-        // A toast in the banner line is redrawn when it runs out.
-        let note_delay = self
-            .note
-            .as_ref()
-            .and_then(|(_, at)| NOTE_FOR.checked_sub(at.elapsed()))
-            .unwrap_or(Duration::MAX);
-        let animating = self.backend.live() || self.quit_after_frames.is_some();
-        let delay = if animating {
+        let animating = self.shell.backend.live() || self.quit_after_frames.is_some();
+        let mut delay = if animating {
             egui_delay.min(FRAME_INTERVAL)
         } else {
-            egui_delay.min(note_delay)
+            egui_delay
         };
-        let now = Instant::now();
-        // Never sooner than one frame interval after the last frame: at most 60 Hz.
-        self.frame_at =
-            (delay != Duration::MAX).then(|| (now + delay).max(self.last_frame + FRAME_INTERVAL));
-        self.poll_at = self.host.next_poll().map(|wait| now + wait);
-        self.schedule(event_loop);
+        if acted {
+            delay = Duration::ZERO;
+        }
+        if !self.editors.is_empty() {
+            delay = delay.min(EDITOR_POLL);
+        }
+        if delay == Duration::MAX {
+            event_loop.set_control_flow(ControlFlow::Wait);
+        } else {
+            // Never sooner than one frame interval after the last frame: at most 60 Hz.
+            let at = (Instant::now() + delay).max(self.last_frame + FRAME_INTERVAL);
+            event_loop.set_control_flow(ControlFlow::WaitUntil(at));
+        }
         Ok(())
+    }
+
+    /// Keeps the window at least as big as the content the last frame drew (the console,
+    /// and the banner above it when there is one): its least size follows, and a window
+    /// smaller than that grows to it.
+    fn fit(&mut self) {
+        let needed = self.shell.content.max.to_vec2();
+        if needed.x <= 0.0 || needed == self.min_size {
+            return;
+        }
+        self.min_size = needed;
+        let size = winit::dpi::LogicalSize::new(needed.x, needed.y);
+        self.window.set_min_inner_size(Some(size));
+        let scale = self.window.scale_factor();
+        let now: winit::dpi::LogicalSize<f32> = self.window.inner_size().to_logical(scale);
+        if now.width < needed.x || now.height < needed.y {
+            let _ = self.window.request_inner_size(winit::dpi::LogicalSize::new(
+                now.width.max(needed.x),
+                now.height.max(needed.y),
+            ));
+        }
     }
 }

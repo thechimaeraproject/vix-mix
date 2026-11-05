@@ -25,3 +25,11 @@ env_logger.workspace = true
 # The look gate's capture (`--dump-png`): the frame as an RGBA PNG. Already in the lock
 # through the workspace's other crates, so it adds nothing to resolve.
 png = "0.18"
+# The editor events and sizes `Host::tick_editors` and `Host::open_editor` hand back, named
+# where the window matches them. Already built for vixmix-host, at the kit's one tag.
+chimaeraproject-vst3-host.workspace = true
+
+[dev-dependencies]
+# The tests' `Recorder` wraps `FakeHost` and implements `Host`, whose `catalog` names the
+# plugins crate's `Catalog`. Tests only: the window itself depends on the host and the model.
+vixmix-plugins.workspace = true

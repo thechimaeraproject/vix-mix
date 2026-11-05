@@ -57,6 +57,20 @@ pub mod colour {
     pub const PEAK_OPACITY: f32 = 0.85;
     /// A muted fader's bars, level and black alike, at this opacity.
     pub const MUTED_BARS_OPACITY: f32 = 0.4;
+    /// An insert being dragged stays in its slot at this opacity (`.slot.dragging`).
+    pub const DRAGGED_OPACITY: f32 = 0.3;
+
+    /// `.pop`: a popover's face (the source and mix panels, the menus, the browser).
+    pub const POPOVER: Color32 = Color32::from_rgb(0x1d, 0x1e, 0x21);
+    /// `rgba(0,0,0,.6)`: a popover's shadow.
+    pub const SHADOW: Color32 = Color32::from_rgba_premultiplied(0, 0, 0, 153);
+    /// `color-mix(in srgb, var(--accent) 22%, transparent)`: the browser's picked row.
+    pub const ACTIVE_ROW: Color32 = Color32::from_rgba_premultiplied(
+        (0x5a * 56 / 255) as u8,
+        (0xa8 * 56 / 255) as u8,
+        (0xff * 56 / 255) as u8,
+        56,
+    );
 
     /// The meter's gradient, bottom (0) to top (1): `#2c9a55 0%, #4cc46d 48%, #9fcf43 64%,
     /// #e2b83a 76%, #e5484d 84%`, red to the top.
@@ -195,6 +209,137 @@ pub mod size {
     /// The menu and add-channel icons.
     pub const MENU_ICON: f32 = 14.0;
     pub const ADD_COLUMN_ICON: f32 = 13.0;
+
+    /// The caret a strip header shows under the pointer, and while its popover is open.
+    pub const CARET: f32 = 10.0;
+    /// A fader line under the pointer (`.vf:hover .ln{height:3px}`).
+    pub const FADER_LINE_HOVER: f32 = 3.0;
+    /// The keyboard focus ring: its width, and how far outside the control it sits (two
+    /// points around a fader's bars, one elsewhere).
+    pub const FOCUS_RING: f32 = 1.0;
+    pub const FOCUS_OFFSET: f32 = 1.0;
+    pub const FADER_FOCUS_OFFSET: f32 = 2.0;
+    /// A slot's hover controls (`.hov`): how far the box sits in from the slot's right and
+    /// top, the padding on its left; each button and its icon, and the gap between them.
+    pub const HOVER_INSET: [f32; 2] = [1.0, 2.0];
+    pub const HOVER_PAD_LEFT: f32 = 4.0;
+    pub const HOVER_BUTTON: f32 = 16.0;
+    pub const HOVER_ICON: f32 = 11.0;
+    pub const HOVER_GAP: f32 = 1.0;
+    /// The drop line where a dragged insert lands (`.slot.drop-before::before`): its
+    /// thickness (it sits that far above the slot it precedes) and its inset at each side.
+    pub const DROP_LINE: f32 = 2.0;
+    pub const DROP_INSET: f32 = 2.0;
+    /// A press on a slot becomes a drag once the pointer has moved this far.
+    pub const DRAG_START: f32 = 5.0;
+}
+
+/// The popovers' sizes (`.pop`, `.ap`, `.menu`, `.br`, `.toast`, `.ghost`), in points.
+pub mod pop {
+    /// A popover's corner, and its shadow (`0 12px 32px`).
+    pub const CORNER: u8 = 3;
+    pub const SHADOW_Y: i8 = 12;
+    pub const SHADOW_BLUR: u8 = 32;
+    /// How far below its anchor a popover opens, how far beside it when it opens to the
+    /// side, and how close it may come to the window's edge.
+    pub const BELOW_GAP: f32 = 2.0;
+    pub const BESIDE_GAP: f32 = 4.0;
+    pub const EDGE_MARGIN: f32 = 8.0;
+
+    /// The source and mix panels (`.ap`), and the preferences.
+    pub const PANEL_WIDTH: f32 = 270.0;
+    /// The name row (`.nm-row`): its padding across and down, the gap between label and
+    /// field, a field's height and inner padding.
+    pub const NAME_PAD: [f32; 2] = [10.0, 8.0];
+    pub const NAME_GAP: f32 = 8.0;
+    pub const FIELD_HEIGHT: f32 = 24.0;
+    pub const FIELD_PAD_X: f32 = 6.0;
+    /// The search row (`.search`): its height, side padding, the gap after the magnifier,
+    /// the magnifier.
+    pub const SEARCH_HEIGHT: f32 = 38.0;
+    pub const SEARCH_PAD_X: f32 = 10.0;
+    pub const SEARCH_GAP: f32 = 8.0;
+    pub const SEARCH_ICON: f32 = 14.0;
+    /// A panel's list (`.ap-list`): its tallest, its padding.
+    pub const LIST_MAX: f32 = 300.0;
+    pub const LIST_PAD: f32 = 4.0;
+    /// A row of a panel's list (`.ap-row`): height, side padding, the gap between its
+    /// columns, the tick box or radio, the app's initial badge.
+    pub const ROW: f32 = 24.0;
+    pub const ROW_PAD_X: f32 = 6.0;
+    pub const ROW_GAP: f32 = 8.0;
+    pub const TICK: f32 = 13.0;
+    /// A picked radio's ring and the radius of its dot.
+    pub const RADIO_RING: f32 = 1.5;
+    pub const RADIO_DOT: f32 = 3.0;
+    pub const BADGE: f32 = 18.0;
+    /// A list heading (`.ap-h`): padding above and below, and across inside a list and
+    /// outside one (`Input`, `Output`).
+    pub const HEADING_TOP: f32 = 8.0;
+    pub const HEADING_BOTTOM: f32 = 3.0;
+    pub const HEADING_PAD_X: f32 = 6.0;
+    pub const HEADING_OUTSIDE_PAD_X: f32 = 10.0;
+    /// The note under Master's outputs: padding above and below.
+    pub const NOTE_TOP: f32 = 4.0;
+    pub const NOTE_BOTTOM: f32 = 8.0;
+    /// The footer (`.ap-foot`): padding across and down; a button (`.btn`): height and
+    /// side padding.
+    pub const FOOT_PAD: [f32; 2] = [8.0, 6.0];
+    pub const BUTTON_HEIGHT: f32 = 22.0;
+    pub const BUTTON_PAD_X: f32 = 9.0;
+    /// An empty list's message (`.br-empty`): padding across and down.
+    pub const EMPTY_PAD: [f32; 2] = [12.0, 20.0];
+
+    /// A menu (`.menu`): its width and padding, a row's height and side padding, the gap
+    /// after its icon, the icon.
+    pub const MENU_WIDTH: f32 = 180.0;
+    pub const MENU_PAD: f32 = 4.0;
+    pub const MENU_ROW: f32 = 26.0;
+    pub const MENU_ROW_PAD_X: f32 = 8.0;
+    pub const MENU_GAP: f32 = 8.0;
+    pub const MENU_ICON: f32 = 13.0;
+
+    /// The plugin browser (`.br`): its size, its footer, the nav column.
+    pub const BROWSER: [f32; 2] = [620.0, 440.0];
+    pub const BROWSER_FOOT: f32 = 32.0;
+    pub const NAV_WIDTH: f32 = 172.0;
+    /// A nav item (`.nav-i`): height and side padding; a nav heading (`.nav-h`): padding
+    /// above, below and across.
+    pub const NAV_ROW: f32 = 22.0;
+    pub const NAV_PAD_X: f32 = 8.0;
+    pub const NAV_HEADING: [f32; 3] = [12.0, 4.0, 8.0];
+    /// A plugin row (`.br-row`): height, side padding, the gap between columns, the star's
+    /// column and the star, the vendor and type columns.
+    pub const PLUGIN_ROW: f32 = 24.0;
+    pub const PLUGIN_PAD_X: f32 = 8.0;
+    pub const PLUGIN_GAP: f32 = 8.0;
+    pub const STAR_COLUMN: f32 = 16.0;
+    pub const STAR: f32 = 12.0;
+    pub const VENDOR_COLUMN: f32 = 128.0;
+    pub const KIND_COLUMN: f32 = 92.0;
+    /// An A–Z group heading (`.br-group`): padding above, below and across.
+    pub const GROUP: [f32; 3] = [8.0, 3.0, 8.0];
+    /// The browser footer's padding on its left.
+    pub const FOOT_PAD_LEFT: f32 = 12.0;
+
+    /// The toast: its distance from the window's bottom, padding (top, right, bottom,
+    /// left), the gap before its button, its corner.
+    pub const TOAST_BOTTOM: f32 = 12.0;
+    pub const TOAST_PAD: [f32; 4] = [5.0, 6.0, 5.0, 12.0];
+    pub const TOAST_GAP: f32 = 10.0;
+    /// How long a toast shows, in seconds: with an action (Undo), without one, and a
+    /// message from the host, which says what to do and wants reading.
+    pub const TOAST_WITH_ACTION_S: f64 = 5.0;
+    pub const TOAST_S: f64 = 2.4;
+    pub const TOAST_HOST_S: f64 = 8.0;
+    /// The toast's fade in and out (`transition: opacity .15s`).
+    pub const TOAST_FADE_S: f32 = 0.15;
+
+    /// The drag ghost: its offset from the pointer, its padding across and down, the gap
+    /// after "+ Copy".
+    pub const GHOST_OFFSET: [f32; 2] = [14.0, 10.0];
+    pub const GHOST_PAD: [f32; 2] = [8.0, 3.0];
+    pub const GHOST_GAP: f32 = 4.0;
 }
 
 /// The fonts: a family per face, and the size each text is set in.
@@ -230,6 +375,20 @@ pub mod font {
     pub const ADD_COLUMN: f32 = 10.0;
     /// Body text: the banner, popovers.
     pub const BODY: f32 = 12.0;
+    /// A label in a popover (`Name`), a button, the browser's footer, the drag ghost.
+    pub const SMALL: f32 = 11.5;
+    /// The name field and a mix's fixed name in its panel.
+    pub const NAME: f32 = 12.5;
+    /// A search field.
+    pub const SEARCH: f32 = 13.0;
+    /// A list heading in a popover (600, spaced, upper case), the app's initial badge.
+    pub const HEADING: f32 = 10.0;
+    /// The note beside an app ("in Music"), a count in the browser's nav (mono).
+    pub const NOTE: f32 = 10.5;
+    /// The vendor and type columns of the browser.
+    pub const COLUMN: f32 = 11.0;
+    /// The keyboard hint in the browser's search row (mono).
+    pub const KBD: f32 = 10.0;
 
     /// Letter spacing, as a fraction of the size: the FX header, the toggles, the add column.
     pub const FX_HEAD_SPACING: f32 = 0.08;
@@ -237,6 +396,8 @@ pub mod font {
     /// The MST tag: the prototype sets it in mono 600, which is not embedded; it is mono 500.
     pub const TAG_SPACING: f32 = 0.04;
     pub const ADD_COLUMN_SPACING: f32 = 0.1;
+    /// A list heading in a popover (`.ap-h`, `.nav-h`, `.br-group`).
+    pub const HEADING_SPACING: f32 = 0.08;
 
     fn named(name: &str, size: f32) -> FontId {
         FontId::new(size, FontFamily::Name(name.into()))
@@ -320,6 +481,8 @@ pub fn fonts() -> FontDefinitions {
 /// Installs the fonts and the visuals: egui's dark theme on the prototype's colours, its
 /// text styles in Plex.
 pub fn install(ctx: &egui::Context) {
+    // One pass a frame: a gesture is sensed once, and its command sent once.
+    ctx.options_mut(|o| o.max_passes = std::num::NonZeroUsize::MIN);
     ctx.set_fonts(fonts());
     ctx.set_theme(egui::Theme::Dark);
     let mut visuals = egui::Visuals::dark();
