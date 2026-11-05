@@ -68,9 +68,55 @@ Not blocking; each is decided by the lane named, or later.
 - **A Windows backend**: ASIO or WASAPI through the kit's planned `audio-io` crate (`vixmix-cpal`).
 - **Chain import and export.**
 - **More than two mixes** (Wave Link 3 has five).
-- **Packaging: Flatpak or native.** A VST3 host inside a Flatpak sandbox cannot see the host's
-  plugins; handoff 08 investigates native RPM/COPR, AppImage, and Flatpak with
-  `--filesystem=host`, and records the finding here.
+- **Packaging: Flatpak or native.** Handoff 08's finding (2026-11-04), for the user to decide:
+  **native**. The evidence:
+  - *The sandbox cannot see the host's plugins where Fedora puts them.* `/usr`, `/lib64` and
+    `/etc` are reserved paths no `--filesystem` grant opens
+    ([Flatpak's sandbox permissions](https://docs.flatpak.org/en/latest/sandbox-permissions.html));
+    with `--filesystem=host` (or `host-os`) the host's `/usr/lib64/vst3` appears only as
+    `/run/host/usr/lib64/vst3`, and a plugin loaded from there is linked against Fedora's
+    libraries while the process runs on the Flatpak runtime's. Ardour's Flathub notes say plugins
+    in `~/.vst3` "may work if they are built properly. There is no universal solution if they
+    depend on .so that are not available or incompatible", and "There is no support for Win32
+    emulated VST" ([org.ardour.Ardour](https://github.com/flathub/org.ardour.Ardour)).
+  - *yabridge* "doesn't work with `flatpak` packages"
+    ([its README](https://github.com/robbert-vdh/yabridge)), and the FabFilter, iZotope and
+    Kilohearts plugins the by-hand pass bridges reach Linux only through it.
+  - *Flathub's VST3 hosts* load plugins packaged for Flatpak, the
+    `org.freedesktop.LinuxAudio.Plugins` extensions mounted at `/app/extensions/Plugins` with
+    `VST3_PATH` pointing there, plus the home folder: `--filesystem=home` for Ardour and
+    REAPER, `--filesystem=host` for Bitwig, whose Flathub page rates it medium risk
+    ([com.bitwig.BitwigStudio](https://github.com/flathub/com.bitwig.BitwigStudio)). Of the
+    plugins the by-hand pass names, the open-source ones (Airwindows, Surge XT, Dragonfly, LSP)
+    exist as such extensions; TDR's, u-he's and every Windows plugin do not.
+  - *Routing other apps needs a manager's rights.* The host writes each app's target into
+    PipeWire's `default` metadata; WirePlumber gives a Flatpak client read and execute only
+    (`rx`, no `m` to set metadata) unless it declares `media.category = Manager`
+    ([WirePlumber's access configuration](https://pipewire.pages.freedesktop.org/wireplumber/daemon/configuration/access.html)),
+    as EasyEffects does for its Flatpak. `vixmix-pipewire` declares no category, so a Flatpak
+    would also need a change there.
+  - *What the binary needs is small*: the release build links only glibc, `libgcc_s` and
+    `libpipewire-0.3` (`ldd`, in the container), and loads the window system and the GPU driver
+    at run time.
+
+  The three options:
+  1. **Native: `cargo install` or the tarball now, then an RPM.** Sees every plugin, yabridge
+     works, nothing to grant. Built: `packaging/linux/`, `scripts/package/linux-tarball.sh` and
+     [Install Vix Mix on Fedora](cookbook/install-on-fedora.md). Next: a spec that builds from
+     a source tarball with the crates vendored (the kit's are private), built with `rpmbuild`
+     while the repository is private and through a COPR once it is public, so `dnf` updates it.
+     Costs: a spec to keep and, for a COPR, a public repository and licence.
+  2. **AppImage.** Unsandboxed, so plugins and yabridge work, one file for any distribution.
+     Costs: no launcher entry without an integration tool, FUSE at run time, a build on the
+     oldest glibc it targets, and nothing over the tarball for a binary that needs only glibc
+     and libpipewire.
+  3. **Flatpak with `--filesystem=host`.** The home's `~/.vst3` and the LinuxAudio extensions;
+     the host's `/usr/lib64/vst3` only through `/run/host` with library mismatches; no
+     yabridge; a Manager category in the backend; the whole home and every disk granted, and
+     the software centre's risk label that comes with it.
+
+  **Recommendation:** native. The tarball and `cargo install` for v1; an RPM spec next, with a
+  COPR once the repository and its licence are public; no Flatpak manifest.
 - **The licence before any public release** (MIT assumed).
 - **Plugin editors on Wayland**: later, editors on an X11 connection of their own while the
   console runs on Wayland.
