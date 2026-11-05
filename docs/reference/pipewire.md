@@ -221,9 +221,11 @@ control thread, at most sixteen in flight each way.
   `restore-stream` forgets a target whose metadata is cleared while the node is still known),
   which is why the host's rule, not the session manager, is the routing of record.
 - **A renamed app sink** keeps its apps, whether its node name changed or not: every subject
-  the metadata sent to the old sink (by our serial or by WirePlumber's restored id), and every
-  app the host routed to the old name whose routing the metadata has not echoed yet or that
-  still waits, is routed to the new one once it is announced. The old sink's name is forgotten
+  the metadata sent to the old sink (by our serial or by WirePlumber's restored id), every app
+  whose newest routing from the host names the old sink (echoed or not, even if something else
+  moved it since: the host's routing is the routing of record, so a rename pulls such an app
+  back to its channel), and every routing to the old name that still waits, is routed to the
+  new one once it is announced. The old sink's name is forgotten
   the moment its stream is destroyed, before the registry says it is gone (so too a removed
   channel's): a routing to that name, the same name again when the slug is unchanged, waits for
   the new node instead of writing the old one's serial, which nothing would rewrite. The backend

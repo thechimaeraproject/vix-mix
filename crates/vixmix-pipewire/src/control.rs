@@ -1094,9 +1094,10 @@ impl Control {
             self.pending.dirty = true;
             // A renamed app sink keeps its apps, whether or not the rename changed its node
             // name: what the metadata sends to the old sink (our routing by serial,
-            // WirePlumber's restore by id), and every routing the host asked for it that the
-            // metadata has not echoed yet or that still waits, is sent to the new one as soon
-            // as the registry announces it.
+            // WirePlumber's restore by id), every app whose newest routing from the host names
+            // the old sink (echoed or not, even if something else moved it since: the host's
+            // routing is the routing of record), and every routing to it that still waits, is
+            // sent to the new one as soon as the registry announces it.
             if let (Some(old_name), Some(Spec::AppSink { node_name: new, .. })) = (&old_name, spec)
             {
                 let mut moved: Vec<u32> = conn

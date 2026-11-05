@@ -45,7 +45,8 @@ forced by what the daemon did:
   pipewire-pulse copied onto it.
 - **Node names are `<app>.ch<id>.<slug>`**, the second point the contract left open: the id
   keeps alike-slugged channels apart, and a rename makes the sink again under the new name and
-  moves the apps the metadata sent to the old one. Monitor out and Master out are
+  moves the old one's apps to it: those the metadata sent there and those the host's newest
+  routing names it for. Monitor out and Master out are
   `<app>.monitor-out` and `<app>.master-out`; descriptions read "Vix Mix <name>".
 - **Streams that name a device carry `node.dont-reconnect` and `node.dont-fallback`**, so an
   unplugged device's stream waits for it (WirePlumber's policy destroys its node; the backend
