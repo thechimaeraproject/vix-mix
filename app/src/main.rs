@@ -2,14 +2,14 @@
 //! drives. Not eframe, because each VST3 editor later needs a winit window of its own with a
 //! raw window handle, which Vix's shell already does.
 //!
-//! Modules: [`app`] is the winit application and the frame loop; [`gpu`] the surface and the
-//! egui renderer; [`ui`] what each frame draws and senses: the header and the [`console`] of
-//! [`strip`]s (each with its [`fader`]s and its FX [`well`], inserts dragged by [`drag`]),
-//! the [`popover`]s and the plugin [`browser`], the [`toast`] line, in the [`theme`]'s
-//! colours, sizes and fonts, with the prototype's [`icons`], the shared [`widgets`] and the
-//! [`meters`]' levels and peak-hold lines; [`shell`] the window's state between frames and
-//! what it does with a frame's gestures; [`editors`] the plugin editor windows; [`capture`]
-//! the look gate's offscreen frame.
+//! Modules: [`app`] is the winit application and the frame loop, paced by [`pacing`]; [`gpu`]
+//! the surface and the egui renderer; [`ui`] what each frame draws and senses: the header and
+//! the [`console`] of [`strip`]s (each with its [`fader`]s and its FX [`well`], inserts dragged
+//! by [`drag`]), the [`popover`]s and the plugin [`browser`], the [`toast`] line, in the
+//! [`theme`]'s colours, sizes and fonts, with the prototype's [`icons`], the shared
+//! [`widgets`] and the [`meters`]' levels and peak-hold lines; [`shell`] the window's state
+//! between frames and what it does with a frame's gestures; [`editors`] the plugin editor
+//! windows; [`capture`] the look gate's offscreen frame.
 //!
 //! The command line is for checks, not for users: `--fake` runs against `FakeHost` (prototype
 //! v5's example data and simulated meters) instead of the real host,
@@ -31,6 +31,7 @@ mod fader;
 mod gpu;
 mod icons;
 mod meters;
+mod pacing;
 mod popover;
 mod shell;
 mod strip;

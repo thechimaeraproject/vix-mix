@@ -7,19 +7,19 @@
 //! that out against the host; editors it queued open in windows of their own; the window
 //! keeps at least the console's size.
 //!
-//! **Pacing.** The event loop is `ControlFlow::Wait`. A frame is drawn when egui wants one
-//! (input, or its `repaint_delay` coming due: a tooltip, the toast's fade, a text cursor),
-//! straight after a frame that acted (what a command changed shows at once), and — while the
-//! meters move (the host's backend is running or simulated) or a `--quit-after-frames` count
-//! is still running — on a 60 Hz grid: a frame the timer wakes counts from when it was due,
-//! so neither drawing it nor the timer's lateness stretches the interval to the next. No
-//! frame, input's included, is due sooner than [`FRAME_INTERVAL`] after the last was due, so
-//! the window never draws more than 60 frames a second; while a plugin editor is open it
-//! draws at least every [`EDITOR_POLL`]. With no backend, no editor and nothing to animate
-//! it is idle.
+//! **Pacing** is the [`Pacer`]'s ([`crate::pacing`]): the event loop sleeps until the frame
+//! or the hidden tick it names. Frames come only while the window can be seen: on a 60 Hz
+//! grid while the meters move, when egui or a gesture wants one, at least every
+//! [`EDITOR_POLL`](crate::editors::EDITOR_POLL) while an editor is open; never more than 60 a
+//! second. Minimised, zero-sized or fully covered, it draws nothing and serves the host and
+//! the editors without a frame. With no backend, no editor and nothing to animate it is idle.
+//!
+//! **Viewport facts.** egui's facts about the window (where it is, its monitor, whether it is
+//! minimised) are asked of the desktop when a window event may have changed them and at most
+//! every [`VIEWPORT_CHECK`] otherwise, not every frame: on X11 each is a round trip.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use vixmix_host::{AudioBackend, BootOptions, FakeHost, Host, RealHost};
 use winit::application::ApplicationHandler;
@@ -28,13 +28,11 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::{Window, WindowId};
 
 use crate::Startup;
-use crate::editors::{EDITOR_POLL, EditorWindows};
+use crate::editors::EditorWindows;
 use crate::gpu::Gpu;
+use crate::pacing::{Next, Pacer, VIEWPORT_CHECK, Wake, Wants};
 use crate::shell::Shell;
 use crate::ui;
-
-/// The shortest time between two frames: 60 Hz.
-pub const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
 
 /// The winit application.
 pub struct App {
@@ -74,11 +72,11 @@ struct Running {
     first_frame: bool,
     frames: u64,
     quit_after_frames: Option<u64>,
-    /// When the last frame that reached the screen began (or was due, when the timer woke
-    /// it): the next is never sooner than one interval after.
-    last_frame: Instant,
-    /// When the timer is set to wake the next frame.
-    due: Option<Instant>,
+    /// When the next frame or hidden tick comes, and whether the window can be seen.
+    pacer: Pacer,
+    /// When egui's viewport facts were last asked of the desktop; `None` when an event may
+    /// have changed them.
+    viewport_checked: Option<Instant>,
     /// When the first frame reached the screen.
     first_drawn: Option<Instant>,
     /// The least size the window has been given, in points: what the content needs.
@@ -102,10 +100,17 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn new_events(&mut self, _event_loop: &ActiveEventLoop, cause: StartCause) {
-        // The frame timer (meters, a quit count, editors) or egui's `repaint_delay` is due.
-        if let (StartCause::ResumeTimeReached { .. }, Some(running)) = (cause, &self.running) {
-            running.window.request_redraw();
+    fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) {
+        // The pacer's timer: a frame (meters, a quit count, editors, egui's `repaint_delay`),
+        // or, while the window is hidden, the host and the editors served without one.
+        let (StartCause::ResumeTimeReached { .. }, Some(running)) = (cause, &mut self.running)
+        else {
+            return;
+        };
+        match running.pacer.next() {
+            Next::Draw(_) => running.window.request_redraw(),
+            Next::Serve(_) => running.serve(event_loop),
+            Next::Wait => {}
         }
     }
 
@@ -123,20 +128,27 @@ impl ApplicationHandler for App {
         // The redraw itself is not input: egui-winit answers it with `repaint: true`, and
         // honouring that would make every frame request the next one.
         if event == WindowEvent::RedrawRequested {
-            if let Err(problem) = running.frame(event_loop) {
+            if let Err(problem) = running.redraw(event_loop) {
                 self.failure = Some(problem);
                 event_loop.exit();
             }
             return;
         }
         let response = running.egui_state.on_window_event(&running.window, &event);
-        if response.repaint {
-            running.wake(event_loop);
-        }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::Resized(size) => running.gpu.resize(size.width, size.height),
+            WindowEvent::Resized(size) => {
+                running.gpu.resize(size.width, size.height);
+                running.seen(|seen| seen.zero_size = size.width == 0 || size.height == 0);
+            }
+            WindowEvent::Occluded(occluded) => running.seen(|seen| seen.occluded = occluded),
+            WindowEvent::Moved(_)
+            | WindowEvent::Focused(_)
+            | WindowEvent::ScaleFactorChanged { .. } => running.seen(|_| {}),
             _ => {}
+        }
+        if response.repaint {
+            running.wake(event_loop);
         }
     }
 
@@ -204,8 +216,8 @@ impl Running {
             first_frame: true,
             frames: 0,
             quit_after_frames: startup.quit_after_frames,
-            last_frame: Instant::now(),
-            due: None,
+            pacer: Pacer::new(Instant::now()),
+            viewport_checked: None,
             first_drawn: None,
             min_size: natural,
         })
@@ -216,28 +228,106 @@ impl Running {
         self.editors.close_all(self.host.as_mut());
     }
 
-    fn frame(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
-        // Frames are spaced from start to start, so a frame's own drawing and presenting do
-        // not stretch the interval to the next; a frame woken by the timer counts from when
-        // it was due, so the timer's lateness does not either.
-        let started = Instant::now();
-        let slot = match self.due.take() {
-            Some(due) if started >= due && started - due < FRAME_INTERVAL => due,
-            _ => started,
-        };
-        for event in self.host.poll() {
-            self.shell.event(event, &mut self.editors);
-        }
-        let now_ms = self.opened.elapsed().as_secs_f64() * 1000.0;
-        self.shell.meters.update(&self.host.meters(), now_ms);
-        self.editors.tick(self.host.as_mut());
+    /// Whether the meters move or a `--quit-after-frames` count runs: frames on the grid.
+    fn animating(&self) -> bool {
+        self.shell.backend.live() || self.quit_after_frames.is_some()
+    }
 
-        let mut raw_input = self.egui_state.take_egui_input(&self.window);
-        let info = raw_input
+    /// A change to whether the window can be seen, from one of its events: the desktop is
+    /// asked again whether it is minimised, egui's viewport facts are asked again at the next
+    /// frame, and a window that has just come back into view draws.
+    fn seen(&mut self, change: impl FnOnce(&mut crate::pacing::Visibility)) {
+        let was_hidden = self.pacer.seen.hidden();
+        change(&mut self.pacer.seen);
+        self.pacer.seen.minimized = self.window.is_minimized() == Some(true);
+        self.viewport_checked = None;
+        if was_hidden && !self.pacer.seen.hidden() {
+            self.window.request_redraw();
+        }
+    }
+
+    /// Asks the desktop again for egui's viewport facts when an event may have changed them
+    /// or [`VIEWPORT_CHECK`] has passed; whether it is minimised comes with them.
+    fn refresh_viewport(&mut self, now: Instant) {
+        if self
+            .viewport_checked
+            .is_some_and(|at| now.saturating_duration_since(at) < VIEWPORT_CHECK)
+        {
+            return;
+        }
+        let info = self
+            .egui_state
+            .egui_input_mut()
             .viewports
             .entry(egui::ViewportId::ROOT)
             .or_default();
         egui_winit::update_viewport_info(info, &self.egui_ctx, &self.window, self.first_frame);
+        self.pacer.seen.minimized = info.minimized == Some(true);
+        self.viewport_checked = Some(now);
+    }
+
+    /// A redraw the window was asked for: a frame, or, while it is hidden, a tick without one.
+    fn redraw(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
+        if self.pacer.seen.hidden() {
+            // Asked to draw while hidden (an X11 expose as it comes back): the desktop's word.
+            self.pacer.seen.minimized = self.window.is_minimized() == Some(true);
+            if self.pacer.seen.hidden() {
+                self.serve(event_loop);
+                return Ok(());
+            }
+        }
+        self.frame(event_loop)
+    }
+
+    /// The host's events taken in and the open editors served.
+    fn serve_host(&mut self) {
+        for event in self.host.poll() {
+            self.shell.event(event, &mut self.editors);
+        }
+        self.editors.tick(self.host.as_mut());
+    }
+
+    /// The hidden window's tick: the host and the editors served, nothing drawn. A window back
+    /// in view with no event that said so (asked of the desktop each tick) draws instead.
+    fn serve(&mut self, event_loop: &ActiveEventLoop) {
+        let slot = self.pacer.begin(Instant::now());
+        self.pacer.seen.minimized = self.window.is_minimized() == Some(true);
+        if !self.pacer.seen.hidden() {
+            self.window.request_redraw();
+            return;
+        }
+        self.serve_hidden(event_loop, slot);
+    }
+
+    fn serve_hidden(&mut self, event_loop: &ActiveEventLoop, slot: Instant) {
+        self.serve_host();
+        if !self.editors.is_empty() {
+            self.editors.follow(self.host.as_mut());
+        }
+        let wants = Wants {
+            repaint: None,
+            animating: self.animating(),
+            editors: !self.editors.is_empty(),
+            acted: false,
+        };
+        let next = self.pacer.end(slot, Instant::now(), None, wants);
+        schedule(event_loop, next);
+    }
+
+    fn frame(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
+        let started = Instant::now();
+        let slot = self.pacer.begin(started);
+        self.refresh_viewport(started);
+        if self.pacer.seen.hidden() {
+            // The desktop says it is minimised: nothing to draw.
+            self.serve_hidden(event_loop, slot);
+            return Ok(());
+        }
+        self.serve_host();
+        let now_ms = self.opened.elapsed().as_secs_f64() * 1000.0;
+        self.shell.meters.update(&self.host.meters(), now_ms);
+
+        let raw_input = self.egui_state.take_egui_input(&self.window);
         self.first_frame = false;
         let mut intents = Vec::new();
         let (shell, host) = (&mut self.shell, &*self.host);
@@ -267,9 +357,9 @@ impl Running {
         let drawn = self
             .gpu
             .render(&self.egui_ctx, shapes, textures_delta, pixels_per_point)?;
+        // Only a frame that reached the screen counts; a refused one still takes its slot.
         if drawn {
             self.frames += 1;
-            self.last_frame = slot;
             self.first_drawn.get_or_insert(started);
         }
         if self.quit_after_frames.is_some_and(|n| self.frames >= n) {
@@ -283,46 +373,25 @@ impl Running {
             return Ok(());
         }
 
-        // Pacing: the next frame at a time, or not until something happens. egui's own
-        // delay counts from now; the meters' and the editors' cadence from when the last
-        // frame began, so drawing a frame does not stretch the interval to the next.
-        let now = Instant::now();
-        let mut due = viewport_output
-            .get(&egui::ViewportId::ROOT)
-            .map(|v| v.repaint_delay)
-            .filter(|d| *d != Duration::MAX)
-            .map(|d| now + d);
-        let mut sooner = |at: Instant| due = Some(due.map_or(at, |d| d.min(at)));
-        if self.shell.backend.live() || self.quit_after_frames.is_some() {
-            sooner(self.last_frame + FRAME_INTERVAL);
-        }
-        if !self.editors.is_empty() {
-            sooner(self.last_frame + EDITOR_POLL);
-        }
-        if acted {
-            sooner(now);
-        }
-        match due {
-            None => event_loop.set_control_flow(ControlFlow::Wait),
-            // Never sooner than one frame interval after the last frame began: at most 60 Hz.
-            Some(at) => {
-                let at = at.max(self.last_frame + FRAME_INTERVAL);
-                self.due = Some(at);
-                event_loop.set_control_flow(ControlFlow::WaitUntil(at));
-            }
-        }
+        let wants = Wants {
+            repaint: viewport_output
+                .get(&egui::ViewportId::ROOT)
+                .map(|v| v.repaint_delay),
+            animating: self.animating(),
+            editors: !self.editors.is_empty(),
+            acted,
+        };
+        let next = self.pacer.end(slot, Instant::now(), Some(drawn), wants);
+        schedule(event_loop, next);
         Ok(())
     }
 
-    /// Asks for a frame as soon as the 60 Hz cap allows: at once, or one interval after the
-    /// last frame began. Input never draws faster than the meters do.
+    /// Asks for a frame for input as soon as the 60 Hz cap allows, and none while hidden.
     fn wake(&mut self, event_loop: &ActiveEventLoop) {
-        let at = self.last_frame + FRAME_INTERVAL;
-        if Instant::now() >= at {
-            self.window.request_redraw();
-        } else if self.due.is_none_or(|due| at < due) {
-            self.due = Some(at);
-            event_loop.set_control_flow(ControlFlow::WaitUntil(at));
+        match self.pacer.wake(Instant::now()) {
+            Wake::Now => self.window.request_redraw(),
+            Wake::At(at) => event_loop.set_control_flow(ControlFlow::WaitUntil(at)),
+            Wake::Nothing => {}
         }
     }
 
@@ -346,4 +415,9 @@ impl Running {
             ));
         }
     }
+}
+
+/// Sleeps the event loop until `next`, or until an event.
+fn schedule(event_loop: &ActiveEventLoop, next: Next) {
+    event_loop.set_control_flow(next.at().map_or(ControlFlow::Wait, ControlFlow::WaitUntil));
 }
