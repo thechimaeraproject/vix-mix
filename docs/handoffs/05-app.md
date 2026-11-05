@@ -8,7 +8,7 @@ interactive, over the `Host` trait: every gesture the acceptance lists sends its
 (asserted headless in `app/src/acceptance.rs` on both CI legs), the popovers, the plugin
 browser, the toasts with Undo, the header's menu and preferences, editor windows (proven by
 hand on Windows with Goodhertz's Tone Control 3), 60 Hz pacing (1200 frames in 19.99 s on
-`FakeHost`, 0.3 to 0.7 % of a 24-core machine's CPU). [reference/app.md](../reference/app.md)
+`FakeHost`, 0.32 % of a 24-core machine's CPU, 7.6 % of one core). [reference/app.md](../reference/app.md)
 is the contract as built. Nothing outside `app/` changed: `crates/vixmix-host/src/fake.rs`
 is unchanged, because the example data held everything the window shows. The build map's
 change request 8 proposes what the window needs from the host. Deviations, each with its
@@ -54,9 +54,12 @@ reason:
 - **The window opens at the console's size**, not lane 00's 1280 × 720, as the prototype's
   app box is the console's, and its least size follows the content (the banner, the header's
   display beside the title on a one-channel console).
-- **Pacing is a 60 Hz grid**: lane 00's rule timed the next frame from the end of the last, and
-  measured 54 frames a second; frames now count from start to start (a timer frame from when
-  it was due), and input frames wait for the same cap.
+- **Pacing is a 60 Hz grid, presented by mailbox**: lane 00's rule timed the next frame from
+  the end of the last, and measured 54 frames a second; frames now count from start to start
+  (a timer frame from when it was due), and input frames wait for the same cap. Lane 00's FIFO
+  present stalled for up to 80 ms behind Windows' compositor (39 to 57 frames a second), so
+  the surface presents by mailbox where it offers it, FIFO otherwise; the pacing, not vsync,
+  holds the rate.
 - **What the prototype does not have**: an input or output that is in use but absent is listed
   first, marked "not connected"; a new hardware channel starts with no input picked (the
   model's `AddChannel`; the prototype picked one); the keyboard focus ring follows a Tab, for

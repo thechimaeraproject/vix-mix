@@ -56,7 +56,14 @@ impl Gpu {
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
             .ok_or_else(|| format!("the adapter cannot present to this surface; {DRIVER_FIX}"))?;
         config.format = format;
-        config.present_mode = wgpu::PresentMode::Fifo;
+        // Mailbox where the surface offers it: the window paces itself to 60 Hz, and FIFO's
+        // acquire can block for tens of milliseconds behind a busy compositor (measured on
+        // Windows with overlay layers installed: 48 frames a second against mailbox's 60).
+        config.present_mode = if caps.present_modes.contains(&wgpu::PresentMode::Mailbox) {
+            wgpu::PresentMode::Mailbox
+        } else {
+            wgpu::PresentMode::Fifo
+        };
         surface.configure(&device, &config);
 
         let egui = egui_wgpu::Renderer::new(
@@ -69,12 +76,13 @@ impl Gpu {
         );
         let info = adapter.get_info();
         log::info!(
-            "adapter: {} ({:?}); surface {:?} at {}×{}",
+            "adapter: {} ({:?}); surface {:?} at {}×{}, {:?}",
             info.name,
             info.backend,
             format,
             config.width,
-            config.height
+            config.height,
+            config.present_mode
         );
         Ok(Gpu {
             surface,
