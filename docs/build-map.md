@@ -47,6 +47,7 @@ commit that changes any of it.
 | 05 | `lane/05-app` | `../vix-mix-05` |
 | 06 | `lane/06-host-and-integration` | `../vix-mix-06` |
 | 08 | `lane/08-packaging-and-first-real-test` | `../vix-mix-08` |
+| 09 | `lane/09-round-1-fixes` | `../vix-mix-09` |
 
 07 works in the kit's repository, co-developed with `kit link` from a Vix Mix worktree.
 

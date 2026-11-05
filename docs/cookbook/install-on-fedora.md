@@ -83,7 +83,7 @@ On a Linux machine with steps 1 to 3 done, in the checkout:
 scripts/package/linux-tarball.sh
 ```
 
-`./dev.sh package` runs the same script once `npm install` has put the kit's tooling in the
+`./dev.sh package` (it needs Node: `sudo dnf install nodejs npm`) runs the same script once `npm install` has put the kit's tooling in the
 checkout. It builds the release binary and writes
 `target/package/vix-mix-<version>-linux-x86_64.tar.gz` with its `.sha256`; arguments go to
 `cargo build` (`--offline`, say). The tarball holds `bin/vix-mix`, the files of the table above

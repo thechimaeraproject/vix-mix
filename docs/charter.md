@@ -93,7 +93,7 @@ Not blocking; each is decided by the lane named, or later.
     PipeWire's `default` metadata; WirePlumber gives a Flatpak client read and execute only
     (`rx`, no `m` to set metadata) unless it declares `media.category = Manager`
     ([WirePlumber's access configuration](https://pipewire.pages.freedesktop.org/wireplumber/daemon/configuration/access.html)),
-    as EasyEffects does for its Flatpak. `vixmix-pipewire` declares no category, so a Flatpak
+    as EasyEffects does for its Flatpak. `vixmix-pipewire` declares no `media.category = Manager` on its client (its streams say Capture or Playback), so a Flatpak
     would also need a change there.
   - *What the binary needs is small*: the release build links only glibc, `libgcc_s` and
     `libpipewire-0.3` (`ldd`, in the container), and loads the window system and the GPU driver

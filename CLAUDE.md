@@ -145,6 +145,8 @@ crates/vixmix-host/        the orchestrator behind the Host trait: RealHost, Fak
 app/                       the vix-mix binary: winit + egui-winit + egui-wgpu over a Host
 docs/                      index, charter, roadmap, build map, reference, handoffs, the design pack, kit-*.md records
 scripts/dev/tasks.mjs      the dev registry; scripts/dev.mjs, dev.bat and dev.sh are its front door
+scripts/package/           the Linux release tarball (dev package)
+packaging/linux/           the desktop entry, icon, AppStream metainfo and install.sh
 .github/workflows/ci.yml   check (linux) with a headless PipeWire, check (windows)
 ```
 
