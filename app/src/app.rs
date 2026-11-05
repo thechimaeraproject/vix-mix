@@ -31,7 +31,6 @@ use crate::Startup;
 use crate::editors::{EDITOR_POLL, EditorWindows};
 use crate::gpu::Gpu;
 use crate::shell::Shell;
-use crate::theme::pop;
 use crate::ui;
 
 /// The shortest time between two frames: 60 Hz.
@@ -144,15 +143,9 @@ impl ApplicationHandler for App {
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
         // Every editor closes through the host before its window; then the host goes (its
         // instances after their editors), then the window.
-        if let Some(running) = self.running.take() {
-            let Running {
-                mut host,
-                mut editors,
-                window,
-                ..
-            } = running;
-            editors.close_all(host.as_mut());
-            drop(editors);
+        if let Some(mut running) = self.running.take() {
+            running.close_editors();
+            let Running { host, window, .. } = running;
             drop(host);
             drop(window);
         }
@@ -218,6 +211,11 @@ impl Running {
         })
     }
 
+    /// Closes every open editor through the host. At exit it comes before the host goes.
+    fn close_editors(&mut self) {
+        self.editors.close_all(self.host.as_mut());
+    }
+
     fn frame(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
         // Frames are spaced from start to start, so a frame's own drawing and presenting do
         // not stretch the interval to the next; a frame woken by the timer counts from when
@@ -250,14 +248,8 @@ impl Running {
         let acted = !intents.is_empty();
         self.shell
             .dispatch(self.host.as_mut(), &mut self.editors, intents);
-        for instance in std::mem::take(&mut self.shell.to_open) {
-            if let Err(problem) = self.editors.open(event_loop, self.host.as_mut(), instance) {
-                log::warn!("{problem}");
-                self.shell
-                    .toasts
-                    .show(problem, None, self.shell.now, pop::TOAST_HOST_S);
-            }
-        }
+        self.shell
+            .open_editors(event_loop, self.host.as_mut(), &mut self.editors);
         if !self.editors.is_empty() {
             self.editors.follow(self.host.as_mut());
         }

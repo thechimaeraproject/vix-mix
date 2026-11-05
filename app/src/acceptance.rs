@@ -11,7 +11,7 @@ use vixmix_model::{
 use crate::fader::{FINE_DRAG, FINE_KEY_STEP, KEY_STEP, Target};
 use crate::popover::Popover;
 use crate::shell::Intent;
-use crate::test_support::{Call, Harness};
+use crate::test_support::{Call, FakeWindows, Harness};
 use crate::theme::{pop, size};
 
 /// The travel of a channel's fader: its column less 6 at each end.
@@ -851,6 +851,22 @@ fn the_gear_or_a_double_click_asks_for_the_insert_s_editor() {
     h.wait(1.0);
     let _ = h.double_click(Pos2::new(slot.center().x - 20.0, slot.center().y));
     assert_eq!(h.shell.to_open, vec![eq]);
+}
+
+#[test]
+fn an_editor_the_host_refuses_says_why_on_the_toast_line_and_keeps_no_window() {
+    let mut h = Harness::new();
+    let eq = h.setup().master.chain[0].instance;
+    let _ = h.double_click(h.slot(Strip::Mix(MixId::Master), 0).center());
+    assert_eq!(h.shell.to_open, vec![eq]);
+    // What the window does with the queue once the frame is done, with windows of its own.
+    let windows = FakeWindows::default();
+    h.shell.open_editors(&windows, &mut h.host, &mut h.editors);
+    assert!(h.shell.to_open.is_empty());
+    assert!(h.editors.is_empty(), "no window kept for a refusal");
+    h.idle(1);
+    let toast = "Pro-Q 3 \u{b7} Master \u{b7} slot 1: FakeHost has example data and no plugin instances: run with the real host to open a plugin's editor";
+    assert!(h.find(toast).is_some(), "{:?}", h.drawn());
 }
 
 #[test]

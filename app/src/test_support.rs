@@ -2,18 +2,25 @@
 //! [`Harness`] that runs the window's own frame — [`ui::draw`] then [`Shell::dispatch`] —
 //! in egui without a window or a GPU, against `FakeHost` wrapped in a [`Recorder`] that
 //! keeps every call the window made, so a test presses, drags and types as a user does and
-//! asserts the [`Command`] that went to the host.
+//! asserts the [`Command`] that went to the host; and [`FakeWindows`], editor windows with no
+//! event loop, which keep every call the editors made of them.
 
+use std::cell::RefCell;
+use std::num::NonZeroIsize;
+use std::rc::Rc;
+
+use chimaeraproject_vst3_host::{EditorEvent, EditorSize};
 use egui::{Color32, Event, Key, Modifiers, PointerButton, Pos2, Rect, vec2};
 use vixmix_host::{AppPresence, FakeHost, Host, HostError, HostEvent, MeterFrame, StatsFrame};
 use vixmix_model::{
     Applied, ChannelId, Command, DeviceInfo, InstanceId, MixId, Refused, Setup, Strip,
 };
 use vixmix_plugins::Catalog;
-use winit::raw_window_handle::RawWindowHandle;
+use winit::raw_window_handle::{RawWindowHandle, Win32WindowHandle};
+use winit::window::WindowId;
 
 use crate::console;
-use crate::editors::EditorWindows;
+use crate::editors::{EditorWindow, EditorWindows, Opener};
 use crate::fader::Target;
 use crate::shell::{Intent, Shell};
 use crate::strip::{self, Rows};
@@ -24,6 +31,7 @@ use crate::ui;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Call {
     Apply(Command),
+    OpenEditor(InstanceId),
     CloseEditor(InstanceId),
 }
 
@@ -31,16 +39,45 @@ pub enum Call {
 pub struct Recorder {
     pub inner: FakeHost,
     pub calls: Vec<Call>,
+    /// Open every editor asked for at [`Recorder::EDITOR_SIZE`], as a real host with real
+    /// plugins does, rather than refusing as `FakeHost` does.
+    pub opens_editors: bool,
+    /// What the next `tick_editors` answers.
+    pub editor_events: Vec<(InstanceId, EditorEvent)>,
 }
 
 impl Recorder {
+    /// The size every editor asks for when [`Recorder::opens_editors`].
+    pub const EDITOR_SIZE: EditorSize = EditorSize {
+        width: 552,
+        height: 404,
+    };
+
+    /// `FakeHost`'s example console, refusing editors as `FakeHost` does.
+    pub fn new() -> Recorder {
+        Recorder {
+            inner: FakeHost::new(),
+            calls: Vec::new(),
+            opens_editors: false,
+            editor_events: Vec::new(),
+        }
+    }
+
+    /// The same, opening every editor asked for.
+    pub fn with_editors() -> Recorder {
+        Recorder {
+            opens_editors: true,
+            ..Recorder::new()
+        }
+    }
+
     /// The commands the window sent since call `from`.
     pub fn sent_since(&self, from: usize) -> Vec<Command> {
         self.calls[from..]
             .iter()
             .filter_map(|c| match c {
                 Call::Apply(cmd) => Some(cmd.clone()),
-                Call::CloseEditor(_) => None,
+                Call::OpenEditor(_) | Call::CloseEditor(_) => None,
             })
             .collect()
     }
@@ -89,11 +126,17 @@ impl Host for Recorder {
         &mut self,
         instance: InstanceId,
         parent: RawWindowHandle,
-    ) -> Result<chimaeraproject_vst3_host::EditorSize, HostError> {
+    ) -> Result<EditorSize, HostError> {
+        if self.opens_editors {
+            self.calls.push(Call::OpenEditor(instance));
+            return Ok(Recorder::EDITOR_SIZE);
+        }
         self.inner.open_editor(instance, parent)
     }
-    fn tick_editors(&mut self) -> Vec<(InstanceId, chimaeraproject_vst3_host::EditorEvent)> {
-        self.inner.tick_editors()
+    fn tick_editors(&mut self) -> Vec<(InstanceId, EditorEvent)> {
+        let mut events = self.inner.tick_editors();
+        events.append(&mut self.editor_events);
+        events
     }
     fn close_editor(&mut self, instance: InstanceId) {
         self.calls.push(Call::CloseEditor(instance));
@@ -132,10 +175,7 @@ impl Harness {
         ui::install(&ctx);
         let mut harness = Harness {
             ctx,
-            host: Recorder {
-                inner: FakeHost::new(),
-                calls: Vec::new(),
-            },
+            host: Recorder::new(),
             shell: Shell {
                 backend: vixmix_host::BackendState::Simulated,
                 ..Shell::default()
@@ -417,5 +457,116 @@ fn collect(shape: &egui::Shape, out: &mut Vec<(String, Rect, Color32)>) {
         }
         egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, out)),
         _ => {}
+    }
+}
+
+/// What the editors asked of a fake window; windows are numbered from 0 as they are made.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WindowCall {
+    Create {
+        window: usize,
+        title: String,
+        size: [u32; 2],
+    },
+    Resize(usize, EditorSize),
+    Show(usize),
+    Title(usize, String),
+    Raise(usize),
+}
+
+/// Editor windows with no event loop: each call the editors make of them is kept, in order.
+#[derive(Clone, Default)]
+pub struct FakeWindows {
+    calls: Rc<RefCell<Vec<WindowCall>>>,
+    made: Rc<RefCell<usize>>,
+    /// Refuse to make a window, as a desktop out of resources does.
+    refuse: bool,
+    /// Make windows with no handle a plugin can draw into.
+    handleless: bool,
+}
+
+impl FakeWindows {
+    /// Windows that cannot be made.
+    pub fn refusing() -> FakeWindows {
+        FakeWindows {
+            refuse: true,
+            ..FakeWindows::default()
+        }
+    }
+
+    /// Windows with no handle.
+    pub fn without_handles() -> FakeWindows {
+        FakeWindows {
+            handleless: true,
+            ..FakeWindows::default()
+        }
+    }
+
+    /// The id of window `n`.
+    pub fn id(n: usize) -> WindowId {
+        WindowId::from(n as u64 + 1)
+    }
+
+    /// Every call so far.
+    pub fn calls(&self) -> Vec<WindowCall> {
+        self.calls.borrow().clone()
+    }
+}
+
+struct FakeWindow {
+    n: usize,
+    calls: Rc<RefCell<Vec<WindowCall>>>,
+    handleless: bool,
+}
+
+impl Opener for FakeWindows {
+    fn create(&self, title: &str, size: [u32; 2]) -> Result<Box<dyn EditorWindow>, String> {
+        if self.refuse {
+            return Err("the desktop is out of windows".to_string());
+        }
+        let n = {
+            let mut made = self.made.borrow_mut();
+            *made += 1;
+            *made - 1
+        };
+        self.calls.borrow_mut().push(WindowCall::Create {
+            window: n,
+            title: title.to_string(),
+            size,
+        });
+        Ok(Box::new(FakeWindow {
+            n,
+            calls: Rc::clone(&self.calls),
+            handleless: self.handleless,
+        }))
+    }
+}
+
+impl EditorWindow for FakeWindow {
+    fn id(&self) -> WindowId {
+        FakeWindows::id(self.n)
+    }
+    fn handle(&self) -> Result<RawWindowHandle, String> {
+        if self.handleless {
+            return Err("the window has not been mapped".to_string());
+        }
+        let hwnd = NonZeroIsize::new(self.n as isize + 1).expect("not zero");
+        Ok(RawWindowHandle::Win32(Win32WindowHandle::new(hwnd)))
+    }
+    fn resize(&self, size: EditorSize) {
+        self.calls
+            .borrow_mut()
+            .push(WindowCall::Resize(self.n, size));
+    }
+    fn show(&self) {
+        self.calls.borrow_mut().push(WindowCall::Show(self.n));
+    }
+    fn set_title(&self, title: &str) {
+        self.calls
+            .borrow_mut()
+            .push(WindowCall::Title(self.n, title.to_string()));
+    }
+    fn raise(&self) {
+        self.calls.borrow_mut().push(WindowCall::Raise(self.n));
     }
 }
