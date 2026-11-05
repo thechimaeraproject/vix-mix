@@ -84,7 +84,7 @@ impl Spec {
             "node.group" => app,
             "node.link-group" => app,
             "node.virtual" => "true",
-            "node.latency" => format!("{}/48000", config.wanted_quantum),
+            "node.latency" => latency(config),
             "session.suspend-timeout-seconds" => "0",
         };
         match self {
@@ -135,6 +135,11 @@ impl Spec {
             Spec::AppSink { .. } | Spec::Capture { .. } => None,
         }
     }
+}
+
+/// `node.latency` as every stream asks for it: `<quantum>/48000`.
+fn latency(config: &BackendConfig) -> String {
+    format!("{}/48000", config.wanted_quantum)
 }
 
 /// The one format every stream offers: 32-bit float planar stereo (FL, FR) at the graph's
@@ -300,6 +305,24 @@ impl Live {
         self.connection.set(self.connection.get() + 1);
         self.phase = Phase::Connecting;
         self.connect()
+    }
+
+    /// Asks for the config's quantum on the live stream: its `node.latency` is updated in
+    /// place (`pw_stream_update_properties`, which pipewire-rs does not wrap), the daemon
+    /// recalculates the graph's quantum, and the node, its links and its ring stay. A later
+    /// [`reconnect`](Live::reconnect) keeps the updated property.
+    pub(crate) fn ask_latency(&self, config: &BackendConfig) -> Result<(), pipewire::Error> {
+        let props = properties! { "node.latency" => latency(config) };
+        // SAFETY: the stream is ours and alive for the call, on the thread that made it; the
+        // dict is borrowed for the call only, and PipeWire copies what it keeps.
+        let result = unsafe {
+            pipewire::sys::pw_stream_update_properties(
+                self.stream.as_raw_ptr(),
+                props.dict().as_raw(),
+            )
+        };
+        spa::utils::result::SpaResult::from_c(result).into_sync_result()?;
+        Ok(())
     }
 
     /// Which connection a note must name to be about the stream as it is now.

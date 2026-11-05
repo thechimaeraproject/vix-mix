@@ -193,11 +193,13 @@ pub enum BackendError {
     },
 }
 
-/// What the host asks of the control thread: the newest graph, and the newest routing for
-/// each app node. Latest wins for both, so the mailbox stays bounded.
+/// What the host asks of the control thread: the newest graph, the newest quantum, and the
+/// newest routing for each app node. Latest wins for each, so the mailbox stays bounded.
 #[derive(Default)]
 pub(crate) struct Mailbox {
     pub graph: Option<BackendGraph>,
+    /// The newest quantum asked for with [`Backend::set_quantum`].
+    pub quantum: Option<u32>,
     pub routes: Vec<(u32, Option<String>)>,
     pub quit: bool,
 }
@@ -292,6 +294,15 @@ impl Backend {
     /// Makes the streams match `graph`: creates, destroys or retargets only what changed.
     pub fn apply(&self, graph: &BackendGraph) {
         self.post(|mailbox| mailbox.graph = Some(graph.clone()));
+    }
+
+    /// Asks for `quantum` frames from now on, in place: every stream of ours updates its
+    /// `node.latency` to `<quantum>/48000` without being made again (no node goes, so no link
+    /// breaks and no app is moved), and every stream made later asks for it too. The daemon
+    /// recalculates the graph's quantum (the smallest any node asks for, within its clock's
+    /// limits); [`BackendEvent::QuantumChanged`] reports the tick following it.
+    pub fn set_quantum(&self, quantum: u32) {
+        self.post(|mailbox| mailbox.quantum = Some(quantum));
     }
 
     /// Routes the app stream `app_node` to the sink named `to` (a channel's `node.name`), or

@@ -532,7 +532,11 @@ impl Control {
                 // routes its apps again after it applied a setup. Routed first, an app would be
                 // sent to a sink this graph is about to make again, and moved a moment later.
                 // Leaving, no stream is made: only the routings that wait with the quit go out
-                // (a host clears its routings just before it disconnects).
+                // (a host clears its routings just before it disconnects). A new quantum goes
+                // before the graph, so a stream the graph makes asks for it from the start.
+                if let Some(quantum) = mail.quantum.filter(|_| !mail.quit) {
+                    self.set_quantum(quantum);
+                }
                 if let Some(graph) = mail.graph.filter(|_| !mail.quit) {
                     self.graph = Some(graph);
                     self.apply(ctl);
@@ -1005,6 +1009,32 @@ impl Control {
             let source = tick.map_or(crate::TickSource::Stopped, Role::tick_source);
             log::info!("vix-mix-pipewire: the tick is now {source:?}");
             self.events.send(BackendEvent::TickSource(source));
+        }
+    }
+
+    /// Asks for `quantum` on every stream of ours, in place, and on every stream made later
+    /// (this connection's and the next's): nothing is made again.
+    fn set_quantum(&mut self, quantum: u32) {
+        if quantum == self.config.wanted_quantum {
+            return;
+        }
+        self.config.wanted_quantum = quantum;
+        log::info!("vix-mix-pipewire: asking for {quantum} frames");
+        let Some(conn) = &self.conn else {
+            return;
+        };
+        let streams = conn
+            .outputs
+            .iter()
+            .flatten()
+            .chain(conn.channels.values().filter_map(|c| c.live.as_ref()));
+        for live in streams {
+            if let Err(error) = live.ask_latency(&self.config) {
+                log::warn!(
+                    "vix-mix-pipewire: {} did not take the new latency: {error}",
+                    live.spec.node_name(&self.config)
+                );
+            }
         }
     }
 
