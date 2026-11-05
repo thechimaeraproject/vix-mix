@@ -53,7 +53,9 @@ instead by `tests/headless.rs`. Deviations from the steps below, each with its r
 - **`BackendState` gained `Idle { reason }`**, and `Disconnected` has a banner. The backend's
   `TickSource` is a state the window must show: `Stopped`, or the Master source with nothing
   recording it (the engine has not ticked for 250 ms), is idle with what would drive the mixer;
-  a move to Master out is a toast.
+  Master out driving while the setup names a device for Monitor is a toast, said once for that
+  device until Monitor plays again (a first start before Monitor's device is picked, or a
+  reconnect while it stays away, says nothing).
 - **The trait gained `problems`, `set_favorite`, `rescan_plugins` and `next_poll`.** The
   browser's stars and the menu's Rescan plugins (lane 05, steps 5 and 6) need the first three,
   since only the host holds the catalog. `next_poll` because the window idles when nothing
