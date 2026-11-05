@@ -34,7 +34,9 @@ Rust is pinned by `rust-toolchain.toml`; Node is here only for the kit's tooling
 ```
 npm install                                  # the kit's tooling: dev, the hooks, kit-check-docs
 dev check                                    # every gate: cargo fmt --check, clippy, test, kit-check-docs
-cargo run -p vix-mix                         # the window, on the real host (no backend yet: a banner says so)
+cargo run -p vix-mix                         # the window on the real host: PipeWire on Linux (it routes the
+                                             # desktop's apps while it runs), the no-backend banner elsewhere;
+                                             # the VST3 folders are scanned before the window opens
 cargo run -p vix-mix -- --fake               # the window on FakeHost: the prototype's example console
 cargo run -p vix-mix -- --quit-after-frames 3   # draws three frames and exits 0: the headless check
 kit doctor                                   # what is off in this checkout, and the fix for each
