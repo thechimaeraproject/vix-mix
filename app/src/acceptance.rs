@@ -3,11 +3,10 @@
 //! acceptance), and what the setup looks like after.
 
 use egui::{Key, Modifiers, Pos2, vec2};
+use vixmix_host::Host;
 use vixmix_model::{
     ChannelKind, Command, DeviceRef, MixId, SlotRef, Source, Strip, example, taper,
 };
-
-use vixmix_host::Host;
 
 use crate::fader::{FINE_DRAG, FINE_KEY_STEP, KEY_STEP, Target};
 use crate::popover::Popover;
@@ -899,4 +898,82 @@ fn the_window_keeps_room_for_the_header_over_a_narrow_console() {
     let title = h.text_rect(crate::ui::TITLE);
     let rate = h.text_rect("48");
     assert!(title.right() < rate.left(), "{title:?} against {rate:?}");
+}
+
+#[test]
+fn a_long_chain_scrolls_in_its_well() {
+    let mut h = Harness::new();
+    let game = Strip::Channel(h.channel(1));
+    // Nine inserts: more than the well's 128 points hold.
+    for at in 0..9 {
+        let _ = h
+            .host
+            .inner
+            .apply(Command::AddInsert {
+                strip: game,
+                plugin: example::plugin("OTT"),
+                at,
+            })
+            .expect("added");
+    }
+    h.idle(1);
+    let well = crate::strip::Rows::of(h.strip(game)).fx;
+    let add_row = |h: &Harness| {
+        h.texts
+            .iter()
+            .find(|(t, r, _)| t == "Add plugin" && well.x_range().contains(r.center().x))
+            .map(|(_, r, _)| r.center().y)
+            .expect("Game's add row")
+    };
+    let before = add_row(&h);
+    assert!(before > well.bottom(), "below the well until scrolled");
+    let _ = h.pass(vec![
+        egui::Event::PointerMoved(well.center()),
+        egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: vec2(0.0, -200.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: Modifiers::NONE,
+        },
+    ]);
+    h.idle(2);
+    let after = add_row(&h);
+    assert!(
+        after < before && after < well.bottom(),
+        "{before} -> {after}"
+    );
+    // And it adds there.
+    let sent = h.click(Pos2::new(well.center().x, after));
+    h.idle(2);
+    assert!(sent.is_empty(), "the browser opens; nothing is sent yet");
+    assert!(matches!(h.shell.popover, Some(Popover::Browser(_))));
+}
+
+#[test]
+fn the_preferences_ask_for_a_quantum_and_take_plugin_folders() {
+    let mut h = Harness::new();
+    let menu = Pos2::new(
+        size::HEADER_PAD_X + size::MENU_BUTTON[0] / 2.0,
+        size::HEADER / 2.0,
+    );
+    let _ = h.click(menu);
+    assert_eq!(h.shell.popover, Some(Popover::Menu));
+    h.idle(2);
+    // Rescan waits for the host to offer one: it sends nothing.
+    assert!(h.click(h.text("Rescan plugins")).is_empty());
+    let _ = h.click(h.text("Preferences"));
+    h.idle(2);
+    let sent = h.click(h.text("512 samples"));
+    let Command::SetPrefs(prefs) = one(&sent) else {
+        panic!("{sent:?}")
+    };
+    assert_eq!(prefs.quantum, 512);
+    let _ = h.click(h.text("Another folder to scan"));
+    let _ = h.type_text("D:/VST3");
+    let sent = h.key(Key::Enter, Modifiers::NONE);
+    let Command::SetPrefs(prefs) = one(&sent) else {
+        panic!("{sent:?}")
+    };
+    assert_eq!(prefs.plugin_dirs, [std::path::PathBuf::from("D:/VST3")]);
+    assert_eq!(prefs.quantum, 512, "the quantum stays");
 }
