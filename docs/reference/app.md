@@ -325,7 +325,11 @@ the row before or after, round the ends, and pick it (the command a press of it 
 picks the focused row; the arrows stay in the group rather than moving the focus to the console
 under the popover. A panel's list (the apps, the inputs, the outputs) opens at its top: every
 channel's panel, and each mix's, shows the same list, which would otherwise keep where the last
-one was scrolled.
+one was scrolled. A row the focus reaches scrolls into view at once, as the prototype's
+`focus()` scrolls it: the checked radio a panel opens on, the arrows' pick, a row or a plugin
+folder's bin that Tab reaches; so the focus, and what the arrows pick, are always on a row the
+list shows. A panel takes the focus on its first frame drawn to be seen: on a kind's first
+appearance that is the frame after the unseen one, whose disabled rows cannot hold a focus.
 
 - **The source panel** (270 wide), under a channel's header: the name field (the header shows
   what it holds as it is typed; `Rename` is sent once, when the panel closes, and not at all
@@ -467,7 +471,8 @@ cargo run -p vix-mix -- --dump-png docs/design/prototype/egui-look-gate.png
 **The gestures** (`acceptance.rs`, on `test_support::Harness`: `FakeHost`'s example console in
 `ui::draw` and `Shell::dispatch`, as the window runs them, the host polled before each frame
 into `Shell::events`, with every call to the host recorded; each test asserts the command its
-gesture sent):
+gesture sent, and what is in view is what the last frame painted whole inside its clip,
+`Harness::whole`):
 
 - faders: `a_fader_drag_moves_the_send_by_the_pointers_travel`,
   `with_shift_a_drag_moves_a_fifth_as_far`,
@@ -519,6 +524,12 @@ gesture sent):
   refusal, word for word),
   `a_panel_opens_with_the_focus_on_its_checked_radio_and_the_arrows_pick` (an input panel and
   Master's output panel: Down, round the end, Space, Up to "No device"),
+  `a_panel_shows_the_radio_it_opens_on_and_each_row_the_keys_reach` (thirty more inputs and
+  outputs, `Recorder::devices`: Synth on the last input opens with it shown; Down round to the
+  first and Up round to the last scroll to them; Tab walks every row, each shown; Master on its
+  last output, then round to "No device", shown),
+  `shift_tab_through_sixteen_plugin_folders_shows_each` (from the folder field back through the
+  bins, the last first, each folder shown),
   `an_insert_playing_as_a_pass_through_is_marked_and_says_why`,
   `the_banner_says_when_the_mixer_is_idle_or_the_daemon_is_gone`;
 - the clock: `a_host_message_after_a_quiet_spell_shows_for_its_whole_time` (a host's toast
