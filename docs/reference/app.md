@@ -515,7 +515,8 @@ gesture sent):
   frame to the level; the console's meters follow the host's frame by position.
 - `ui.rs`, headless frames of `ui::draw` that press nothing and ask nothing: the header names
   the app and shows the display; the display says kHz without a needless decimal; the banner
-  appears exactly when the backend is absent; the console draws the example's strips, inserts,
+  shows for no backend and not while the mixer runs (Idle and Disconnected are the
+  acceptance's); the console draws the example's strips, inserts,
   readouts, scales and the add column; a muted send reads struck through and a bypassed insert
   faint; MON and MST light when the chain feeds that mix; previewing Master tags Monitor.
 - `capture.rs`: read-back rows lose their padding; the PNG holds the pixels as drawn; an
