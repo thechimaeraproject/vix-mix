@@ -422,9 +422,16 @@ pub(crate) mod linux {
                     if source == TickSource::MasterOut && self.tick != Some(source) {
                         heard.toasts.push(MONITOR_GONE.to_string());
                     }
+                    // The backend sends it once per connection: one that is not `Stopped`
+                    // says the daemon is back, even before a tick can run.
+                    if source != TickSource::Stopped {
+                        self.lost = false;
+                    }
                     self.tick = Some(source);
                 }
                 BackendEvent::DeviceAdded(info) => {
+                    // Devices are reported again only once the daemon is back.
+                    self.lost = false;
                     devices.retain(|d| d.device.name != info.device.name);
                     if devices.len() < MAX_DEVICES {
                         devices.push(info);
@@ -537,7 +544,186 @@ pub(crate) mod linux {
     #[cfg(test)]
     mod tests {
         use super::*;
-        use vixmix_model::{Command, apply, example};
+        use vixmix_engine::{EngineConfig, MAX_QUANTUM};
+        use vixmix_model::{Command, DeviceDirection, DeviceRef, apply, example};
+        use vixmix_pipewire::AppStream;
+
+        /// A backend's host half with no daemon behind it: what `hear` makes of each event.
+        struct Offline {
+            pw: PipeWire,
+            setup: Setup,
+            engine: Engine,
+            devices: Vec<DeviceInfo>,
+            streams: Vec<Stream>,
+            heard: Heard,
+        }
+
+        impl Offline {
+            fn new(setup: Setup) -> Offline {
+                let (_tx, events) = sync_channel(1);
+                Offline {
+                    pw: PipeWire {
+                        backend: None,
+                        events,
+                        app_name: "vix-mix",
+                        quantum: 256,
+                        running: None,
+                        lost: false,
+                        tick: None,
+                        routed: Vec::new(),
+                        frames: 0,
+                        moved_at: Instant::now(),
+                        ticking: false,
+                    },
+                    setup,
+                    engine: Engine::new(EngineConfig::new(48_000, MAX_QUANTUM, 2)),
+                    devices: Vec::new(),
+                    streams: Vec::new(),
+                    heard: Heard::default(),
+                }
+            }
+
+            fn hear(&mut self, event: BackendEvent) -> BackendState {
+                self.pw.hear(
+                    event,
+                    &self.setup,
+                    &self.engine,
+                    &mut self.devices,
+                    &mut self.streams,
+                    &mut self.heard,
+                );
+                self.pw.state()
+            }
+
+            fn routed(&self, node: u32) -> Option<Option<&str>> {
+                self.pw
+                    .routed
+                    .iter()
+                    .find(|(n, _)| *n == node)
+                    .map(|(_, to)| to.as_deref())
+            }
+        }
+
+        #[test]
+        fn the_state_follows_what_the_backend_says() {
+            let mut pw = Offline::new(Setup::default());
+            assert_eq!(pw.pw.state(), BackendState::Connecting);
+            let idle = pw.hear(BackendEvent::TickSource(TickSource::MasterSource));
+            assert_eq!(
+                idle,
+                BackendState::Idle {
+                    reason: only_recorded()
+                },
+                "only the Master source, and nothing records it"
+            );
+            assert!(idle.banner().unwrap().contains("Vix Mix Master"));
+            assert_eq!(
+                pw.hear(BackendEvent::TickSource(TickSource::Monitor)),
+                BackendState::Connecting
+            );
+            let running = BackendState::Running {
+                rate: 48_000,
+                quantum: 256,
+            };
+            assert_eq!(
+                pw.hear(BackendEvent::Connected {
+                    rate: 48_000,
+                    quantum: 256
+                }),
+                running
+            );
+            assert_eq!(
+                pw.hear(BackendEvent::QuantumChanged(512)),
+                BackendState::Running {
+                    rate: 48_000,
+                    quantum: 512
+                }
+            );
+            let _ = pw.hear(BackendEvent::TickSource(TickSource::MasterOut));
+            assert_eq!(pw.heard.toasts, vec![MONITOR_GONE.to_string()]);
+            assert_eq!(
+                pw.hear(BackendEvent::Disconnected),
+                BackendState::Disconnected
+            );
+            assert_eq!(
+                pw.hear(BackendEvent::TickSource(TickSource::Stopped)),
+                BackendState::Disconnected,
+                "the backend's own Stopped after a loss is still the loss"
+            );
+            let device = DeviceInfo {
+                device: DeviceRef {
+                    name: "alsa.headphones".into(),
+                    description: "Headphones".into(),
+                },
+                direction: DeviceDirection::Output,
+            };
+            assert_eq!(
+                pw.hear(BackendEvent::DeviceAdded(device)),
+                BackendState::Idle {
+                    reason: STOPPED.to_string()
+                },
+                "back, and nothing drives the mixer yet"
+            );
+            assert_eq!(
+                pw.hear(BackendEvent::TickSource(TickSource::Monitor)),
+                BackendState::Connecting,
+                "back, waiting for the first tick of this connection"
+            );
+            assert_eq!(pw.devices.len(), 1);
+            let _ = pw.hear(BackendEvent::DeviceRemoved("alsa.headphones".into()));
+            assert!(pw.devices.is_empty() && pw.heard.devices);
+        }
+
+        #[test]
+        fn every_app_is_routed_the_moment_it_appears_to_its_channel_or_home() {
+            let mut pw = Offline::new(example::setup());
+            let music = pw
+                .setup
+                .channels
+                .iter()
+                .find(|c| c.name == "Music")
+                .unwrap()
+                .clone();
+            let Source::Apps(apps) = &music.source else {
+                panic!("Music is an app channel");
+            };
+            let sink = format!("vix-mix.ch{}.music", music.id.0);
+            let stranger = AppRef {
+                app_id: None,
+                binary: Some("nobody".into()),
+                name: "Nobody".into(),
+            };
+            for (node, app) in [(40, apps[0].clone()), (41, stranger)] {
+                let _ = pw.hear(BackendEvent::AppStreamAdded(AppStream {
+                    node,
+                    app,
+                    media_name: None,
+                }));
+            }
+            assert!(pw.heard.apps);
+            assert_eq!(pw.routed(40), Some(Some(sink.as_str())));
+            assert_eq!(
+                pw.routed(41),
+                Some(None),
+                "an app no channel names goes home"
+            );
+            // A rename routes Music's app to the new sink name; the stranger stays.
+            let _ = apply(
+                &mut pw.setup,
+                Command::Rename {
+                    ch: music.id,
+                    name: "Tunes".into(),
+                },
+            )
+            .unwrap();
+            pw.pw.reroute(&pw.setup, &pw.streams);
+            let renamed = format!("vix-mix.ch{}.tunes", music.id.0);
+            assert_eq!(pw.routed(40), Some(Some(renamed.as_str())));
+            assert_eq!(pw.routed(41), Some(None));
+            let _ = pw.hear(BackendEvent::AppStreamRemoved(40));
+            assert_eq!(pw.routed(40), None);
+            assert_eq!(pw.streams.len(), 1);
+        }
 
         #[test]
         fn the_graph_is_the_setups_channels_in_order_with_the_master_source() {
