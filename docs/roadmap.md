@@ -35,7 +35,7 @@ Wave 2, in parallel, each in its own worktree ([build map](build-map.md) § Wave
 | [02 — Engine](handoffs/02-engine.md) | chains lent through `Lender`, the dry/processed split, mix chains, the no-alloc proof with chains on | shipped 2026-11-04 |
 | [03 — PipeWire backend](handoffs/03-pipewire-backend.md) | the streams, rings, tick election, registry, routing and reconnect, tested against a headless daemon | shipped 2026-11-04 (see Built) |
 | [04 — Plugins](handoffs/04-plugins.md) | scan and cache, instances, the rack, state, editor sessions, tested with the kit's test plugin | shipped 2026-11-04 (see Built) |
-| [05 — App](handoffs/05-app.md) | the look gate, then the console exactly as prototype v5 against `FakeHost` | shipped 2026-11-04 (see Built); change request 8 proposed for 06 |
+| [05 — App](handoffs/05-app.md) | the look gate, then the console exactly as prototype v5 against `FakeHost` | shipped 2026-11-04 (see Built); change request 10 proposed; the CPU reading waits on the user |
 
 Then wave 3: [06 — Host and integration](handoffs/06-host-and-integration.md), shipped
 2026-11-04 (see Built; the acceptance's Fedora bullet waits for the by-hand pass); then

@@ -21,18 +21,18 @@ hand back; on `png` for the capture. Its tests also take `vixmix-plugins`, becau
 | File | What it is |
 |---|---|
 | `main.rs` | the command line, the event loop (X11 on Linux), or the capture |
-| `app.rs` | the winit `ApplicationHandler`: the host, the window, the editor windows, one frame (or, hidden, one tick without a frame) at a time, what the window's events say of whether it can be seen, egui's viewport facts, the window's least size |
-| `pacing.rs` | when the next frame comes (`Pacer`, `pacing::next`): the 60 Hz grid, input under the same cap, a refused frame's slot, the hidden window's ticks |
-| `shell.rs` | the window's state between frames (`Shell`) and what it does with a frame's `Intent`s: commands applied, refusals and notes to the toast line, popovers opened and closed, Undo, editors queued and then opened (`open_editors`) |
+| `app.rs` | the winit `ApplicationHandler`: the host and its polls, the window, the editor windows, one frame (or, hidden, one tick without a frame) at a time, what the window's events say of whether it can be seen, egui's viewport facts, the window's least size |
+| `pacing.rs` | when the next frame comes (`Pacer`, `pacing::plan`): the 60 Hz grid, input under the same cap, a refused frame's slot, the hidden window's ticks, the host's own polls between frames |
+| `shell.rs` | the window's state between frames (`Shell`), what it takes from the host's events (`Shell::events`) and what it does with a frame's `Intent`s: commands applied, refusals and notes to the toast line, popovers opened and closed, Undo, stars and a rescan through the host, editors queued and then opened (`open_editors`) |
 | `ui.rs` | what a frame draws and senses: the header and its display, the banner, the console, the open popover, the toast line |
 | `console.rs` | the console row: where each strip goes, the rects a popover hangs from and a drag lands in, the insert drag resolved after the last strip |
 | `strip.rs` | a channel strip and a mix strip: rows, header, scale, readouts, mute, link and ear, the add-channel column, the text helpers |
 | `fader.rs` | a fader: the meter bars and peak lines, the line and triangle, the drag, double-click and keys |
-| `well.rs` | the FX well: MON and MST, the slots with their square, gear and bin, the slot keys, "+ Add plugin", the scrolling list |
+| `well.rs` | the FX well: MON and MST, the slots with their square, gear and bin, the mark of a slot playing as a pass-through, the slot keys, "+ Add plugin", the scrolling list |
 | `drag.rs` | an insert dragged within or between strips: where it lands, the drop line and outline, the ghost, the command a drop sends |
 | `popover.rs` | the popovers: the source panel, the output panel, the add-channel menu, the menu and the preferences; where a popover goes |
 | `browser.rs` | the plugin browser: the search, the nav and its counts, the list grouped A to Z, stars, the footer |
-| `toast.rs` | the toast line and Undo: what a removal keeps, and how Undo puts it back |
+| `toast.rs` | the toast line, and the Undo command a toast carries |
 | `editors.rs` | the plugin editor windows, made by an `Opener` and driven through `EditorWindow` (winit's in the app, a fake in the tests): open, resize, close through the host, titles |
 | `widgets.rs` | what every surface shares: hover, the focus ring, the text button, tick box and radio, headings, the text field, a popover's frame |
 | `meters.rs` | a linear peak read on the fader's taper, the peak-hold line |
@@ -77,7 +77,8 @@ on Wayland, is the charter's open point.
 ## A frame
 
 `Running::frame`, while the window can be seen ([Pacing](#pacing)), in order: the host's
-events (`Shell::event`: the backend's state, a toast, an editor the host closed); the host's
+events (`Shell::events`: the backend's state, a toast, a removal with its Undo, a finished
+rescan, an editor the host closed); the host's
 meters into the window's `Meters`; the open editors served (`EditorWindows::tick`); then egui
 runs `ui::draw`, which reads the host and the shell and returns the frame's `Intent`s;
 `Shell::dispatch` carries them out against the host; the editors it queued open in windows of
@@ -96,22 +97,31 @@ to 0.1 ms of every frame.
 
 **An `Intent`** is what a gesture asks: `Apply(Command)`, `OpenEditor(instance)`,
 `Toggle(anchor)` (open the popover that hangs from it, or close it), `AddChannel(kind)`,
-`Undo`, `Favorite { id, on }`. A frame never changes the setup it is drawing; the headless
-tests drive the same `draw` and `dispatch` the window does.
+`Undo`, `Favorite { id, on }`, `Rescan`, `Notice(message)` (a control that refused something
+itself). A frame never changes the setup it is drawing; the headless tests drive the same
+`draw` and `dispatch` the window does.
 
 **`Shell::dispatch`** applies each command through `Host::apply`. A refusal goes to the toast
 line as the model words it (each says what to do). The editors of the inserts a command
-removes close through the host first. A change earns its note: "Removed <plugin> from
-<strip>" or "Removed <channel>" with Undo (5 s), "Moved" or "Copied <plugin> to <strip>" for a
-drag between strips or a copy, "Added <plugin> to <strip>", "Monitor output now plays Master"
-and "Monitor output back to the Monitor mix" (2.4 s). A host's `Toast` shows 8 s.
+removes close through the host first. A change earns its note: "Moved" or "Copied <plugin> to
+<strip>" for a drag between strips or a copy, "Added <plugin> to <strip>", "Monitor output now
+plays Master" and "Monitor output back to the Monitor mix" (2.4 s). A star goes to
+`Host::set_favorite` (the host keeps it in `plugins.ron`), Rescan plugins to
+`Host::rescan_plugins`.
+
+**`Shell::events`** takes what one poll of the host reported: the backend's state (the
+banner), a `Toast` (8 s; it says what to do), a `Removed { message, undo }` (the host's words
+with Undo, [Toasts and Undo](#toasts-and-undo)), `PluginsRescanned` ("Rescanned the plugin
+folders: N plugins", only when the host said nothing of its own in the same poll, so a warning
+about the rescan stays on the line), `EditorClosed`. The setup, the apps, the devices and the
+inserts playing as pass-throughs the next frame reads from the host.
 
 ## Pacing
 
 `pacing.rs`'s `Pacer` says what comes next, as a plain function of what the last frame left
-(`pacing::next`, pinned by its tests), and `app.rs` sleeps the loop until then
-(`ControlFlow::WaitUntil`, or `Wait` when nothing is due): a frame, or, while the window is
-hidden, a tick that serves the host without one.
+(`pacing::plan`, pinned by its tests), and `app.rs` sleeps the loop until then
+(`ControlFlow::WaitUntil`, or `Wait` when nothing is due): a frame, or a serve of the host
+without one (the hidden window's tick, or the host's own poll).
 
 - **Seen**: a frame when egui wants one (input, or its `repaint_delay` coming due: a tooltip,
   the toast's fade, a text cursor), straight after a frame that acted or opened or closed a
@@ -135,7 +145,13 @@ hidden, a tick that serves the host without one.
   otherwise not until an event. Input does not wake it. Each hidden tick asks the desktop again
   whether the window is minimised, so a window back in view with no event that says so (an
   X11 window under a compositor) draws within a tick; one whose event says so draws at once.
-- With no backend, no editor and nothing to animate it is idle.
+- **The host's own poll** (`Host::next_poll`: PipeWire's news, the debounced save, a removed
+  instance's undo running out): every frame serves the host; between frames, seen or hidden,
+  the host is served when it asks, never sooner than `FRAME_INTERVAL` after it was last asked
+  (so a host that asks at once cannot spin the loop), with no frame unless it brought news,
+  and then a frame as soon as the 60 Hz cap allows. A poll never puts off a frame that is due.
+  `FakeHost` asks for none: its meters are live, so its frames poll it.
+- With no backend, no editor, nothing to animate and nothing the host waits for, it is idle.
 
 ## The command line
 
@@ -208,9 +224,11 @@ them. `paint_filled` fills a closed run as a fan from its centre (the browser's 
   percentage; the rate drops a needless decimal (`48`, `44.1`), and every number is a dash
   until the host reports a rate. No in-app window buttons: the desktop draws the window's
   decorations.
-- **The banner**, when the host's backend is `Absent`, with its reason ("No audio backend on
-  this platform" on Windows; on Linux, until handoff 06 plays through PipeWire, that PipeWire
-  answers but is not played through yet, or PipeWire's refusal).
+- **The banner**, the host's `BackendState::banner()` when it has one, a hairline in the
+  mute colour round it: "No audio backend on this platform" on Windows; on Linux PipeWire's
+  refusal (`Absent`), the mixer connected but idle with what would drive it (`Idle`), or the
+  daemon gone and being reconnected (`Disconnected`). The host's messages go to the toast
+  line, and an insert playing as a pass-through is marked on its slot, not in the banner.
 - **The console**, at the top left of what is left, at its natural size (`console::size`:
   900 × 454 for six channels): black, with each channel strip in setup order, the add-channel
   column (a plus over "ADD CHANNEL" set vertically, as `writing-mode: vertical-rl` sets it)
@@ -221,7 +239,9 @@ A **channel strip**: the header (the mic icon for a hardware input, four squares
 channel, the name in 600 cut with an ellipsis when long, the live dot green for a hardware
 input or an app channel with a running app, else faint); the FX well (FX, MON and MST lit in
 the accent when the chain feeds that mix, each insert with its bypass square, filled when on,
-its name faint when bypassed, then "+ Add plugin"); two faders with the scale between (`+6, 0,
+its name faint when bypassed, then "+ Add plugin"; an insert the host plays as a pass-through,
+its plugin missing or not set up (`Host::problems`), has its square outlined and its name in
+the mute colour, and says the host's why and what to do under the pointer); two faders with the scale between (`+6, 0,
 6, 12, 24, 48` at the taper's positions 1, .84, .70, .56, .36, .14, the 0 a shade brighter);
 the readouts (`taper::format_db` in mono 500, struck through and faint when muted); and the
 Monitor mute, the link toggle and the Master mute. A **mix strip**: the header (headphones or
@@ -315,9 +335,9 @@ under the popover.
   "Apps can also record Master as an input.", Done.
 - **The add-channel menu** (180 wide), beside the add column: App channel, Hardware input
   (`AddChannel { kind }`).
-- **The menu**, under the menu button: Preferences, and Rescan plugins drawn faint and inert
-  until the host offers a rescan ([What the window needs from the
-  host](#what-the-window-needs-from-the-host)).
+- **The menu**, under the menu button: Preferences, and Rescan plugins
+  (`Host::rescan_plugins`, the menu closing; the toast line says what the catalog holds after,
+  unless the host said something of its own about it).
 - **The preferences** (270 wide): the quantum asked of PipeWire as radios (128, 256, 512
   samples; `SetPrefs`), the extra plugin folders each with its bin, a field and Add for
   another (`SetPrefs` with the folder added or removed, the rest kept; a folder takes at most
@@ -335,8 +355,8 @@ row on the accent at 22 %, scrolled into view); Enter adds it. With the field em
 picks the list: Favorites, Recent and All plugins with their counts, then "Type" with each
 type the catalog has, in the prototype's order, and "Maker" with each maker by name, each with
 its count; All plugins is grouped A to Z (`#` for a name that starts with no letter); Recent
-keeps its own order, the rest are by name. A row's star toggles the favourite (the starred
-star filled in the accent); a press on the row, or Enter, sends `AddInsert { strip, plugin,
+keeps its own order, the rest are by name. A row's star toggles the favourite through
+`Host::set_favorite`, which keeps it (the starred star filled in the accent); a press on the row, or Enter, sends `AddInsert { strip, plugin,
 at: len }` (the plugin as the catalog names it: id, bundle, name) and closes the browser. The
 footer says where it goes: "Adds to **<strip>**, slot N". An empty list says "No installed
 plugin matches “…”."
@@ -348,16 +368,14 @@ with a black outline, fading in and out over 0.15 s; a new message takes the old
 and the old one's Undo with it. A message wider than the window wraps; each is laid out before
 it is placed, so it is centred from its first frame.
 
-Removing an insert or a channel shows "Removed …" with Undo for 5 s. The window keeps what was
-removed while the toast shows and, on Undo, puts it back through the commands the `Host` trait
-has today (`toast::replay`): an insert is added again at its place (`AddInsert`, then
-`SetInsertEnabled` false when it was bypassed); a channel is added again (`AddChannel`) with
-its name, its source less any app another channel has taken since, its faders (unlinked while
-they are set), mutes, MON and MST, link, and its inserts, each command sent only when the new
-channel differs. Until the model has change request 2's `RestoreChannel` and `RestoreInsert`,
-a restored channel comes back at the right end rather than its place, and a restored insert is
-a new instance that starts from the plugin's defaults rather than the state the host kept. A
-refusal (the strip it belonged to has gone) goes to the toast line.
+Removing an insert or a channel shows the host's words ("Removed Pro-C 2 from Mic", "Removed
+channel Music": `HostEvent::Removed`) with Undo for the host's `UNDO_TOAST` (5 s, the
+prototype's). Undo applies the one command the host handed out with it: `RestoreChannel { at,
+channel }` puts the channel back at its place with its ids, chain and instances,
+`RestoreInsert { to, insert }` the insert in its slot, bypassed if it was; the host lends the
+instance it kept, its state and a reverb's tail included. A refusal (the console is full again,
+the strip it belonged to has gone) goes to the toast line in the model's words. The Undo dies
+with its toast; the host keeps the removed instances a little longer than the toast shows.
 
 ## Editor windows
 
@@ -371,8 +389,8 @@ slot N".
   "run with the real host to open a plugin's editor", a Wayland handle on Linux) drops the
   window and goes to the toast line. At most 16 are open at once.
 - **Resize**: `Host::tick_editors`, every frame or hidden tick while one is open (at least
-  every 33 ms), names the instance that asked; its window takes the size. (Telling the plugin its new size waits for the host; see
-  below.)
+  every 33 ms), names the instance that asked; its window takes the size. (Telling the plugin
+  its new size waits for the host; see below.)
 - **Close**: always through `Host::close_editor` before the window goes — the window's close
   button, the insert's removal (the shell closes it before the command), the insert leaving the
   setup any other way, the window closing at exit — and an editor the host closed itself
@@ -385,19 +403,11 @@ slot N".
 
 ## What the window needs from the host
 
-The window codes against the `Host` trait as it is. Three of its controls want a call the trait
-does not have yet, proposed as the build map's change request 8 for lane 06:
-`set_favorite(id, on)` (the browser's star; until then a toggle lasts until the window closes,
-`Favorites` in `shell.rs`), `rescan_plugins()` reporting `HostEvent::PluginsRescanned` (the
-menu's Rescan plugins, inert until then), and `resize_editor(instance, size)` (the kit's
-resize is asynchronous: after the window has taken the size, `EditorSession::resize` must tell
-the plugin). Undo waits on change request 2's `RestoreChannel` and `RestoreInsert` in the
-model, after which it sends one command; the host keeps a removed instance by a rule of its
-own, with no call from the window: at least as long as the toast's 5 s Undo, and a little more
-(the toast dies sooner when the next toast takes its place, never later). The browser's Recent
-changes only when the host's `apply(AddInsert)` puts the plugin at the front of the catalog's
-recent list (`Catalog::used`) and saves it, as the prototype's add does. The model does not
-bound the extra plugin folders yet; the window holds at most 16.
+The window codes against the `Host` trait as it is. Two things wait, proposed as the build
+map's change request 10: `resize_editor(instance, size)` on the host (the kit's resize is
+asynchronous: after the window has taken the size a plugin asked for, `EditorSession::resize`
+must tell the plugin, and today nothing does), and a bound on the model's extra plugin folders
+(`SetPrefs` takes any number; the window holds at most 16 and says to remove one first).
 
 ## The capture
 
@@ -421,8 +431,9 @@ cargo run -p vix-mix -- --dump-png docs/design/prototype/egui-look-gate.png
 `cargo test -p vix-mix`, headless on both CI legs (egui runs without a window or a GPU).
 
 **The gestures** (`acceptance.rs`, on `test_support::Harness`: `FakeHost`'s example console in
-`ui::draw` and `Shell::dispatch`, as the window runs them, with every call to the host
-recorded; each test asserts the command its gesture sent):
+`ui::draw` and `Shell::dispatch`, as the window runs them, the host polled before each frame
+into `Shell::events`, with every call to the host recorded; each test asserts the command its
+gesture sent):
 
 - faders: `a_fader_drag_moves_the_send_by_the_pointers_travel`,
   `with_shift_a_drag_moves_a_fifth_as_far`,
@@ -435,25 +446,31 @@ recorded; each test asserts the command its gesture sent):
   moved far enough, sends nothing), `an_insert_dragged_to_another_strip_moves_or_with_ctrl_copies`,
   `a_drag_shows_its_ghost_and_escape_cancels_it`;
 - the browser: `the_browser_searches_and_enter_adds_the_first_hit` (type, Down, Enter),
-  `the_browser_nav_filters_and_a_star_toggles_a_favourite`;
+  `the_browser_nav_filters_and_a_star_toggles_a_favourite` (the star reaches
+  `Host::set_favorite`);
 - the source panel: `an_app_ticked_in_one_channel_leaves_another`,
   `an_app_search_that_finds_nothing_says_so`, `a_hardware_channel_picks_its_input`,
   `the_name_field_renames_once_when_the_panel_closes`;
   the output panel: `the_output_panel_picks_a_device_and_master_can_have_none`;
 - remove and Undo: `removing_an_insert_shows_undo_and_undo_puts_it_back` (its editor closed
-  through the host first), `a_bypassed_insert_comes_back_bypassed_and_undo_dies_with_its_toast`,
-  `removing_a_channel_shows_undo_and_undo_brings_it_back` (the whole replay);
+  through the host first; Undo sends the host's `RestoreInsert`, the same insert back),
+  `a_bypassed_insert_comes_back_bypassed_and_undo_dies_with_its_toast`,
+  `removing_a_channel_shows_undo_and_undo_brings_it_back` (`RestoreChannel`, back at its
+  place), `an_undo_the_host_refuses_says_why_on_the_toast_line`;
 - the rest: `a_press_outside_or_escape_closes_a_popover`,
   `the_add_column_adds_a_channel_and_opens_its_panel_to_name_it`,
   `the_gear_or_a_double_click_asks_for_the_insert_s_editor`,
   `a_refusal_reaches_the_toast_line_with_its_fix`, `a_long_chain_scrolls_in_its_well`,
-  `the_preferences_ask_for_a_quantum_and_take_plugin_folders`,
+  `the_preferences_ask_for_a_quantum_and_take_plugin_folders` (and Rescan plugins asks the
+  host, says what the catalog holds, and leaves a warning of the host's on the line),
   `the_preferences_hold_at_most_sixteen_plugin_folders`,
   `the_window_keeps_room_for_the_header_over_a_narrow_console`,
   `an_editor_the_host_refuses_says_why_on_the_toast_line_and_keeps_no_window` (`FakeHost`'s
   refusal, word for word),
   `a_panel_opens_with_the_focus_on_its_checked_radio_and_the_arrows_pick` (an input panel and
-  Master's output panel: Down, round the end, Space, Up to "No device").
+  Master's output panel: Down, round the end, Space, Up to "No device"),
+  `an_insert_playing_as_a_pass_through_is_marked_and_says_why`,
+  `the_banner_says_when_the_mixer_is_idle_or_the_daemon_is_gone`.
 
 **The parts:**
 
@@ -490,7 +507,10 @@ recorded; each test asserts the command its gesture sent):
   that keeps refusing is tried four times a second; a hidden window draws nothing and serves
   the host slowly (an editor's rate while one is open; nothing at all with nothing to serve;
   input does not wake it); minimised, zero-sized or covered is hidden; an idle window waits,
-  and egui or an act wakes it no faster than 60 Hz; input draws as soon as the cap allows.
+  and egui or an act wakes it no faster than 60 Hz; input draws as soon as the cap allows;
+  an idle window serves the host when it asks and draws only for news, a host that asks at
+  once waiting an interval; a poll never puts off a frame, and news waits for the cap (and
+  draws nothing hidden); a hidden window serves the host when it asks sooner than its tick.
 - `meters.rs`: a level reads on the fader's taper; a peak holds 900 ms then falls 0.006 a
   frame to the level; the console's meters follow the host's frame by position.
 - `ui.rs`, headless frames of `ui::draw` that press nothing and ask nothing: the header names
@@ -508,24 +528,25 @@ recorded; each test asserts the command its gesture sent):
   frames a second, its acquire stalling up to 80 ms; mailbox holds 60.
 - **CPU**, `--fake` at 60 frames a second on an RTX 3090 with 24 logical cores: the process's
   CPU time over 20 s after 4 s of warm-up, read per thread from PowerShell's `Get-Process`
-  (all of it is the main thread's). Of one core: 5.5 to 7.5 % in the debug build `cargo run`
-  makes, on Vulkan; 4.6 to 4.8 % in a release build on Vulkan and 4.8 to 5.8 % on DX12. Of the
-  machine: 0.19 to 0.31 %. A release frame, timed in place: egui's pass 0.25 to 0.3 ms,
-  tessellating the whole console 0.23 to 0.3 ms, encoding and upload 0.1 ms, then the driver's
-  submit and present (0.2 and 0.3 ms of wall time, part of it waiting). An empty egui frame
-  presented at 60 Hz costs 2.1 % of one core by itself, the floor for any frame at this rate;
-  the console's own drawing is the rest, because egui draws all of it every frame. Debug on
-  DX12 costs 9 to 10.6 %, because wgpu turns on the backend's validation in a debug build
-  and the D3D12 debug layer answers here (`WGPU_VALIDATION=0` brings it to 6.9 %); on Vulkan
-  turning it off changes nothing measurable (5.8 %), so a debug build's extra cost there is
-  the app's own code, unoptimised. Minimised, 0.00 %: no frame, the host served four times a
-  second. The figures move with what else the machine runs: the branch's previous head, which
-  measures the same as this one side by side, measured 8.1 to 8.4 % in release on a busier
-  afternoon.
+  (all of it is the main thread's), debug and release run in turn four times each on the
+  rebased branch. Of one core: 5.5 to 11.0 % in the debug build `cargo run` makes (6.4 the
+  middle of the runs) and 3.8 to 6.3 % in a release build (4.9 the middle), on Vulkan; the
+  branch's verifier measured 5.5 to 7.3 % and 4.4 to 5.2 % in the same way. Of the machine:
+  0.16 to 0.46 %. The figure moves with what else the machine runs, by more than the
+  difference between the builds. A frame, timed in place in a debug build (release beside
+  it): the console's drawing in egui's pass 0.38 ms (0.16), egui's own share of the pass 0.05
+  (0.04), tessellating the whole console 0.24 (0.2), encoding and upload 0.09, the surface's
+  acquire 0.05, the driver's submit and present 0.45 (0.43, most of it CPU on the window's
+  thread). An empty egui frame presented at 60 Hz costs 2.1 % of one core by itself. Tried and
+  not kept: tessellating each icon's strokes once and reusing the mesh, moved into place or
+  kept where it is drawn; side by side with the strokes tessellated every frame the frame's
+  phases did not move (strokes this thin tessellate about as fast as a mesh is copied), so the
+  icons stay as they are. Minimised, 0.00 %: no frame, the host served four times a second.
 - Minimised and restored (`ShowWindowAsync` from PowerShell, with the window's handle taken
   before it was minimised): no frame while minimised, drawing again at once when restored.
 - `cargo run -p vix-mix -- --quit-after-frames 3` runs on the real host and exits 0.
-- The capture command above writes the 1800 × 976 PNG, byte for byte the look gate's.
+- The capture command above writes the 1800 × 976 PNG, byte for byte the look gate's (again
+  on the branch rebased onto lane 06's host).
 - An editor: a scratch profile (`CHIMAERA_CONFIG_DIR`) with Goodhertz's Tone Control 3 on Mic
   opened it in a window titled "Ghz Tone Control 3 · Mic · slot 1" at the 552 × 404 it asked
   for, drawn by the plugin, and closed it through the host when its window closed (again
