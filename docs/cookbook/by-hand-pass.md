@@ -126,10 +126,14 @@ Change a plugin's settings in its editor so they are easy to recognise, wait a s
 is saved half a second after the last change), and close the window. With Spotify still
 playing, it goes back to the default output within a moment: Vix Mix clears its routings when
 it quits. `~/.config/vix-mix/setup.ron` holds the six channels, their sources and the plugins'
-states. Start Vix Mix again: the same channels, faders, mutes and devices, Spotify back in
-Music, and the plugin sounding as it did, its editor showing the settings you made. Kill it
-instead (`pkill -9 vix-mix`) a second or more after a change and start it again: the change is
-there.
+states. Once Spotify plays on the default output, start Vix Mix again: the same channels,
+faders, mutes and devices, Spotify back in Music, and the plugin sounding as it did, its editor
+showing the settings you made. Then change a setting and close the window at once, without
+waiting: the quit's own save keeps it, and the next start sounds so. Kill it instead
+(`pkill -9 vix-mix`) a second or more after a change and start it again: the change is there.
+If Spotify is silent after a start, write down how soon after the quit you started it: in the
+headless rig a player restarted into its channel within milliseconds of the quit broke, and one
+a second later did not.
 
 ## 10. No xruns at 256
 
@@ -141,7 +145,10 @@ pw-top
 ```
 
 For five minutes, while the desktop is used normally (a browser, a game), the `vix-mix.*` rows
-stay at QUANT 256 and their ERR column does not move. The header's DSP load stays well under
+stay at QUANT 256 and their ERR column does not move. Then set the preferences' quantum to 512
+and back to 256 while everything plays: the header follows, Spotify stays in Music, Discord and
+OBS go on recording "Vix Mix Master" (a quantum change keeps every node of Vix Mix, so nothing
+has to link again), and the only trace is one short click at each change. The header's DSP load stays well under
 its bar's end. Write down any ERR count that moved, and what was happening at the time.
 
 ## 11. Measure the latency
@@ -164,10 +171,13 @@ pw-link '<the interface capture port>' 'jack_iodelay:in'
 ```
 
 `jack_iodelay` prints the round trip in frames and milliseconds: an app's signal → Vix Mix (one
-quantum in the ring) → the interface's output → the cable → its input. Read it at 128, 256 and
-512 (the preferences' quantum), and write the three figures, the date, the interface and the
-kernel into [reference/pipewire.md](../reference/pipewire.md) § Latency, beside the estimate.
-Unplug the cable before stopping `jack_iodelay`.
+quantum in the ring) → the interface's output → the cable → its input. Read it at 256, then set
+the preferences' quantum to 128 and to 512 and read it at each once the header shows the new
+quantum and the figure has settled: the two links stay through the change, because a quantum
+change keeps every node of Vix Mix (if `pw-link -l` no longer shows them, make them again and
+write that down as a finding). Write the three figures, the date, the interface and the kernel
+into [reference/pipewire.md](../reference/pipewire.md) § Latency, beside the estimate. Unplug
+the cable before stopping `jack_iodelay`.
 
 ## 12. How you know it worked
 

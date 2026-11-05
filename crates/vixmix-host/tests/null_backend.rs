@@ -1,20 +1,25 @@
 //! The real host on the null backend, with a real VST3 plugin: a signal through a channel's
 //! chain with MON on and MST off, meters that move, a save and a reload that give back the
-//! same setup and the same sound, a copy that sounds like its original, and an instance's
-//! lifecycle across a removal, its undo and the undo toast running out. On every platform.
+//! same setup and the same sound, a plugin moved while it plays that is saved and sounds the
+//! same after a relaunch, a copy that sounds like its original, and an instance's lifecycle
+//! across a removal, its undo and the undo toast running out. On every platform.
 
 mod common;
 
 use std::time::{Duration, Instant};
 
 use vixmix_host::{AudioBackend, Host, HostEvent, MeterFrame, RealHost, UNDO_TOAST};
-use vixmix_model::{Command, InstanceId, MixId, Setup, SlotRef, Strip, apply};
+use vixmix_model::{Command, InstanceId, MixId, Setup, SlotRef, Strip, apply, persist};
 
 /// What the null backend feeds the first channel: a constant, so every peak is exact.
 const LEVEL: f32 = 0.8;
 /// The gain the test plugin is stored at.
 const GAIN: f64 = 0.25;
 const PROCESSED: f32 = LEVEL * GAIN as f32;
+/// Where a test moves the plugin's gain (its parameter 0, normalized, is the gain) while it
+/// plays, and where it moves it again just before quitting.
+const MOVED: f64 = 0.5;
+const AGAIN: f64 = 0.75;
 
 fn close(found: f32, expected: f32) -> bool {
     (found - expected).abs() < 1e-5
@@ -102,6 +107,60 @@ fn the_test_plugin_plays_through_a_channel_chain_and_comes_back_after_a_reload()
     assert_eq!(
         again, frame,
         "the same setup sounds the same after a reload"
+    );
+}
+
+/// The state the setup on disk holds for `instance`.
+fn saved_state(config: &std::path::Path, instance: InstanceId) -> Option<Vec<u8>> {
+    let (setup, problem) = persist::load(config).into_parts();
+    assert!(problem.is_none(), "{problem:?}");
+    let insert = setup.inserts().find(|i| i.instance == instance)?;
+    insert.state.clone()
+}
+
+#[test]
+fn a_plugin_moved_while_it_plays_is_saved_with_its_new_state_and_sounds_so_after_a_relaunch() {
+    let (config, plugins, instance) = setup_with_the_plugin("moved");
+    let mut host = common::boot(&config, &plugins, AudioBackend::Null);
+    assert!(close(play(&mut host).channels[0].monitor.left, PROCESSED));
+
+    // Moved as an edit in its editor would move it: heard from the next block, and on disk
+    // once the setup has been quiet for the debounce, the state taken from the live plugin.
+    host.set_param(instance, 0, MOVED).unwrap();
+    let moved = LEVEL * MOVED as f32;
+    let heard = play(&mut host).channels[0].monitor.left;
+    assert!(close(heard, moved), "heard {heard}, wanted {moved}");
+    assert_eq!(
+        saved_state(&config, instance),
+        Some(common::gain_state(GAIN))
+    );
+    let wait = host.next_poll().expect("the move waits for the debounce");
+    std::thread::sleep(wait + Duration::from_millis(20));
+    let _ = host.poll();
+    assert_eq!(
+        saved_state(&config, instance),
+        Some(common::gain_state(MOVED)),
+        "the autosave took the plugin's new state"
+    );
+
+    // Moved again and quit at once: the quit's save takes it.
+    host.set_param(instance, 0, AGAIN).unwrap();
+    let again = LEVEL * AGAIN as f32;
+    assert!(close(play(&mut host).channels[0].monitor.left, again));
+    drop(host);
+    assert_eq!(
+        saved_state(&config, instance),
+        Some(common::gain_state(AGAIN))
+    );
+
+    // Relaunched: the same state, the same sound.
+    let mut host = common::boot(&config, &plugins, AudioBackend::Null);
+    let insert = host.setup().inserts().next().unwrap();
+    assert_eq!(insert.state, Some(common::gain_state(AGAIN)));
+    let heard = play(&mut host).channels[0].monitor.left;
+    assert!(
+        close(heard, again),
+        "after the relaunch {heard}, wanted {again}"
     );
 }
 

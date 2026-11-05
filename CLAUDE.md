@@ -86,8 +86,9 @@ backend) are agreed and applied.
 
 **The host is implemented (2026-11-04):** `vixmix-host` owns the orchestration: boot in order
 (setup, plugins rescanned against their cache, instances with their state, the engine prepared,
-then the backend), PipeWire kept for the whole run on Linux with every app routed the moment it
-appears and again when the setup moves it, each command's `Applied` acted on, the save debounced
+then the backend), PipeWire kept for the whole run on Linux (a new quantum asked for in place,
+change request 9) with every app routed the moment it appears and again when the setup moves
+it, each command's `Applied` acted on, the save debounced
 500 ms, a removed channel's or insert's instances kept for its undo (handed out as
 `HostEvent::Removed`; the model's `RestoreChannel` and `RestoreInsert`, change request 2),
 pass-throughs and notices surfaced, and shutdown in the kit's order (routings cleared, the

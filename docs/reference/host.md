@@ -123,8 +123,11 @@ Booting writes nothing but `plugins.ron`, and that only when the scan learned so
 - **`engine`** (or any instance made or retired): the snapshot is prepared.
 - **`graph`**: the backend's graph is applied — the channels in order (an app sink, or a
   capture on its device), Monitor's and Master's devices, the Master source always published.
-  A new quantum connects the backend again, because `node.latency` is a stream's property
-  from its making; every device and app is then reported afresh and routed again.
+  A new quantum is asked for in place first (`Backend::set_quantum`, change request 9): no
+  node is made again, so every app stays in its channel and every link stays (a recorder's of
+  the Master source, one made by hand); a larger quantum costs one short gap while the
+  backend's rings grow (measured at 256 to 512: one gap of 1024 frames on the Master
+  source).
 - **`graph` or `routing`**: every app playing now whose sink changed is routed again, after
   the graph (a routing names a sink of the newest graph). A rename changes the channel's sink
   name, so its apps are routed to the new name (the backend also moves them itself); a removed
@@ -194,7 +197,10 @@ kit's [vst3-host.md](https://github.com/thechimaeraproject/chimaeraproject-kit/b
 
 For tests, `config_dir()`, `backend()`, `engine()`, `is_live(instance)` and
 `null_input(index)` (the null backend's input for a channel, which every later poll plays)
-read and feed it from outside.
+read and feed it from outside, and `set_param(instance, param, value)` moves a plugin's
+parameter as the mixer's own control would (`Instances::set_param`: the controller shows it,
+the processor plays it from its next block, and the autosave comes due), which is how a test
+changes a plugin's state while it plays.
 
 ## `FakeHost`
 
@@ -249,16 +255,34 @@ and `open_editor` answers `HostError::Simulated`.
   once the toast has run out (the test sleeps as `next_poll` lets it) and is made again from
   its state by a late undo
   (`a_removed_insert_keeps_its_instance_until_its_undo_toast_dies`); a copy on the Master mix
-  sounds like its original (`a_copied_insert_sounds_like_its_original`).
+  sounds like its original (`a_copied_insert_sounds_like_its_original`); the plugin moved while
+  it plays (`set_param`) is heard from the next block, is on disk once the debounce has run out
+  with the state taken from the live plugin, moved again and quit at once is kept by the quit's
+  save, and sounds so after a relaunch
+  (`a_plugin_moved_while_it_plays_is_saved_with_its_new_state_and_sounds_so_after_a_relaunch`).
 - **`tests/headless.rs`**, Linux, against the daemon of `scripts/ci/headless-pipewire.sh`
-  ([Run a headless PipeWire](../cookbook/run-headless-pipewire.md); without its marker the test
-  says how to start it and passes, under `CI` it fails), under `assert_no_alloc`'s allocator:
+  ([Run a headless PipeWire](../cookbook/run-headless-pipewire.md); without its marker each test
+  says how to start it and passes, under `CI` it fails), one test at a time, under
+  `assert_no_alloc`'s allocator:
   `an_app_plays_through_its_channel_to_monitor_and_master_and_comes_back_after_a_relaunch` —
   the host boots on the daemon with a setup naming a player, the test plugin at half gain and
   Monitor on the null sink, and runs at 48 kHz and 256; a `pw-play` sine is listed as playing,
   routed into Music's sink and read through the plugin on Music's meter; the null sink and
-  `pw-record` of the Master source both hear it at the plugin's level; quitting clears the
-  player's routing and it goes back to the default; the relaunch gives the same setup with the
-  plugin's state and the player back in Music, sounding the same.
+  `pw-record` of the Master source both hear it at the plugin's level; the plugin is moved
+  while it plays (`set_param`) and Music follows; quitting at once clears the player's routing,
+  it goes back to the default, and the quit's save takes the plugin's new state; the relaunch
+  gives the same setup with that state and the player back in Music, sounding as moved.
+  `a_new_quantum_keeps_the_app_in_its_channel_and_the_master_source_recording` — with the
+  player in Music, a link made by hand into Music's sink and `pw-record` on the Master source,
+  `SetPrefs` asks for 512: the host runs at 512, every node of ours keeps its `object.serial`
+  (none made again), three seconds later the player is still in Music and heard there, the
+  hand-made link stands, and the recording carries the mix throughout but for one gap of at
+  most two cycles at 512 (measured: 1024 frames, every run).
+- **`tests/refused.rs`**, Linux, alone in its binary because it changes the environment:
+  `a_pipewire_that_refuses_is_the_null_backend_with_its_reason_and_is_asked_again` — with
+  `PIPEWIRE_REMOTE` naming a socket that does not exist, `System` boots on the null backend with
+  "No audio backend: PipeWire refused to connect to the daemon…" and the check it names, polls
+  pump it, and `next_poll` is at most 5 s; with the variable put back, the next ask (not before
+  5 s) takes PipeWire.
 
 The by-hand pass on real hardware is [the cookbook](../cookbook/by-hand-pass.md).

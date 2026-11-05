@@ -156,29 +156,15 @@ impl Audio {
         heard
     }
 
-    /// The setup's graph changed: the backend makes its nodes match. A new quantum connects
-    /// the backend again (`node.latency` is a stream's property from its making), which
-    /// reports every device and app afresh.
-    pub fn apply_graph(&mut self, setup: &Setup, engine: &Arc<Engine>) -> Heard {
+    /// The setup's graph changed: the backend makes its nodes match. A new quantum is asked
+    /// for in place (change request 9): no node is made again, so every app stays in its
+    /// channel and every link to the Master source (a recorder's) stays.
+    pub fn apply_graph(&mut self, setup: &Setup) {
         #[cfg(target_os = "linux")]
         if let Kind::PipeWire(pw) = &mut self.kind {
-            if pw.quantum() == setup.prefs.quantum {
-                pw.apply_graph(setup);
-                return Heard::default();
-            }
-            let app_name = pw.app_name();
-            pw.shutdown();
-            self.devices.clear();
-            self.streams.clear();
-            self.kind = system(app_name, engine, setup);
-            return Heard {
-                devices: true,
-                apps: true,
-                toasts: Vec::new(),
-            };
+            pw.apply_graph(setup);
         }
-        let _ = (setup, engine);
-        Heard::default()
+        let _ = setup;
     }
 
     /// The setup moved apps between channels (or renamed, removed or restored one): every
@@ -295,7 +281,7 @@ pub(crate) mod linux {
         backend: Option<Backend>,
         events: Receiver<BackendEvent>,
         app_name: &'static str,
-        /// The quantum asked for at connect (`node.latency`).
+        /// The quantum asked for (`node.latency`), at connect or since in place.
         quantum: u32,
         /// The rate and quantum since the tick last ran its first cycle on this connection.
         running: Option<(u32, u32)>,
@@ -347,14 +333,6 @@ pub(crate) mod linux {
                 moved_at: Instant::now(),
                 ticking: false,
             })
-        }
-
-        pub fn app_name(&self) -> &'static str {
-            self.app_name
-        }
-
-        pub fn quantum(&self) -> u32 {
-            self.quantum
         }
 
         /// Connected but not running yet, running, idle with why, or lost.
@@ -492,10 +470,15 @@ pub(crate) mod linux {
             self.routed.push((node, to));
         }
 
+        /// The quantum first, so a stream the graph makes asks for it from the start.
         pub fn apply_graph(&mut self, setup: &Setup) {
             if let Some(backend) = &self.backend {
+                if setup.prefs.quantum != self.quantum {
+                    backend.set_quantum(setup.prefs.quantum);
+                }
                 backend.apply(&graph(setup));
             }
+            self.quantum = setup.prefs.quantum;
         }
 
         pub fn reroute(&mut self, setup: &Setup, streams: &[Stream]) {
