@@ -111,6 +111,16 @@ folders). Deviations, each with its reason:
   `chimaeraproject-vst3-host` directly, already built for the host at the kit's one tag; its
   tests take `vixmix-plugins`, because their `Recorder` implements `Host`, whose `catalog`
   names `Catalog`. The lock gains two edges and no crate.
+- **One sentence of lane 06's paragraph in CLAUDE.md § Status changed**, beyond this lane's own
+  paragraph: "shows its notes in the banner line" became "on the toast line". Handoff 06 asks
+  lane 05 to retire that stopgap ([its deviations](06-host-and-integration.md), "the banner
+  line"): `Running::banner()`'s toast and problem fallback gave way to the window's toasts and
+  slot marks, so the sentence would otherwise be false.
+- **The browser keeps its list between frames and draws only the rows in view**, which the
+  handoff does not ask for: with this machine's catalog (915 plugins) rebuilding and drawing
+  the whole list cost 3.15 ms a frame in a debug build; kept, 0.48 (see
+  [reference/app.md](../reference/app.md) § The plugin browser). Tab still walks every row: a
+  row that takes the focus scrolls in, which the prototype's browser does by itself.
 
 **Needs:** 00. **Runs alongside:** 01, 02, 03, 04. **Size:** XL. Starts on Windows against
 `FakeHost`.
