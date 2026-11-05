@@ -8,8 +8,8 @@ command's `Applied` part by part, debounces the save, keeps a removed insert's i
 undo, surfaces pass-throughs and notices, and shuts down in the kit's order; `FakeHost` stays
 the window's fixture. The contract is [reference/host.md](../reference/host.md); the first real
 test is [cookbook/by-hand-pass.md](../cookbook/by-hand-pass.md). `dev check` is green on
-Windows, and the Linux gate (fmt, clippy `-D warnings`, `cargo test --workspace` with both of
-the host's integration tests) is green in the `ubuntu:24.04` container with the headless
+Windows, and the Linux gate (fmt, clippy `-D warnings`, `cargo test --workspace` with every
+one of the host's integration tests) is green in the `ubuntu:24.04` container with the headless
 daemon. **The acceptance's first bullet waits for the user's by-hand pass on Fedora** (handoff
 08 runs the cookbook); no agent can hear a mic in headphones, and its flow is proven headlessly
 instead by `tests/headless.rs`. Deviations from the steps below, each with its reason:
@@ -34,9 +34,16 @@ instead by `tests/headless.rs`. Deviations from the steps below, each with its r
 - **Step 1 rescans the plugins at boot**, the plugins crate's start sequence, before the
   window opens (the scan belongs to the UI thread); `plugins.ron` is written only when the scan
   learned something, so "booting writes nothing" still holds for an unchanged start.
-- **A new quantum reconnects the backend.** `node.latency` is a stream's property from its
-  making and `BackendGraph` carries no quantum, so a preference change connects again; every
-  device and app is reported afresh and routed again.
+- **Change request 9, in the backend: a new quantum is asked for in place.** `node.latency`
+  was set only when a stream was made, so the first build changed the quantum by connecting
+  again, which destroyed and made again every node of ours; the verifier measured an app routed
+  back into its channel then erring every cycle and silent (3 of 3 runs), and a recorder of the
+  Master source loses its link. `Backend::set_quantum` updates `node.latency` on every live
+  stream (`pw_stream_update_properties`) and keeps it for every stream made later. Additive;
+  its test fails without the update. The host's test changes the quantum while the app plays,
+  a link made by hand stands and Master is recorded: nothing is made again, the app stays heard,
+  and the recording has one gap of 1024 frames at the change (the rings growing to one new
+  quantum ahead), measured every run.
 - **Step 3's save is debounced 500 ms and capped at 5 s** after the first unsaved change, so a
   knob turned for a minute still reaches the disk; an editor's edit and a dirty plugin make it
   due.
@@ -66,21 +73,37 @@ instead by `tests/headless.rs`. Deviations from the steps below, each with its r
   teardown must not cost the setup. The graphs are dropped by preparing an empty snapshot
   (every lent instance comes home on the UI thread, explicitly) rather than by dropping the
   engine.
-- **Step 8 is two tests.** `tests/null_backend.rs` (both legs) runs the plugins crate's test
-  plugin through a channel chain with MON on and MST off on the null backend, through a save and
-  a reload, a removal and its undo, and a copy, fed through `RealHost::null_input`.
-  `tests/headless.rs` (Linux, the brief's adaptation of the Fedora bullet) runs the same flow on
-  the headless daemon with a `pw-play` app, the null sink and `pw-record` of the Master source,
-  and a relaunch. Found on the way: relaunched within milliseconds of the quit, while the graph
-  was still moving to the player's own quantum, `pw-play` in the container broke (its node erred
-  every cycle and went away); a second player was heard at once, so the test relaunches once the
-  player is back on the default device, as a person would. The by-hand pass watches for it.
+- **Step 8 is three test binaries.** `tests/null_backend.rs` (both legs) runs the plugins
+  crate's test plugin through a channel chain with MON on and MST off on the null backend,
+  through a save and a reload, a plugin moved while it plays (saved by the autosave and by a
+  quit at once, and sounding so after a relaunch), a removal and its undo, and a copy, fed
+  through `RealHost::null_input` and moved through `RealHost::set_param` (a test hook on
+  `Instances::set_param`, not in the trait). `tests/headless.rs` (Linux, the brief's adaptation
+  of the Fedora bullet) runs the same flow on the headless daemon with a `pw-play` app, the null
+  sink and `pw-record` of the Master source, the plugin moved before a quit at once, and a
+  relaunch; and a quantum change while the app plays and Master is recorded. `tests/refused.rs`
+  (Linux) points `PIPEWIRE_REMOTE` at no daemon: the null backend with PipeWire's refusal, and
+  PipeWire taken at the next ask once it answers. Found on the way: relaunched within
+  milliseconds of the quit, `pw-play` in the container broke (its node erred every cycle and
+  went away); a second player was heard at once, and one relaunched a second later was fine, so
+  the test relaunches once the player is back on the default device, as a person would. The
+  by-hand pass watches for it (step 9).
 - **Two sentences of [reference/app.md](../reference/app.md)** (pacing, the banner line) and
   its `app.rs` row changed with the wiring in `app.rs` they describe; `ui.rs` is untouched — the
-  banner line hands it an `Absent { reason }` for a note.
+  banner line hands it an `Absent { reason }` for a note. That is the brief's stopgap, and lane
+  05 (or the main session at merge) removes it: `Running::banner()`'s toast and problem
+  fallback gives way to lane 05's toasts and slot marks, and app.md's banner-line sentence goes
+  back to the backend's banner alone. The poll pacing (`next_poll`, `poll_at`) stays.
 - **Shared docs beyond the conflict rules' list**: the Cookbook row of `docs/README.md`'s trust
   table said lane 06 "writes the next"; it now says it wrote the by-hand pass. The Reference
   index line for `host.md` names what it now covers.
+- **For the main session at merge, outside this lane's files**: `README.md`'s Run it block and
+  `CLAUDE.md`'s Commands block still say `cargo run -p vix-mix` opens the window "on the real
+  host (no backend yet: a banner says so)". It now plays through PipeWire on Linux and routes
+  the desktop's apps while it runs (the banner says so only when PipeWire refuses or nothing
+  drives the mixer), shows the no-backend banner elsewhere, and scans the VST3 folders before
+  the window opens on every platform (a first start with many plugins takes a while). Change
+  requests 8 and 9 wait for agreement in [build-map.md](../build-map.md) § Change requests.
 - **Not done**: a first start does not pick Monitor's device (the backend does not report the
   default sink, so the banner asks the user to); the boot scan has no progress display; an
   `IoChanged` plugin is set up again on the same buses, the kit reading buses once at `create`

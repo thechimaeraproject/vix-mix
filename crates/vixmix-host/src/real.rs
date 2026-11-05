@@ -177,6 +177,23 @@ impl RealHost {
         self.audio.null_input(index)
     }
 
+    /// Moves parameter `param` of `instance` to `value` (normalized, 0 to 1) as the mixer's
+    /// own control would for a plugin without an editor: the plugin's controller shows it,
+    /// its processor plays it from its next block, and the setup is saved with the plugin's
+    /// new state once the debounce runs out (or at quit). A test changes a plugin's state
+    /// while it plays this way, as an edit in its editor would.
+    pub fn set_param(
+        &mut self,
+        instance: InstanceId,
+        param: u32,
+        value: f64,
+    ) -> Result<(), HostError> {
+        self.instances.set_param(instance, param, value)?;
+        self.autosave.touch(Instant::now());
+        self.take_notices();
+        Ok(())
+    }
+
     /// The directories a scan walks.
     fn scan_dirs(&self) -> Vec<PathBuf> {
         match &self.plugin_dirs {
@@ -493,8 +510,7 @@ impl Host for RealHost {
             self.refresh_problems();
         }
         if applied.graph {
-            let heard = self.audio.apply_graph(&self.setup, &self.engine);
-            self.heard(heard);
+            self.audio.apply_graph(&self.setup);
         }
         if applied.graph || applied.routing {
             // After the graph: a routing names a sink of the newest graph. A rename moves
