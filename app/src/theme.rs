@@ -96,7 +96,8 @@ pub mod size {
     /// fills one whole row of points rather than straddling two.
     pub const HAIRLINE_INSET: f32 = HAIRLINE / 2.0;
 
-    /// The banner under the header when there is no audio backend: its padding and its
+    /// The banner under the header when the audio needs the user (no backend, the mixer
+    /// idle, the daemon gone: `BackendState::banner`): its padding and its
     /// margin, each across then down, and its outline (a hairline in the mute colour).
     pub const BANNER_PAD: [i8; 2] = [10, 6];
     pub const BANNER_MARGIN: [i8; 2] = [8, 6];
@@ -327,9 +328,10 @@ pub mod pop {
     pub const TOAST_BOTTOM: f32 = 12.0;
     pub const TOAST_PAD: [f32; 4] = [5.0, 6.0, 5.0, 12.0];
     pub const TOAST_GAP: f32 = 10.0;
-    /// How long a toast shows, in seconds: with an action (Undo), without one, and a
+    /// How long a toast shows, in seconds: with an action (Undo: the prototype's 5 s, which
+    /// is the host's `UNDO_TOAST`, as long as it keeps what was removed), without one, and a
     /// message from the host, which says what to do and wants reading.
-    pub const TOAST_WITH_ACTION_S: f64 = 5.0;
+    pub const TOAST_WITH_ACTION_S: f64 = vixmix_host::UNDO_TOAST.as_secs_f64();
     pub const TOAST_S: f64 = 2.4;
     pub const TOAST_HOST_S: f64 = 8.0;
     /// The toast's fade in and out (`transition: opacity .15s`).

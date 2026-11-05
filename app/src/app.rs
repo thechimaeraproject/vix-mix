@@ -1,8 +1,9 @@
 //! The winit application: the window, the host, the plugin editor windows, and one frame at
 //! a time.
 //!
-//! **A frame.** The host's events (the backend's state, a toast, an editor it closed), its
-//! meters into the window's [`Meters`](crate::meters::Meters), the open editors served;
+//! **A frame.** The host's events (the backend's state, a toast, a removal and its Undo, a
+//! rescan, an editor it closed), its meters into the window's
+//! [`Meters`](crate::meters::Meters), the open editors served;
 //! then egui runs [`ui::draw`], which returns what the gestures asked; the [`Shell`] carries
 //! that out against the host; editors it queued open in windows of their own; the window
 //! keeps at least the console's size.
@@ -11,8 +12,10 @@
 //! or the hidden tick it names. Frames come only while the window can be seen: on a 60 Hz
 //! grid while the meters move, when egui or a gesture wants one, at least every
 //! [`EDITOR_POLL`](crate::editors::EDITOR_POLL) while an editor is open; never more than 60 a
-//! second. Minimised, zero-sized or fully covered, it draws nothing and serves the host and
-//! the editors without a frame. With no backend, no editor and nothing to animate it is idle.
+//! second. Between frames the host is served when it asks ([`Host::next_poll`]), with a frame
+//! only if it brought news. Minimised, zero-sized or fully covered, it draws nothing and
+//! serves the host and the editors without a frame. With no backend, no editor, nothing to
+//! animate and nothing the host waits for, it is idle.
 //!
 //! **Viewport facts.** egui's facts about the window (where it is, its monitor, whether it is
 //! minimised) are asked of the desktop when a window event may have changed them and at most
@@ -107,10 +110,12 @@ impl ApplicationHandler for App {
         else {
             return;
         };
+        let hidden = running.pacer.seen.hidden();
         match running.pacer.next() {
-            Next::Serve(_) => running.serve(event_loop),
-            // Hidden since the frame was asked for: a tick without one.
-            Next::Draw(_) if running.pacer.seen.hidden() => running.serve(event_loop),
+            // Hidden (or hidden since the frame was asked for): a tick without a frame.
+            Next::Serve(_) | Next::Draw(_) if hidden => running.serve(event_loop),
+            // In view, the host asked to be served before the next frame.
+            Next::Serve(_) => running.poll_host(event_loop),
             Next::Draw(_) => running.redraw_soon(event_loop),
             Next::Wait => {}
         }
@@ -281,12 +286,13 @@ impl Running {
         self.frame(event_loop)
     }
 
-    /// The host's events taken in and the open editors served.
-    fn serve_host(&mut self) {
-        for event in self.host.poll() {
-            self.shell.event(event, &mut self.editors);
-        }
+    /// The host's events taken in and the open editors served; whether the host had news.
+    fn serve_host(&mut self) -> bool {
+        let events = self.host.poll();
+        let news = !events.is_empty();
+        self.shell.events(events, &*self.host, &mut self.editors);
         self.editors.tick(self.host.as_mut());
+        news
     }
 
     /// The hidden window's tick: the host and the editors served, nothing drawn. A window back
@@ -299,6 +305,20 @@ impl Running {
             return;
         }
         self.serve_hidden(event_loop, slot);
+    }
+
+    /// The host served between frames because it asked, the window in view: a frame only if
+    /// it brought news, as soon as the 60 Hz cap allows.
+    fn poll_host(&mut self, event_loop: &ActiveEventLoop) {
+        let news = self.serve_host();
+        if news && !self.editors.is_empty() {
+            self.editors.follow(self.host.as_mut());
+        }
+        let now = Instant::now();
+        match self.pacer.polled(now, self.host.next_poll(), news) {
+            Next::Draw(at) if at <= now => self.redraw_soon(event_loop),
+            next => schedule(event_loop, next),
+        }
     }
 
     /// Asks for a frame; the loop waits for it, rather than waking again for a time already
@@ -318,6 +338,7 @@ impl Running {
             animating: self.animating(),
             editors: !self.editors.is_empty(),
             acted: false,
+            poll: self.host.next_poll(),
         };
         let next = self.pacer.end(slot, Instant::now(), None, wants);
         schedule(event_loop, next);
@@ -389,6 +410,7 @@ impl Running {
             animating: self.animating(),
             editors: !self.editors.is_empty(),
             acted,
+            poll: self.host.next_poll(),
         };
         let next = self.pacer.end(slot, Instant::now(), Some(drawn), wants);
         schedule(event_loop, next);
@@ -398,8 +420,9 @@ impl Running {
     /// Asks for a frame for input as soon as the 60 Hz cap allows, and none while hidden.
     fn wake(&mut self, event_loop: &ActiveEventLoop) {
         match self.pacer.wake(Instant::now()) {
-            Wake::Now => self.window.request_redraw(),
-            Wake::At(at) => event_loop.set_control_flow(ControlFlow::WaitUntil(at)),
+            Wake::Now => self.redraw_soon(event_loop),
+            // The frame, or a poll of the host that comes before it.
+            Wake::At(_) => schedule(event_loop, self.pacer.next()),
             Wake::Nothing => {}
         }
     }

@@ -446,7 +446,11 @@ mod tests {
         let a = host.setup().channels[0].chain[0].instance;
         editors.open(&windows, &mut host, a).unwrap();
         host.calls.clear();
-        shell.event(vixmix_host::HostEvent::EditorClosed(a), &mut editors);
+        shell.events(
+            vec![vixmix_host::HostEvent::EditorClosed(a)],
+            &host,
+            &mut editors,
+        );
         assert!(editors.is_empty());
         assert!(host.calls.is_empty(), "the host closed it already");
     }

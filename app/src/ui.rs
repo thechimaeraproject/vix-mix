@@ -1,7 +1,8 @@
 //! What each frame draws and senses: the 34-point header (the menu button, the title, the
-//! display with the rate, the quantum, its milliseconds and the DSP load), the banner that
-//! says when there is no audio backend, the console under them, top left, at its natural
-//! size, then the open popover and the toast line over everything.
+//! display with the rate, the quantum, its milliseconds and the DSP load), the banner when
+//! the audio needs the user (the host's `BackendState::banner`: no backend, the mixer idle
+//! with what would drive it, the daemon gone), the console under them, top left, at its
+//! natural size, then the open popover and the toast line over everything.
 //!
 //! [`draw`] reads the host and the window's [`Shell`], and returns what the gestures asked
 //! ([`Intent`]s); the shell carries them out after the frame, so a frame never changes the
@@ -153,13 +154,10 @@ pub fn draw(root: &mut Ui, shell: &mut Shell, host: &dyn Host) -> Vec<Intent> {
             // What it hung from is gone (its channel was removed).
             None => Outcome::Drop,
             Some(anchor) => {
-                let favorites = &shell.favorites;
-                let is_favorite = |id: &str| favorites.is(host, id);
                 let mut pop_cx = PopCx {
                     host,
                     out: &mut out,
                     keyboard: shell.keyboard,
-                    favorites: &is_favorite,
                 };
                 let (outcome, rect) = popover::show(&ctx, popover, anchor, screen, &mut pop_cx);
                 let outside = ctx.input(|i| {

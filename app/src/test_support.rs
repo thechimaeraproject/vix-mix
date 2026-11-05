@@ -8,10 +8,13 @@
 use std::cell::RefCell;
 use std::num::NonZeroIsize;
 use std::rc::Rc;
+use std::time::Duration;
 
 use chimaeraproject_vst3_host::{EditorEvent, EditorSize};
 use egui::{Color32, Event, Key, Modifiers, PointerButton, Pos2, Rect, vec2};
-use vixmix_host::{AppPresence, FakeHost, Host, HostError, HostEvent, MeterFrame, StatsFrame};
+use vixmix_host::{
+    AppPresence, FakeHost, Host, HostError, HostEvent, InsertProblem, MeterFrame, StatsFrame,
+};
 use vixmix_model::{
     Applied, ChannelId, Command, DeviceInfo, InstanceId, MixId, Refused, Setup, Strip,
 };
@@ -33,6 +36,8 @@ pub enum Call {
     Apply(Command),
     OpenEditor(InstanceId),
     CloseEditor(InstanceId),
+    Favorite(String, bool),
+    Rescan,
 }
 
 /// `FakeHost`, keeping every call the window made.
@@ -44,6 +49,10 @@ pub struct Recorder {
     pub opens_editors: bool,
     /// What the next `tick_editors` answers.
     pub editor_events: Vec<(InstanceId, EditorEvent)>,
+    /// The inserts playing as pass-throughs (`FakeHost` has none).
+    pub problems: Vec<InsertProblem>,
+    /// Events to report at the next poll, after `FakeHost`'s own.
+    pub news: Vec<HostEvent>,
 }
 
 impl Recorder {
@@ -60,6 +69,8 @@ impl Recorder {
             calls: Vec::new(),
             opens_editors: false,
             editor_events: Vec::new(),
+            problems: Vec::new(),
+            news: Vec::new(),
         }
     }
 
@@ -77,26 +88,13 @@ impl Recorder {
             .iter()
             .filter_map(|c| match c {
                 Call::Apply(cmd) => Some(cmd.clone()),
-                Call::OpenEditor(_) | Call::CloseEditor(_) => None,
+                _ => None,
             })
             .collect()
     }
 }
 
 impl Host for Recorder {
-    // `FakeHost`'s answers, until the Recorder records these calls itself.
-    fn problems(&self) -> &[vixmix_host::InsertProblem] {
-        self.inner.problems()
-    }
-    fn set_favorite(&mut self, plugin_id: &str, favorite: bool) {
-        self.inner.set_favorite(plugin_id, favorite);
-    }
-    fn rescan_plugins(&mut self) {
-        self.inner.rescan_plugins();
-    }
-    fn next_poll(&self) -> Option<std::time::Duration> {
-        self.inner.next_poll()
-    }
     fn setup(&self) -> &Setup {
         self.inner.setup()
     }
@@ -105,7 +103,9 @@ impl Host for Recorder {
         self.inner.apply(cmd)
     }
     fn poll(&mut self) -> Vec<HostEvent> {
-        self.inner.poll()
+        let mut events = self.inner.poll();
+        events.append(&mut self.news);
+        events
     }
     fn meters(&self) -> MeterFrame {
         self.inner.meters()
@@ -144,6 +144,21 @@ impl Host for Recorder {
     }
     fn save_now(&mut self) {
         self.inner.save_now();
+    }
+    fn problems(&self) -> &[InsertProblem] {
+        &self.problems
+    }
+    fn set_favorite(&mut self, plugin_id: &str, favorite: bool) {
+        self.calls
+            .push(Call::Favorite(plugin_id.to_string(), favorite));
+        self.inner.set_favorite(plugin_id, favorite);
+    }
+    fn rescan_plugins(&mut self) {
+        self.calls.push(Call::Rescan);
+        self.inner.rescan_plugins();
+    }
+    fn next_poll(&self) -> Option<Duration> {
+        self.inner.next_poll()
     }
 }
 
@@ -199,6 +214,7 @@ impl Harness {
         let changed = (self.modifiers != self.sent_modifiers)
             .then_some(Event::ModifiersChanged(self.modifiers));
         self.sent_modifiers = self.modifiers;
+        self.serve();
         let input = egui::RawInput {
             screen_rect: Some(self.screen),
             time: Some(self.time),
@@ -236,6 +252,7 @@ impl Harness {
     /// The frame the window draws right after one that acted or asked for it: no input, its
     /// own gestures carried out but not followed by another.
     fn again(&mut self) {
+        self.serve();
         let input = egui::RawInput {
             screen_rect: Some(self.screen),
             time: Some(self.time),
@@ -254,6 +271,12 @@ impl Harness {
         }
         self.shell
             .dispatch(&mut self.host, &mut self.editors, intents);
+    }
+
+    /// What the window does before each frame: takes in what the host reported.
+    fn serve(&mut self) {
+        let events = self.host.poll();
+        self.shell.events(events, &self.host, &mut self.editors);
     }
 
     /// One frame per entry, the commands of all of them in order.
