@@ -86,25 +86,31 @@ pub fn well(ui: &mut Ui, rect: Rect, strip_rect: Rect, view: &WellView<'_>, cx: 
             .layout(Layout::top_down(Align::Min)),
     );
     child.set_clip_rect(inner.intersect(ui.clip_rect()));
-    ScrollArea::vertical()
-        .id_salt(("slots", view.strip))
-        .auto_shrink([false, false])
-        .scroll_source(ScrollSource {
-            drag: DragScroll::Never,
-            ..ScrollSource::default()
-        })
-        .show(&mut child, |ui| {
-            ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-            let width = ui.available_width();
-            for (index, insert) in view.chain.iter().enumerate() {
-                let (_, slot) = ui.allocate_space(vec2(width, size::SLOT));
-                slot_row(ui, slot, view, index, insert, cx);
-                rects.slots.push(slot);
-            }
-            let (_, add) = ui.allocate_space(vec2(width, size::SLOT));
-            add_row(ui, add, view.strip, cx);
-            rects.add = add;
-        });
+    let mut slots = |ui: &mut Ui| {
+        ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+        let width = ui.available_width();
+        for (index, insert) in view.chain.iter().enumerate() {
+            let (_, slot) = ui.allocate_space(vec2(width, size::SLOT));
+            slot_row(ui, slot, view, index, insert, cx);
+            rects.slots.push(slot);
+        }
+        let (_, add) = ui.allocate_space(vec2(width, size::SLOT));
+        add_row(ui, add, view.strip, cx);
+        rects.add = add;
+    };
+    // A chain that fits needs no scrolling, and a scroll area costs every frame.
+    if (view.chain.len() + 1) as f32 * size::SLOT <= inner.height() {
+        slots(&mut child);
+    } else {
+        ScrollArea::vertical()
+            .id_salt(("slots", view.strip))
+            .auto_shrink([false, false])
+            .scroll_source(ScrollSource {
+                drag: DragScroll::Never,
+                ..ScrollSource::default()
+            })
+            .show(&mut child, slots);
+    }
     cx.layout
         .anchors
         .push((Anchor::AddPlugin(view.strip), rects.add));
