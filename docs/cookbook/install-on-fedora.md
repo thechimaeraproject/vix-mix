@@ -99,7 +99,10 @@ vix-mix-<version>-linux-x86_64/install.sh
 
 That installs for you alone, the binary in `~/.local/bin`. For every user of the machine:
 `sudo vix-mix-<version>-linux-x86_64/install.sh --prefix /usr/local`. When the binary's
-directory is not on `PATH` the script says so; the launcher starts it anyway.
+directory is not on `PATH` the script says so; the launcher starts it anyway. A prefix whose
+path holds `"`, `` ` ``, `$`, `\`, `%`, a tab or a newline is refused before anything is
+written, because the desktop entry could not name the binary there; any other character,
+spaces included, is fine.
 
 ## 6. Start it from the launcher
 
@@ -128,9 +131,11 @@ desktop-file-validate ~/.local/share/applications/org.chimaeraproject.vixmix.des
 appstreamcli validate --no-net ~/.local/share/metainfo/org.chimaeraproject.vixmix.metainfo.xml
 ```
 
-(`sudo dnf install desktop-file-utils appstream` if the last two are missing.) `Exec` and
-`TryExec` name the installed `vix-mix` by its absolute path, `desktop-file-validate` prints
-nothing, and `appstreamcli` ends with `Validation was successful`. In KDE, the launcher lists
-Vix Mix with its icon, and starting it opens the window titled "Vix Mix". While it runs, its
-entry in the task manager should show the same icon; a generic one is
+(`sudo dnf install desktop-file-utils appstream` if the last two are missing.) `Exec` names
+the installed `vix-mix` by its absolute path in double quotes and `TryExec` by the same path
+bare, `desktop-file-validate` prints nothing, and `appstreamcli` ends with
+`Validation was successful`. In KDE, the launcher lists Vix Mix with its icon, and starting it
+opens the window titled "Vix Mix". While it runs, its entry in the task manager should show
+the same icon, and the launch cursor should stop bouncing once the window is up; a generic
+icon or a cursor that bounces on until Plasma gives up is
 [handoff 09](../handoffs/09-round-1-fixes.md)'s item 9.

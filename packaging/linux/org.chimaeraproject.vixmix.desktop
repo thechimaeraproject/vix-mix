@@ -3,6 +3,10 @@
 # TryExec as the absolute path of the vix-mix it installed or found, so the launcher starts it
 # whatever the session's PATH is; StartupWMClass is the X11 class winit gives the window (the
 # binary's name), which ties the running window to this entry in the task manager.
+# StartupNotify is left out on purpose: true would promise that the app ends the launch
+# feedback with the activation token (DESKTOP_STARTUP_ID, XDG_ACTIVATION_TOKEN), which it does
+# not read yet, and false would turn the feedback off even where StartupWMClass ends it. Left
+# out, the desktop decides; handoff 09 item 9 checks what Plasma does and names the fix.
 [Desktop Entry]
 Type=Application
 Name=Vix Mix
@@ -14,6 +18,5 @@ Icon=org.chimaeraproject.vixmix
 Terminal=false
 Categories=AudioVideo;Audio;Mixer;
 Keywords=mixer;PipeWire;VST3;microphone;streaming;virtual microphone;Wave Link;
-StartupNotify=true
 StartupWMClass=vix-mix
 SingleMainWindow=true
