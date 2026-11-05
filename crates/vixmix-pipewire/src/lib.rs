@@ -295,7 +295,9 @@ impl Backend {
     }
 
     /// Routes the app stream `app_node` to the sink named `to` (a channel's `node.name`), or
-    /// back to the default with `None`, through the `default` metadata's `target.object`.
+    /// back to the default with `None`, through the `default` metadata's `target.object`. A
+    /// graph posted before the next pass is applied first: `to` names a sink of the newest
+    /// graph.
     pub fn route(&self, app_node: u32, to: Option<&str>) {
         self.post(|mailbox| {
             mailbox.routes.retain(|(node, _)| *node != app_node);
@@ -358,7 +360,8 @@ impl Drop for Backend {
 
 /// A channel's sink or capture `node.name`: `<app>.ch<id>.<slug of the channel's name>`. The
 /// id keeps two channels whose names slug alike apart; the slug is for whoever reads
-/// `pw-top`. A rename changes it, and the backend moves the apps routed to the old name.
+/// `pw-top`. A rename makes the sink again, under this name whether or not it changed, and the
+/// backend moves the old sink's apps to the new one.
 pub fn channel_node_name(app_name: &str, id: ChannelId, channel_name: &str) -> String {
     format!("{app_name}.ch{}.{}", id.0, slug(channel_name))
 }
