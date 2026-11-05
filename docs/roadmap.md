@@ -42,7 +42,7 @@ Then wave 3: [06 — Host and integration](handoffs/06-host-and-integration.md),
 [07 — Kit lifts](handoffs/07-kit-lifts.md) and
 [08 — Packaging and the first real test](handoffs/08-packaging-and-first-real-test.md), shipped
 2026-11-04 (see Built) but for its step 4, the by-hand pass, which waits for Fedora KDE on the
-NV3 and fills [09 — Round 1 fixes](handoffs/09-round-1-fixes.md), seeded with the twelve items
+NV3 and fills [09 — Round 1 fixes](handoffs/09-round-1-fixes.md), seeded with the fifteen items
 the earlier lanes left open for it.
 
 ## Named but not built
