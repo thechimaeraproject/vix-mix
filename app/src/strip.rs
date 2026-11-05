@@ -257,10 +257,10 @@ fn well(painter: &Painter, rect: Rect, chain: &[Insert], toggles: Option<[bool; 
     // The rule is the header's last point; the label centres in what is above it.
     painter.hline(
         head.x_range(),
-        head.bottom() - 0.5,
-        Stroke::new(1.0, colour::LINE),
+        head.bottom() - size::HAIRLINE_INSET,
+        Stroke::new(size::HAIRLINE, colour::LINE),
     );
-    let y = head.top() + (size::FX_HEAD - 1.0) / 2.0;
+    let y = head.top() + (size::FX_HEAD - size::HAIRLINE) / 2.0;
     let fx = galley(
         painter,
         "FX",
@@ -353,7 +353,7 @@ fn slot_row(painter: &Painter, slot: Rect, insert: &Insert) {
         painter.rect_stroke(
             square,
             size::BYPASS_CORNER,
-            Stroke::new(1.0, colour::FAINT),
+            Stroke::new(size::HAIRLINE, colour::FAINT),
             StrokeKind::Inside,
         );
     }
@@ -424,10 +424,13 @@ fn fader(
     let line_y = fader_y(column, position);
     let [depth, height] = size::TRIANGLE;
     let (from, to) = match side {
-        Side::Left => (column.left() + depth, column.right() + 1.0),
+        Side::Left => (
+            column.left() + depth,
+            column.right() + size::FADER_LINE_OVERHANG,
+        ),
         Side::Right => (
-            column.left() - 1.0,
-            column.right() - depth - if big { 1.0 } else { 0.0 },
+            column.left() - size::FADER_LINE_OVERHANG,
+            column.right() - depth - if big { size::BIG_LINE_SHORTFALL } else { 0.0 },
         ),
     };
     painter.rect_filled(
@@ -488,10 +491,10 @@ fn meter_bar(painter: &Painter, rect: Rect, bar: &crate::meters::Bar, opacity: f
     // The peak line's bottom edge sits at the peak; the bar clips it at the top.
     if bar.peak > size::PEAK_SHOWN_ABOVE {
         let y = at(bar.peak.min(1.0));
-        if y - 1.0 >= rect.top() {
+        if y - size::PEAK_LINE >= rect.top() {
             let ink = colour::PEAK.gamma_multiply(colour::PEAK_OPACITY * opacity);
             painter.rect_filled(
-                Rect::from_x_y_ranges(rect.x_range(), y - 1.0..=y),
+                Rect::from_x_y_ranges(rect.x_range(), y - size::PEAK_LINE..=y),
                 CornerRadius::ZERO,
                 ink,
             );
@@ -504,7 +507,8 @@ fn meter_bar(painter: &Painter, rect: Rect, bar: &crate::meters::Bar, opacity: f
 fn scale(painter: &Painter, column: Rect, both_ticks: bool) {
     for (position, label) in SCALE {
         let y = fader_y(column, position);
-        let tick = |x: f32| Rect::from_x_y_ranges(x..=x + size::SCALE_TICK, y - 0.5..=y + 0.5);
+        let half = size::HAIRLINE / 2.0;
+        let tick = |x: f32| Rect::from_x_y_ranges(x..=x + size::SCALE_TICK, y - half..=y + half);
         painter.rect_filled(tick(column.left()), CornerRadius::ZERO, colour::CTL_HI);
         let ink = if label == "0" {
             colour::DIM
@@ -539,7 +543,7 @@ fn readout(painter: &Painter, centre: Pos2, position: f32, muted: bool) {
             font_id: font::mono_medium(font::READOUT),
             color: ink,
             strikethrough: if muted {
-                Stroke::new(1.0, ink)
+                Stroke::new(size::HAIRLINE, ink)
             } else {
                 Stroke::NONE
             },
