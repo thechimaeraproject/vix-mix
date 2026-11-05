@@ -113,6 +113,11 @@ impl EditorWindows {
             .map_err(|e| format!("{title}: {e}"))?;
         let _ = window.request_inner_size(winit::dpi::PhysicalSize::new(size.width, size.height));
         window.set_visible(true);
+        log::info!(
+            "opened the editor of {title} at {} x {}",
+            size.width,
+            size.height
+        );
         self.windows.push(EditorWindow {
             instance,
             window,
@@ -124,6 +129,9 @@ impl EditorWindows {
     /// Closes `instance`'s editor through the host, then its window.
     pub fn close(&mut self, host: &mut dyn Host, instance: InstanceId) {
         host.close_editor(instance);
+        if let Some(open) = self.windows.iter().find(|w| w.instance == instance) {
+            log::info!("closed the editor of {}", open.title);
+        }
         self.forget(instance);
     }
 
@@ -150,6 +158,12 @@ impl EditorWindows {
             };
             match event {
                 EditorEvent::ResizeRequested(size) => {
+                    log::info!(
+                        "the editor of {} asks for {} x {}",
+                        open.title,
+                        size.width,
+                        size.height
+                    );
                     let _ = open
                         .window
                         .request_inner_size(winit::dpi::PhysicalSize::new(size.width, size.height));
