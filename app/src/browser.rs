@@ -10,7 +10,9 @@
 //! frame ([`Listing`]) and built again only when the query, the filter or the catalog
 //! changes, each name lower-cased once for the sort; and only the rows in view, with a row
 //! and a heading past each edge ([`pop::LIST_REACH`]), are drawn and sensed, the rest taking
-//! their space. Tab reaches the row just out of view, which scrolls in as it takes the focus.
+//! their space. Tab reaches the row just out of view, which scrolls in as it takes the focus;
+//! a row or nav item that holds the focus is sensed wherever its column is scrolled, with the
+//! one before and after it, so the wheel cannot take the focus away and Tab goes on from it.
 //!
 //! **The list starts at its top** when the browser opens (the nav too) and when the query or
 //! the filter makes a new list, as the prototype's list, built again, shows its first row: the
@@ -18,7 +20,9 @@
 //! prototype's `scrollIntoView` does, so no scroll under way pulls a column from its top again.
 
 use egui::text::{LayoutJob, TextFormat, TextWrapping};
-use egui::{Align2, EventFilter, Id, Key, Rect, ScrollArea, Sense, Stroke, Ui, Vec2, pos2, vec2};
+use egui::{
+    Align2, EventFilter, Id, Key, Rect, Response, ScrollArea, Sense, Stroke, Ui, Vec2, pos2, vec2,
+};
 use vixmix_host::Host;
 use vixmix_model::{Command, PluginRef, Strip};
 
@@ -56,6 +60,8 @@ pub struct Browser {
     pub follow: bool,
     /// The list is new (the query or the filter changed): show it from its top.
     rewind: bool,
+    /// The list's row and the nav's entry that held the keyboard focus last frame, by index.
+    held: Held,
     /// The list and the nav as the last frame had them, with what they were built from
     /// (boxed: a popover is passed by value, and the open one is mostly not the browser).
     listing: Option<Box<Listing>>,
@@ -72,6 +78,7 @@ impl Browser {
             fresh: true,
             follow: false,
             rewind: false,
+            held: Held::default(),
             listing: None,
         }
     }
@@ -81,6 +88,21 @@ impl Browser {
     pub fn forget(&mut self) {
         self.listing = None;
     }
+}
+
+/// What held the keyboard focus last frame, by index: a row of the list (it or its star) and
+/// an entry of the nav. Each is sensed again, with the one before and after it, wherever its
+/// column is scrolled: egui drops the focus from a widget missing for a frame, and Tab and
+/// Shift+Tab go to the widget sensed next or last.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Held {
+    row: Option<usize>,
+    nav: Option<usize>,
+}
+
+/// Whether entry `index` is the one `held`, or next to it.
+fn near(held: Option<usize>, index: usize) -> bool {
+    held.is_some_and(|at| index + 1 >= at && index <= at + 1)
 }
 
 /// The browser's list and nav, kept from frame to frame, because building them ranks or
@@ -375,12 +397,14 @@ pub fn show(ui: &mut Ui, browser: &mut Browser, cx: &mut PopCx<'_>) -> Outcome {
         Stroke::new(size::HAIRLINE, colour::LINE),
     );
     let mut picked = None;
+    let held = std::mem::take(&mut browser.held);
+    let mut held_nav = None;
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(nav_rect.shrink(pop::LIST_PAD)));
     column("browser nav", fresh).show(&mut child, |ui| {
         ui.spacing_mut().item_spacing = Vec2::ZERO;
         let reach = reach(ui);
         let mut section = 0;
-        for (filter, label, count) in &listing.nav {
+        for (index, (filter, label, count)) in listing.nav.iter().enumerate() {
             let heading = match filter {
                 Filter::Kind(_) if section < 1 => Some("Type"),
                 Filter::Vendor(_) if section < 2 => Some("Maker"),
@@ -391,13 +415,17 @@ pub fn show(ui: &mut Ui, browser: &mut Browser, cx: &mut PopCx<'_>) -> Outcome {
                 nav_heading(ui, heading, reach);
             }
             let (_, rect) = ui.allocate_space(vec2(ui.available_width(), pop::NAV_ROW));
-            if !reach.intersects(rect) {
+            if !reach.intersects(rect) && !near(held.nav, index) {
                 continue;
             }
             // Typing searches everything, and the nav says so: All plugins is lit.
             let on = *filter == browser.filter;
-            if nav_item(ui, rect, filter, label, *count, on, cx.keyboard) {
+            let item = nav_item(ui, rect, filter, label, *count, on, cx.keyboard);
+            if item.clicked() {
                 picked = Some(filter.clone());
+            }
+            if item.has_focus() {
+                held_nav = Some(index);
             }
         }
     });
@@ -407,6 +435,7 @@ pub fn show(ui: &mut Ui, browser: &mut Browser, cx: &mut PopCx<'_>) -> Outcome {
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(list_rect.shrink(pop::LIST_PAD)));
     let follow = std::mem::take(&mut browser.follow);
     let rewind = std::mem::take(&mut browser.rewind) || fresh;
+    let mut held_row = None;
     column("browser list", rewind).show(&mut child, |ui| {
         ui.spacing_mut().item_spacing = Vec2::ZERO;
         if list.is_empty() {
@@ -432,7 +461,7 @@ pub fn show(ui: &mut Ui, browser: &mut Browser, cx: &mut PopCx<'_>) -> Outcome {
             if active && follow {
                 ui.scroll_to_rect(rect, None);
             }
-            if !reach.intersects(rect) {
+            if !reach.intersects(rect) && !near(held.row, index) {
                 continue;
             }
             let (pressed, starred) = plugin_row(
@@ -444,13 +473,20 @@ pub fn show(ui: &mut Ui, browser: &mut Browser, cx: &mut PopCx<'_>) -> Outcome {
                 favorite(row.id),
                 cx.keyboard,
             );
-            if starred {
+            if starred.clicked() {
                 star = Some(row);
-            } else if pressed {
+            } else if pressed.clicked() {
                 add = Some(row);
+            }
+            if pressed.has_focus() || starred.has_focus() {
+                held_row = Some(index);
             }
         }
     });
+    browser.held = Held {
+        row: held_row,
+        nav: held_nav,
+    };
     browser.listing = Some(listing);
     if let Some(filter) = picked {
         browser.filter = filter;
@@ -567,7 +603,7 @@ fn heading_row(ui: &mut Ui, text: &str, [top, bottom, across]: [f32; 3], reach: 
     }
 }
 
-/// A nav item (`.nav-i`) in `rect`: the label and its count; returns whether it was pressed.
+/// A nav item (`.nav-i`) in `rect`: the label and its count; returns its response.
 fn nav_item(
     ui: &Ui,
     rect: Rect,
@@ -576,7 +612,7 @@ fn nav_item(
     count: usize,
     on: bool,
     keyboard: bool,
-) -> bool {
+) -> Response {
     let response = widgets::press(ui, rect, Id::new(("nav", filter)));
     // Tab reaches an item just out of view; it scrolls in at once, so held Tab keeps up.
     if response.gained_focus() {
@@ -620,11 +656,11 @@ fn nav_item(
     if keyboard && response.has_focus() {
         widgets::ring(painter, rect, 0.0);
     }
-    response.clicked()
+    response
 }
 
 /// A plugin row (`.br-row`) in `rect`: the star, the name with the query's match in the
-/// accent, the maker, the type. Returns whether the row was pressed, whether the star was.
+/// accent, the maker, the type. Returns the row's response and the star's.
 fn plugin_row(
     ui: &Ui,
     rect: Rect,
@@ -633,7 +669,7 @@ fn plugin_row(
     active: bool,
     starred: bool,
     keyboard: bool,
-) -> (bool, bool) {
+) -> (Response, Response) {
     let response = widgets::press(ui, rect, Id::new(("plugin", row.id)));
     let painter = ui.painter();
     if active {
@@ -689,7 +725,7 @@ fn plugin_row(
     if keyboard && response.has_focus() {
         widgets::ring(painter, rect, 0.0);
     }
-    (response.clicked(), star.clicked())
+    (response, star)
 }
 
 /// A plugin's name with the first match of `query` in the accent, cut to `width`.

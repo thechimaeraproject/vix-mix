@@ -120,7 +120,9 @@ folders). Deviations, each with its reason:
   handoff does not ask for: with this machine's catalog (915 plugins) rebuilding and drawing
   the whole list cost 3.15 ms a frame in a debug build; kept, 0.48 (see
   [reference/app.md](../reference/app.md) § The plugin browser). Tab still walks every row: a
-  row that takes the focus scrolls in, which the prototype's browser does by itself.
+  row that takes the focus scrolls in, which the prototype's browser does by itself, and a row
+  that holds it is still sensed when the wheel takes it out of view, with the rows either side,
+  so the focus stays and Tab goes on from it.
 
 **Needs:** 00. **Runs alongside:** 01, 02, 03, 04. **Size:** XL. Starts on Windows against
 `FakeHost`.

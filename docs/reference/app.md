@@ -386,6 +386,9 @@ every comparison. In the nav and the list only the rows in view, and those withi
 `pop::LIST_REACH` (a row and a heading) past each edge, are drawn and sensed; the rest only
 take their space. A row or nav item that takes the focus scrolls into view at once, so Tab
 walks the whole list, out of view included; Up and Down scroll the picked row in as before.
+A row or nav item that holds the focus is sensed wherever its column is scrolled, with the one
+before and after it, because egui drops the focus from a widget missing for a frame: the wheel
+cannot take the focus away, and Tab and Shift+Tab go on from it.
 Timed with that catalog in the headless harness (`ui::draw` and `Shell::dispatch`, on Linux),
 a frame with the browser open went from 3.15 ms to 0.48 ms in a debug build (1.14 to 0.16 in
 release), against 0.23 (0.08) with it closed; a keystroke, which builds the list again, 0.94
@@ -488,7 +491,10 @@ gesture sent):
   `the_browser_opens_at_the_top_of_its_list_and_nav_on_any_strip` (wheeled to the end, closed,
   opened from Mic: the A heading, Airwindows Consolidated and Favorites show, and Enter adds
   Airwindows Consolidated), `a_nav_filter_picked_after_a_scroll_shows_its_first_row` (Dynamics,
-  longer than the list with twenty more compressors);
+  longer than the list with twenty more compressors),
+  `a_focused_row_or_nav_item_keeps_the_focus_out_of_view_and_tab_goes_on_from_it` (Favorites,
+  then the first row, wheeled out of view keep the focus; Tab goes to the row's star, which
+  scrolls it in, then to the next row; Shift+Tab from a row out of view, to the star before it);
 - the source panel: `an_app_ticked_in_one_channel_leaves_another`,
   `an_app_search_that_finds_nothing_says_so`, `a_hardware_channel_picks_its_input`,
   `the_name_field_renames_once_when_the_panel_closes`,

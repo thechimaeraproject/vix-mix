@@ -1361,6 +1361,19 @@ fn wheel(h: &mut Harness, at: Pos2, delta: f32) {
     h.idle(30);
 }
 
+/// The catalog's plugins as All plugins lists them, by name, case aside: name and id.
+fn all_plugins(h: &Harness) -> Vec<(String, String)> {
+    let mut all: Vec<_> = h
+        .host
+        .catalog()
+        .plugins
+        .iter()
+        .map(|p| (p.name.clone(), p.id.clone()))
+        .collect();
+    all.sort_by_key(|(name, _)| name.to_lowercase());
+    all
+}
+
 #[test]
 fn typing_after_a_scroll_shows_the_first_hit_that_enter_adds() {
     let mut h = Harness::new();
@@ -1477,6 +1490,53 @@ fn a_nav_filter_picked_after_a_scroll_shows_its_first_row() {
     let _ = h.click(dynamics);
     h.idle(1);
     assert!(shown(&h, list, &first), "{first} in {:?}", h.drawn());
+}
+
+#[test]
+fn a_focused_row_or_nav_item_keeps_the_focus_out_of_view_and_tab_goes_on_from_it() {
+    let mut h = Harness::new();
+    let _ = open_browser(&mut h);
+    let (list, nav) = (browser_list(&h), browser_nav(&h));
+    let focused = |h: &Harness| h.ctx.memory(|m| m.focused());
+    // Tab from the search field reaches the nav's first item; the wheel takes it out of
+    // view, and it keeps the focus.
+    let _ = h.key(Key::Tab, Modifiers::NONE);
+    let favorites = egui::Id::new(("nav", &crate::browser::Filter::Favorites));
+    assert_eq!(focused(&h), Some(favorites));
+    wheel(&mut h, nav.center(), -5000.0);
+    assert!(!shown(&h, nav, "Favorites"));
+    assert_eq!(focused(&h), Some(favorites), "the nav item keeps the focus");
+    // Tab on to the list's first row; the wheel takes it out of view, and it keeps the focus.
+    let all = all_plugins(&h);
+    let (first, second) = (&all[0], &all[1]);
+    let row = |id: &str| egui::Id::new(("plugin", id));
+    let star = |id: &str| egui::Id::new(("star", id));
+    let mut tabs = 0;
+    while focused(&h) != Some(row(&first.1)) {
+        assert!(
+            tabs < 100,
+            "Tab never reached the first row: {:?}",
+            focused(&h)
+        );
+        let _ = h.key(Key::Tab, Modifiers::NONE);
+        tabs += 1;
+    }
+    wheel(&mut h, list.center(), -5000.0);
+    assert!(!shown(&h, list, &first.0));
+    assert_eq!(focused(&h), Some(row(&first.1)), "the row keeps the focus");
+    // Tab goes on to its star, which scrolls the row back in; then to the next row.
+    let _ = h.key(Key::Tab, Modifiers::NONE);
+    assert_eq!(focused(&h), Some(star(&first.1)));
+    h.idle(1);
+    assert!(shown(&h, list, &first.0), "{:?}", h.drawn());
+    let _ = h.key(Key::Tab, Modifiers::NONE);
+    assert_eq!(focused(&h), Some(row(&second.1)));
+    // Out of view again, Shift+Tab goes back to the star before it.
+    wheel(&mut h, list.center(), -5000.0);
+    assert!(!shown(&h, list, &second.0));
+    let _ = h.key(Key::Tab, Modifiers::SHIFT);
+    h.idle(1);
+    assert_eq!(focused(&h), Some(star(&first.1)));
 }
 
 #[test]
