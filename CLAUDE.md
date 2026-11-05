@@ -71,9 +71,12 @@ mutes, link, the ear, MON/MST, bypass, inserts dragged within and between strips
 and output panels, the add-channel menu, the plugin browser, the menu and preferences, toasts
 with Undo, plugin editor windows on X11 on Linux, and 60 Hz pacing while the window can be
 seen (nothing drawn while it is hidden); each gesture, the pacing and the editor windows'
-lifecycle are asserted headless against `FakeHost`. It owns no setup, audio or plugin (the host does), and waits on
-the host for a saved favourite, a rescan and telling an editor its size (change request 8) and
-on the model for an Undo that restores place and state (change request 2). See
+lifecycle are asserted headless against `FakeHost`; rebased onto lane 06's host, Undo is the
+host's restore command, stars and Rescan plugins go to the host, a pass-through insert is
+marked on its slot, and the host is polled when it asks between frames. It owns no setup,
+audio or plugin (the host does), and waits on the host for telling an editor its size and on
+the model for a bound on plugin folders (change request 10); the CPU acceptance waits on the
+user's reading of "5 % CPU" (of the machine it is met, of one core it is not). See
 [docs/reference/app.md](docs/reference/app.md) and
 [handoff 05](docs/handoffs/05-app.md).
 
@@ -98,7 +101,7 @@ it, each command's `Applied` acted on, the save debounced
 `HostEvent::Removed`; the model's `RestoreChannel` and `RestoreInsert`, change request 2),
 pass-throughs and notices surfaced, and shutdown in the kit's order (routings cleared, the
 backend gone, the final save, every instance home and retired on the UI thread); the window
-polls it when it asks and shows its notes in the banner line. It does not own what a command
+polls it when it asks and shows its notes on the toast line. It does not own what a command
 means (01), the tick (02), the streams and routing writes (03), how instances are made (04) or
 how anything is drawn (05). Proven on the null backend with a real plugin on both legs and
 against the headless daemon on Linux; the Fedora pass waits for the user. See
