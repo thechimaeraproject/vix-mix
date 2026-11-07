@@ -36,9 +36,9 @@ The plugins: FabFilter, iZotope and Kilohearts have no Linux builds, so the pass
 Linux VST3s (TDR, u-he, werman, Airwindows, Surge XT, Dragonfly, LSP, ZL) and Windows VST3s
 bridged by yabridge (`yabridgectl add <the Wine VST3 folder>`, then `yabridgectl sync`), both
 appearing as `.vst3` bundles. Vix Mix looks in `~/.vst3` (yabridge's `~/.vst3/yabridge`
-included), `/usr/lib/vst3` and `/usr/local/lib/vst3`. **Fedora's packages install VST3s in
-`/usr/lib64/vst3`**: if one installed with `dnf` is missing from the browser, add that folder to
-the preferences' plugin directories and rescan (step 4).
+included), `/usr/lib/vst3`, `/usr/lib64/vst3` (where Fedora's packages install VST3s) and
+`/usr/local/lib/vst3`; a plugin anywhere else is a folder to add to the preferences' plugin
+directories, then rescan (step 4).
 
 ## 2. Build and start Vix Mix
 

@@ -23,8 +23,9 @@ handle in. `examples/test_gain.rs` is the test plugin the integration tests load
 
 ## Scanning and the cache
 
-`search_dirs(extras)` is where to look: the SDK's standard places (`default_search_dirs()`),
-then the preferences' extra directories, each once. `Catalog::scan(dirs, host)` describes
+`search_dirs(extras)` is where to look: the SDK's standard places and, on Linux,
+`/usr/lib64/vst3`, where Fedora's packages install them (`default_search_dirs()`), then the
+preferences' extra directories, each once. `Catalog::scan(dirs, host)` describes
 every bundle; `catalog.rescan(dirs, host, &cache)` describes only the bundles that are new or
 changed since `cache` was made and carries the catalog's favourites and recent over. Both walk
 the directories as the kit's `scan` does (a directory named in `dirs` that is itself a bundle

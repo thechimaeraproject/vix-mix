@@ -61,11 +61,15 @@ on every push and in CI.
 
 ### Adoption
 
+- [kit-audio-io.md](kit-audio-io.md) — the kit's `chimaeraproject-audio-io`, without its
+  device layer: the engine's meter bank and its counters.
 - [kit-audio.md](kit-audio.md) — the kit's `chimaeraproject-param` and
   `chimaeraproject-audio-processor`: the processor contract and the strip maths since the
   bootstrap, the chain since handoff 02, and why instances are shared between graphs.
 - [kit-cli.md](kit-cli.md) — the kit CLI: what `kit.repo.json` declares, the `dev` registry of
   cargo gates, the hooks and the Claude Code guard, the PR-only CI on two legs, the ruleset.
+- [kit-egui-audio.md](kit-egui-audio.md) — the kit's `chimaeraproject-egui-audio`: the
+  console's meter faders, their scale, peak hold and the taper trait they read through.
 - [kit-fs.md](kit-fs.md) — the kit's `chimaeraproject-fs`: atomic writes, tolerant loads and
   the per-user directory with its profiles, under `setup.ron` and `plugins.ron`.
 - [kit-vst3.md](kit-vst3.md) — the kit's `chimaeraproject-vst3-host`: scanning, instances,

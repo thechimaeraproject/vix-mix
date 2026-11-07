@@ -105,14 +105,13 @@ here.
    then make the by-hand pass step 10, the `graph` bullet of
    [reference/host.md](../reference/host.md) § Acting on a command, and
    [reference/pipewire.md](../reference/pipewire.md) § Latency and § Verification say so.
-6. **`/usr/lib64/vst3`.** The kit's `default_search_dirs` omits it, where Fedora's packages
+6. **`/usr/lib64/vst3`.** The kit's `default_search_dirs` now lists it, where Fedora's packages
    install VST3 plugins
-   ([kit issue 201](https://github.com/thechimaeraproject/chimaeraproject-kit/issues/201)); until
-   the kit ships the fix, the by-hand pass step 1 has you add the folder in the preferences.
-   Check: `rpm -qla | grep -F .vst3/ | cut -d/ -f1-5 | sort -u` names bundles under
-   `/usr/lib64/vst3`; add the folder and rescan, and their plugins appear in the browser. When
-   the kit's fix ships, `kit bump` takes it and the workaround lines go from the by-hand pass
-   step 1 and install-on-fedora.md step 6.
+   ([kit issue 201](https://github.com/thechimaeraproject/chimaeraproject-kit/issues/201), taken
+   with handoff 07's bump; the workaround lines are gone from the by-hand pass step 1 and
+   install-on-fedora.md step 6). Check: `rpm -qla | grep -F .vst3/ | cut -d/ -f1-5 | sort -u`
+   names bundles under `/usr/lib64/vst3`, and their plugins appear in the browser with no folder
+   added.
 7. **The first start.** The scan of every VST3 bundle runs before the window opens, with nothing
    on screen ([reference/host.md](../reference/host.md) § Boot, step 2), and Monitor's device is
    not picked on a first start (the banner asks). Check: how long the first start takes with

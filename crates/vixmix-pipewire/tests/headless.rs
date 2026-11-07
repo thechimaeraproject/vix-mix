@@ -362,7 +362,7 @@ impl Rig {
     /// Whether the engine's channel 1 hears a signal (`true`) or stays silent for 300 ms
     /// (`false`) within `timeout`.
     fn channel_hears(&self, heard: bool, timeout: Duration) -> bool {
-        let meter = &self.engine.meters().channel(0).monitor;
+        let meter = self.engine.meters().tap(0, vixmix_engine::MONITOR);
         let _ = meter.take();
         let deadline = Instant::now() + timeout;
         let mut quiet_since = Instant::now();

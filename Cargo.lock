@@ -482,34 +482,52 @@ dependencies = [
 ]
 
 [[package]]
+name = "chimaeraproject-audio-io"
+version = "0.24.0"
+source = "git+https://github.com/thechimaeraproject/chimaeraproject-kit?tag=kit-v0.24.0#77dc01254a226099e3b6f527e316618767200889"
+dependencies = [
+ "chimaeraproject-audio-processor",
+ "rtrb",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "chimaeraproject-audio-processor"
-version = "0.23.0"
-source = "git+https://github.com/thechimaeraproject/chimaeraproject-kit?tag=kit-v0.23.0#ece7f22d1dc79541b2e49ea2e4d30a38e206a9eb"
+version = "0.24.0"
+source = "git+https://github.com/thechimaeraproject/chimaeraproject-kit?tag=kit-v0.24.0#77dc01254a226099e3b6f527e316618767200889"
 dependencies = [
  "chimaeraproject-param",
  "thiserror 2.0.21",
 ]
 
 [[package]]
+name = "chimaeraproject-egui-audio"
+version = "0.24.0"
+source = "git+https://github.com/thechimaeraproject/chimaeraproject-kit?tag=kit-v0.24.0#77dc01254a226099e3b6f527e316618767200889"
+dependencies = [
+ "egui",
+]
+
+[[package]]
 name = "chimaeraproject-fs"
-version = "0.23.0"
-source = "git+https://github.com/thechimaeraproject/chimaeraproject-kit?tag=kit-v0.23.0#ece7f22d1dc79541b2e49ea2e4d30a38e206a9eb"
+version = "0.24.0"
+source = "git+https://github.com/thechimaeraproject/chimaeraproject-kit?tag=kit-v0.24.0#77dc01254a226099e3b6f527e316618767200889"
 dependencies = [
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "chimaeraproject-param"
-version = "0.23.0"
-source = "git+https://github.com/thechimaeraproject/chimaeraproject-kit?tag=kit-v0.23.0#ece7f22d1dc79541b2e49ea2e4d30a38e206a9eb"
+version = "0.24.0"
+source = "git+https://github.com/thechimaeraproject/chimaeraproject-kit?tag=kit-v0.24.0#77dc01254a226099e3b6f527e316618767200889"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "chimaeraproject-vst3-host"
-version = "0.23.0"
-source = "git+https://github.com/thechimaeraproject/chimaeraproject-kit?tag=kit-v0.23.0#ece7f22d1dc79541b2e49ea2e4d30a38e206a9eb"
+version = "0.24.0"
+source = "git+https://github.com/thechimaeraproject/chimaeraproject-kit?tag=kit-v0.24.0#77dc01254a226099e3b6f527e316618767200889"
 dependencies = [
  "chimaeraproject-audio-processor",
  "chimaeraproject-param",
@@ -3286,6 +3304,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "vix-mix"
 version = "0.1.0"
 dependencies = [
+ "chimaeraproject-egui-audio",
  "chimaeraproject-vst3-host",
  "egui",
  "egui-wgpu",
@@ -3307,6 +3326,7 @@ version = "0.1.0"
 dependencies = [
  "arc-swap",
  "assert_no_alloc",
+ "chimaeraproject-audio-io",
  "chimaeraproject-audio-processor",
  "thiserror 2.0.21",
  "vixmix-model",

@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
 use arc_swap::ArcSwap;
+use chimaeraproject_audio_io::{Stats, StereoMeter};
 use chimaeraproject_audio_processor::{
     BusBuffer, BusLayout, EngineConfig, ProcessSetup, TransportInfo, apply_gain, mix_into,
 };
@@ -12,9 +13,9 @@ use vixmix_model::{EngineSnapshot, InstanceId};
 
 use crate::graph::{self, InsertProblem, Prepared, StripChain};
 use crate::lender::Lender;
-use crate::meters::{MeterBank, Stats, StereoMeter};
 use crate::registry::{Registry, SetUpWith};
 use crate::tick_only::TickOnly;
+use crate::{MASTER, MONITOR, MeterBank};
 
 /// PipeWire's default `default.clock.quantum-limit`: the most frames one cycle can ask for.
 /// The quantum is the graph's, not ours, so every buffer and every processor's `max_block` is
@@ -343,7 +344,7 @@ impl Engine {
             } else {
                 dry
             };
-            let meters = self.meters.channel(index);
+            let meters = self.meters.strip(index);
             let to_monitor = if channel.chain_to_monitor {
                 processed
             } else {
@@ -358,13 +359,13 @@ impl Engine {
                 [&mut *monitor_l, &mut *monitor_r],
                 to_monitor,
                 channel.monitor,
-                &meters.monitor,
+                &meters[MONITOR],
             );
             send(
                 [&mut *master_l, &mut *master_r],
                 to_master,
                 channel.master,
-                &meters.master,
+                &meters[MASTER],
             );
         }
 
@@ -387,20 +388,16 @@ impl Engine {
             monitor_r.copy_from_slice(master_r);
         }
         self.meters
-            .monitor()
+            .bus(MONITOR)
             .record(peak(monitor_l), peak(monitor_r));
-        self.meters.master().record(peak(master_l), peak(master_r));
+        self.meters
+            .bus(MASTER)
+            .record(peak(master_l), peak(master_r));
 
-        self.stats.frames.fetch_add(n as u64, Ordering::Relaxed);
-        self.stats.quantum.store(n as u32, Ordering::Relaxed);
-        if n > 0 && prepared.sample_rate > 0 {
-            let budget = n as f64 / f64::from(prepared.sample_rate);
-            // Rounded up: a tick that took any time at all reads at least 1 ‰.
-            let load = (started.elapsed().as_secs_f64() / budget * 1000.0).ceil();
-            self.stats
-                .dsp_load_permille
-                .store(load.min(f64::from(u32::MAX)) as u32, Ordering::Relaxed);
-        }
+        // The frames, the quantum and the load, rounded up so a tick that took any time at all
+        // reads at least 1 permille.
+        self.stats
+            .record_cycle(n, prepared.sample_rate, started.elapsed());
     }
 }
 
@@ -526,9 +523,9 @@ mod tests {
         assert_eq!(null.monitor().0, &signal[..]);
         assert_eq!(null.monitor().1, &signal[..]);
         assert!(null.master().0.iter().all(|s| *s == 0.0));
-        let (peak_l, _) = engine.meters().channel(0).monitor.take();
+        let (peak_l, _) = engine.meters().tap(0, MONITOR).take();
         assert!((peak_l - 0.5).abs() < 1e-3);
-        assert_eq!(engine.meters().channel(0).master.take(), (0.0, 0.0));
+        assert_eq!(engine.meters().tap(0, MASTER).take(), (0.0, 0.0));
     }
 
     #[test]

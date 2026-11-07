@@ -13,6 +13,7 @@ name = "vixmix_engine"
 [dependencies]
 vixmix-model.workspace = true
 chimaeraproject-audio-processor.workspace = true
+chimaeraproject-audio-io.workspace = true
 arc-swap.workspace = true
 thiserror.workspace = true
 

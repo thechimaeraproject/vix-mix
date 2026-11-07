@@ -121,6 +121,15 @@ pass (handoff 08 step 4) has not run, and
 [handoff 09](docs/handoffs/09-round-1-fixes.md) holds what it must check. See
 `docs/cookbook/install-on-fedora.md` and the two handoffs.
 
+**The kit lifts are implemented (2026-11-07):** the engine's meter bank and counters are the
+kit's `chimaeraproject-audio-io` (without its device layer: PipeWire stays the driver), and the
+console's meter faders, their scale, peak hold and the taper trait they read through are the
+kit's `chimaeraproject-egui-audio`; this repository's copies are deleted, and the look gate's
+capture is byte-identical. Vix took both crates in the same kit release. Vix Mix keeps the
+graph, the driver, which meter is which, the taper itself, the theme and what each gesture
+sends. See `docs/kit-audio-io.md`, `docs/kit-egui-audio.md` and
+[handoff 07](docs/handoffs/07-kit-lifts.md).
+
 ## Git workflow (read first)
 
 **Work on a branch, never on `master`/`main`.** Every change is a PR: `kit push --yes` runs
