@@ -12,6 +12,7 @@
 
 use std::sync::Arc;
 
+use chimaeraproject_egui_audio::{LabelAt, Labels, Mark, ScaleStyle, Ticks, paint_scale};
 use egui::epaint::TextShape;
 use egui::text::{LayoutJob, TextFormat, TextWrapping};
 use egui::{
@@ -23,7 +24,7 @@ use vixmix_model::{Channel, ChannelId, Command, Mix, MixId, Source, Strip, taper
 use crate::console::{Anchor, Cx};
 use crate::fader::{self, Look, Side, Target};
 use crate::icons::{self, Icon};
-use crate::meters::Pair;
+use crate::meters::{Pair, Prototype};
 use crate::shell::Intent;
 use crate::theme::{colour, font, size};
 use crate::well::{self, WellView};
@@ -109,20 +110,40 @@ pub fn mix_columns(faders: Rect) -> [Rect; 2] {
 }
 
 /// The height on a fader column where `position` sits: position 0 at the bars' bottom, 1 at
-/// their top, [`size::FADER_INSET`] in from the column's ends.
+/// their top, [`size::FADER_INSET`] in from the column's ends (the kit's travel). The fader
+/// and the scale reach it through the kit's widgets; the tests press where it says.
+#[cfg(test)]
 pub fn fader_y(column: Rect, position: f32) -> f32 {
-    let travel = column.height() - 2.0 * size::FADER_INSET;
-    column.bottom() - size::FADER_INSET - position.clamp(0.0, 1.0) * travel
+    chimaeraproject_egui_audio::fader_y(column, size::FADER_INSET, position)
 }
 
-/// The scale's marks: position and label (`+6, 0, 6, 12, 24, 48`).
-pub const SCALE: [(f32, &str); 6] = [
-    (1.0, "+6"),
-    (taper::UNITY, "0"),
-    (0.70, "6"),
-    (0.56, "12"),
-    (0.36, "24"),
-    (0.14, "48"),
+/// The scale's marks: decibels and label (`+6, 0, 6, 12, 24, 48`), each a point of the
+/// taper's table, so each sits exactly on its position.
+pub const SCALE: [Mark<'static>; 6] = [
+    Mark {
+        db: 6.0,
+        label: "+6",
+    },
+    Mark {
+        db: 0.0,
+        label: "0",
+    },
+    Mark {
+        db: -6.0,
+        label: "6",
+    },
+    Mark {
+        db: -12.0,
+        label: "12",
+    },
+    Mark {
+        db: -24.0,
+        label: "24",
+    },
+    Mark {
+        db: -48.0,
+        label: "48",
+    },
 ];
 
 /// What a channel's header says its source is (the prototype's `srcText`): the device, or
@@ -415,36 +436,30 @@ fn head(
     }
 }
 
-/// The scale: a tick, the label, and (between a channel's faders) a second tick, at each
-/// mark's position; the 0 a shade brighter.
+/// The scale (the kit's, on the taper): a tick, the label, and (between a channel's faders) a
+/// second tick, at each mark's position; the 0 a shade brighter.
 fn scale(painter: &Painter, column: Rect, both_ticks: bool) {
-    for (position, label) in SCALE {
-        let y = fader_y(column, position);
-        let half = size::HAIRLINE / 2.0;
-        let tick = |x: f32| Rect::from_x_y_ranges(x..=x + size::SCALE_TICK, y - half..=y + half);
-        painter.rect_filled(tick(column.left()), CornerRadius::ZERO, colour::CTL_HI);
-        let ink = if label == "0" {
-            colour::DIM
-        } else {
-            colour::FAINT
-        };
-        let text = galley(painter, label, font::mono(font::SCALE), ink, Spacing::None);
-        if both_ticks {
-            painter.rect_filled(
-                tick(column.right() - size::SCALE_TICK),
-                CornerRadius::ZERO,
-                colour::CTL_HI,
-            );
-            place(
-                painter,
-                text,
-                Align2::CENTER_CENTER,
-                pos2(column.center().x, y),
-            );
-        } else {
-            place(painter, text, Align2::RIGHT_CENTER, pos2(column.right(), y));
-        }
-    }
+    let style = ScaleStyle {
+        inset: size::FADER_INSET,
+        ticks: Ticks::Edges {
+            length: size::SCALE_TICK,
+            thickness: size::HAIRLINE,
+            colour: colour::CTL_HI,
+            both: both_ticks,
+        },
+        labels: Some(Labels {
+            font: font::mono(font::SCALE),
+            colour: colour::FAINT,
+            strong_colour: colour::DIM,
+            at: if both_ticks {
+                LabelAt::Centre
+            } else {
+                LabelAt::Right
+            },
+            strong_only: false,
+        }),
+    };
+    paint_scale(painter, column, &Prototype, &SCALE, &style);
 }
 
 /// The decibels a fader reads, struck through and faint while muted.
@@ -691,12 +706,14 @@ mod tests {
         let column = Rect::from_min_size(pos2(0.0, 100.0), vec2(20.0, 210.0));
         assert_eq!(fader_y(column, 0.0), 304.0);
         assert_eq!(fader_y(column, 1.0), 106.0);
-        let zero = SCALE.iter().find(|(_, label)| *label == "0").unwrap().0;
-        assert_eq!(fader_y(column, taper::UNITY), fader_y(column, zero));
+        let zero = SCALE.iter().find(|mark| mark.label == "0").unwrap().db;
+        let at = |db: f64| taper::db_to_position(db as f32);
+        assert_eq!(fader_y(column, taper::UNITY), fader_y(column, at(zero)));
         assert_eq!(fader_y(column, 2.0), 106.0, "clamped to the top");
-        // The scale's marks are the taper's: +6 at the top, 48 at -48 dB.
-        assert_eq!(taper::position_to_db(SCALE[0].0), 6.0);
-        assert_eq!(taper::position_to_db(SCALE[5].0), -48.0);
+        // The scale's marks are the taper's table: +6 at the top, 0 at unity, 48 at 0.14.
+        assert_eq!(at(SCALE[0].db), 1.0);
+        assert_eq!(at(SCALE[1].db), taper::UNITY);
+        assert_eq!(at(SCALE[5].db), 0.14);
     }
 
     #[test]

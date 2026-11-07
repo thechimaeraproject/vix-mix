@@ -11,9 +11,11 @@ one `Host` (`RealHost`, or `FakeHost` with `--fake`) and owns nothing the host c
 setup, no audio, no plugin. Every gesture becomes a `Command` the host applies; the window
 draws the setup the host holds, every frame.
 
-It depends on `vixmix-host` and `vixmix-model`; on the kit's `chimaeraproject-vst3-host` only
-to name the `EditorEvent` and `EditorSize` that `Host::tick_editors` and `Host::open_editor`
-hand back; on `png` for the capture. Its tests also take `vixmix-plugins`, because their
+It depends on `vixmix-host` and `vixmix-model`; on the kit's `chimaeraproject-egui-audio` for
+the meter fader, its scale, peak hold and the taper trait the meters read through
+([kit-egui-audio.md](../kit-egui-audio.md)); on the kit's `chimaeraproject-vst3-host` only to
+name the `EditorEvent` and `EditorSize` that `Host::tick_editors` and `Host::open_editor` hand
+back; on `png` for the capture. Its tests also take `vixmix-plugins`, because their
 `Recorder` implements `Host`, whose `catalog` names `Catalog`.
 
 ## The files
@@ -26,8 +28,8 @@ hand back; on `png` for the capture. Its tests also take `vixmix-plugins`, becau
 | `shell.rs` | the window's state between frames (`Shell`), what it takes from the host's events (`Shell::events`) and what it does with a frame's `Intent`s: commands applied, refusals and notes to the toast line, popovers opened and closed, Undo, stars and a rescan through the host, editors queued and then opened (`open_editors`) |
 | `ui.rs` | what a frame draws and senses: the header and its display, the banner, the console, the open popover, the toast line |
 | `console.rs` | the console row: where each strip goes, the rects a popover hangs from and a drag lands in, the insert drag resolved after the last strip |
-| `strip.rs` | a channel strip and a mix strip: rows, header, scale, readouts, mute, link and ear, the add-channel column, the text helpers |
-| `fader.rs` | a fader: the meter bars and peak lines, the line and triangle, the drag, double-click and keys |
+| `strip.rs` | a channel strip and a mix strip: rows, header, the scale's marks and style (drawn by the kit), readouts, mute, link and ear, the add-channel column, the text helpers |
+| `fader.rs` | a fader: which send or level a column is and the command each move sends, the steps, the focus ring, and the kit's meter fader in the theme's sizes and colours |
 | `well.rs` | the FX well: MON and MST, the slots with their square, gear and bin, the mark of a slot playing as a pass-through, the slot keys, "+ Add plugin", the scrolling list |
 | `drag.rs` | an insert dragged within or between strips: where it lands, the drop line and outline, the ghost, the command a drop sends |
 | `popover.rs` | the popovers: the source panel, the output panel, the add-channel menu, the menu and the preferences; where a popover goes |
@@ -35,7 +37,7 @@ hand back; on `png` for the capture. Its tests also take `vixmix-plugins`, becau
 | `toast.rs` | the toast line, and the Undo command a toast carries |
 | `editors.rs` | the plugin editor windows, made by an `Opener` and driven through `EditorWindow` (winit's in the app, a fake in the tests): open, resize, close through the host, titles |
 | `widgets.rs` | what every surface shares: hover, the focus ring, the text button, tick box and radio, headings, the text field, a popover's frame |
-| `meters.rs` | a linear peak read on the fader's taper, the peak-hold line |
+| `meters.rs` | the model's taper as the kit's `Taper`, a linear peak read on it, the console's bars (the kit's `PeakHold`) by channel and mix, the hold's timings |
 | `icons.rs` | prototype v5's SVG icons, read once and followed with egui's painter, stroked or filled |
 | `theme.rs` | the look as constants: colours, gradient, sizes (`size`, `pop`), fonts and their sizes |
 | `gpu.rs` | the surface, and the one paint path: `upload` (egui's textures) and `encode` (egui's frame into a target) |
@@ -256,16 +258,20 @@ Monitor mute, the link toggle and the Master mute. A **mix strip**: the header (
 bars, and on Monitor the MST tag while Master is previewed), the FX well, one wide fader beside
 its scale, the readout, the mute and, on Master, the ear (accent when previewing).
 
-A **fader**: two meter bars 6 points in from the column's ends, position 0 at the bottom and 1
-at the top; each bar is the gradient up to its level and black above, with the peak-hold
-line; the fader line across the bars at the send's position and its triangle pointing in;
-muted, the line and triangle are faint and the bars at 0.4.
+A **fader** (the kit's `meter_fader`, styled from `theme.rs`): two meter bars 6 points in from
+the column's ends, position 0 at the bottom and 1 at the top; each bar is the gradient up to its
+level and black above, with the peak-hold line; the fader line across the bars at the send's
+position and its triangle pointing in; muted, the line and triangle are faint and the bars at
+0.4. The **scale** is the kit's `paint_scale` over the marks `+6, 0, 6, 12, 24, 48` given in
+decibels, each a point of the taper's table, so each sits exactly on its position.
 
 **Meters** (`meters.rs`): a host's linear peak reads at `taper::db_to_position` of its
-decibels (anything at or below 0.0001 is silent), so a level at 0 dB sits on the scale's 0
-beside a fader at unity, as the prototype's `dbToPos(amp2db(a))`. Each bar keeps its peak: a
-louder frame takes it at once; otherwise it holds 900 ms, then falls 0.006 a frame, never
-below the level. The window keeps the `Meters` between frames on its own clock.
+decibels (anything at or below 0.0001 is silent; the kit's `meter_position` through
+`Prototype`, the model's taper as the kit's `Taper`), so a level at 0 dB sits on the scale's 0
+beside a fader at unity, as the prototype's `dbToPos(amp2db(a))`. Each bar (the kit's
+`PeakHold`) keeps its peak: a louder frame takes it at once; otherwise it holds 900 ms, then
+falls 0.006 a frame, never below the level. The window keeps the `Meters` between frames on
+its own clock.
 
 ## Gestures
 

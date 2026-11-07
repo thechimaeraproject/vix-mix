@@ -11,7 +11,7 @@ use chimaeraproject_audio_processor::db_to_linear;
 use common::{
     DataThread, Log, PLUGIN, Probe, TestRack, engine, feed, gate, insert, setup, sine, snap,
 };
-use vixmix_engine::{MAX_QUANTUM, NoPlugins, NullBackend};
+use vixmix_engine::{MASTER, MAX_QUANTUM, MONITOR, NoPlugins, NullBackend};
 use vixmix_model::{Command, InstanceId, MixId, Strip, apply, snapshot, taper};
 
 #[test]
@@ -120,7 +120,7 @@ fn mute_beats_everything() {
     // A muted send carries nothing, whatever its chain makes and however high its fader:
     // Master hears only its own chain's tone.
     assert!(null.master().0.iter().all(|s| *s == 0.125));
-    assert_eq!(engine.meters().channel(0).master.take(), (0.0, 0.0));
+    assert_eq!(engine.meters().tap(0, MASTER).take(), (0.0, 0.0));
     // The unmuted Monitor send carries the channel's tone, then Monitor's own.
     assert!(null.monitor().0.iter().all(|s| *s == 0.75));
 
@@ -139,9 +139,9 @@ fn mute_beats_everything() {
     null.pump(64);
     assert!(null.master().0.iter().all(|s| *s == 0.0));
     assert!(null.monitor().0.iter().all(|s| *s == 0.0));
-    let _ = engine.meters().monitor().take();
+    let _ = engine.meters().bus(MONITOR).take();
     null.pump(64);
-    assert_eq!(engine.meters().monitor().take(), (0.0, 0.0));
+    assert_eq!(engine.meters().bus(MONITOR).take(), (0.0, 0.0));
 }
 
 #[test]

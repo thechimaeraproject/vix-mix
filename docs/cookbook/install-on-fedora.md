@@ -109,8 +109,8 @@ spaces included, is fine.
 Open the application launcher and type "Vix Mix": the entry shows the icon, three channel
 strips with their meters under blue faders, and sits under Multimedia. Start it. A first start
 scans the VST3 folders before the window appears, which takes a while with many plugins.
-Fedora's packages put VST3 plugins in `/usr/lib64/vst3`, which Vix Mix does not search yet:
-[the by-hand pass](by-hand-pass.md) step 1 says how to add it.
+Fedora's packages put VST3 plugins in `/usr/lib64/vst3`, which Vix Mix searches with the SDK's
+places ([the by-hand pass](by-hand-pass.md) step 1 lists them).
 
 ## 7. Uninstall
 

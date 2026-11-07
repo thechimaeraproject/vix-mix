@@ -1,6 +1,9 @@
 # 07 — Kit lifts
 
-**Record — not yet built.**
+**Record — shipped 2026-11-07.** The kit's `chimaeraproject-audio-io` and
+`chimaeraproject-egui-audio` are taken here and in Vix and the copies deleted
+([kit-audio-io.md](../kit-audio-io.md), [kit-egui-audio.md](../kit-egui-audio.md)); § As built
+says what differs from the steps.
 **Needs:** 06. **Runs alongside:** 08. **Size:** M. Works in the kit's repository, co-developed
 with `kit link`.
 
@@ -57,6 +60,28 @@ the deletions and the new `docs/kit-*.md` records; in Vix, its switch-over commi
 
 Both consumers take each released crate with `kit bump` and delete their copies; `dev check`
 (and Vix's gates) green; `kit doctor` green in all three repositories.
+
+## As built
+
+- **One kit release, not one per lift.** Both crates, the `vst3-host` fixes and their docs went
+  into one kit branch and one release, and each consumer took both in one bump: the two lifts
+  share their acceptance (each consumer deletes copies in both), and a release between them
+  would have left Vix half switched.
+- **`audio-io` without RMS and without exclusive mode.** The bank holds peaks, which is what both
+  consumers read; RMS waits for a reader. cpal has no way to ask WASAPI for exclusive mode, so
+  that decision stays open in the kit rather than half built. Vix Mix takes the crate without
+  its default `cpal` feature: PipeWire stays its driver.
+- **The meter bank is generic.** The kit's `MeterBank<STRIPS, TAPS, BUSES>` replaced this
+  engine's fixed one; `vixmix_engine::MeterBank` is it at eight channels of two sends and two
+  mixes, read by index (`MONITOR`, `MASTER`) where the old one had named fields. That changes
+  lane 02's shared contract, so it is
+  [change request 11](../build-map.md#change-requests), agreed with the bump.
+- **`egui-audio` takes egui alone.** The widgets draw through egui's painter, so the crate pins
+  no wgpu; the renderer stays the app's.
+- **The `vst3-host` fixes** were kit issues #199, its `vst3-host` half (the consumer recipe for
+  testing against a real plugin, and `install_bundle` exported for it; its `audio-processor`
+  half, a helper that runs a processor again with other parameter changes, stays open), and #201
+  (`/usr/lib64/vst3` in the Linux search directories).
 
 ## Out of scope
 

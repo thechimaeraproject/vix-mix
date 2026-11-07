@@ -1,11 +1,14 @@
 //! Meter levels as the strips draw them, the prototype's `setM`: the host's linear peak
 //! becomes a position on the fader's own taper (so a level at 0 dB sits on the "0" of the
 //! scale, beside a fader at unity), and each bar keeps a peak-hold line that holds
-//! [`HOLD_MS`] and then falls [`FALL_PER_FRAME`] a frame, never below the level.
+//! [`HOLD_MS`] and then falls [`FALL_PER_FRAME`] a frame, never below the level. The bar and its
+//! hold are the kit's (`chimaeraproject_egui_audio::PeakHold`); the timings, the taper and which
+//! bar is which are this console's.
 //!
 //! This is window state, kept from frame to frame by whoever draws: the window's frame loop,
 //! or the look gate's capture stepping `FakeHost` frame by frame.
 
+use chimaeraproject_egui_audio::{Hold, PeakHold, Taper, meter_position};
 use vixmix_host::{MeterFrame, Stereo};
 use vixmix_model::{MAX_CHANNELS, MixId, taper};
 
@@ -16,44 +19,40 @@ pub const HOLD_MS: f64 = 900.0;
 /// How far a peak falls each frame once its hold is over, in fader positions.
 pub const FALL_PER_FRAME: f32 = 0.006;
 
+const HOLD: Hold = Hold {
+    ms: HOLD_MS,
+    fall_per_frame: FALL_PER_FRAME,
+};
+
+/// The model's fader taper (`vixmix_model::taper`, the prototype's table) as the kit's widgets
+/// take one: what the meters read on and the scale is marked on.
+pub struct Prototype;
+
+impl Taper for Prototype {
+    fn position_to_db(&self, position: f32) -> f64 {
+        f64::from(taper::position_to_db(position))
+    }
+
+    fn db_to_position(&self, db: f64) -> f32 {
+        taper::db_to_position(db as f32)
+    }
+}
+
 /// The fader position a linear peak reads at: the prototype's `dbToPos(amp2db(a))`, with
 /// anything at or below 0.0001 (−80 dB) silent.
 pub fn position(amplitude: f32) -> f32 {
-    if amplitude.is_nan() || amplitude <= 0.0001 {
-        return 0.0;
-    }
-    taper::db_to_position(20.0 * amplitude.log10()).clamp(0.0, 1.0)
+    meter_position(&Prototype, amplitude, 0.0001)
 }
 
-/// One meter bar: where its level is, and its peak-hold line.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Bar {
-    /// The level as a fader position, 0..=1.
-    pub level: f32,
-    /// The peak-hold line as a fader position, 0..=1.
-    pub peak: f32,
-    held_since_ms: f64,
-}
-
-impl Bar {
-    /// The bar after a frame whose peak was `amplitude`, at `now_ms`.
-    pub fn update(&mut self, amplitude: f32, now_ms: f64) {
-        self.level = position(amplitude);
-        if self.level >= self.peak {
-            self.peak = self.level;
-            self.held_since_ms = now_ms;
-        } else if now_ms - self.held_since_ms > HOLD_MS {
-            self.peak = self.level.max(self.peak - FALL_PER_FRAME);
-        }
-    }
-}
+/// One meter bar: where its level is, and its peak-hold line, as fader positions.
+pub type Bar = PeakHold;
 
 /// A fader's two bars, left and right.
 pub type Pair = [Bar; 2];
 
 fn update_pair(pair: &mut Pair, levels: Stereo, now_ms: f64) {
-    pair[0].update(levels.left, now_ms);
-    pair[1].update(levels.right, now_ms);
+    pair[0].update(position(levels.left), now_ms, HOLD);
+    pair[1].update(position(levels.right), now_ms, HOLD);
 }
 
 /// Every bar the console draws, by channel position as [`MeterFrame`] has them.
@@ -119,25 +118,28 @@ mod tests {
     #[test]
     fn a_peak_holds_900_ms_then_falls_a_little_each_frame_to_the_level() {
         let mut bar = Bar::default();
-        bar.update(1.0, 0.0);
+        let update = |bar: &mut Bar, amplitude: f32, now_ms: f64| {
+            bar.update(position(amplitude), now_ms, HOLD);
+        };
+        update(&mut bar, 1.0, 0.0);
         assert_eq!(bar.peak, taper::UNITY);
         // The level drops; the peak holds for 900 ms.
         let mut now = 0.0;
         while now < HOLD_MS {
             now += FRAME_MS;
-            bar.update(0.01, now.min(HOLD_MS));
+            update(&mut bar, 0.01, now.min(HOLD_MS));
         }
         assert_eq!(bar.peak, taper::UNITY, "held through {HOLD_MS} ms");
         // Then it falls one step a frame.
-        bar.update(0.01, HOLD_MS + FRAME_MS);
+        update(&mut bar, 0.01, HOLD_MS + FRAME_MS);
         assert!((bar.peak - (taper::UNITY - FALL_PER_FRAME)).abs() < 1e-6);
         // And never below the level.
         for frame in 2..400 {
-            bar.update(0.01, HOLD_MS + f64::from(frame) * FRAME_MS);
+            update(&mut bar, 0.01, HOLD_MS + f64::from(frame) * FRAME_MS);
         }
         assert_eq!(bar.peak, bar.level);
         // A louder frame takes the peak at once.
-        bar.update(0.5, 10_000.0);
+        update(&mut bar, 0.5, 10_000.0);
         assert_eq!(bar.peak, bar.level);
     }
 

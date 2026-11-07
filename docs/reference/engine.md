@@ -7,7 +7,8 @@ its own thread and swaps it in; the backend's data thread calls `Engine::process
 PipeWire cycle with every channel's input and the two mixes' outputs, and nothing on that path
 allocates, locks or logs. It owns the thread rule and the graph, which the kit's charter keeps
 out of the shared crates; the processor contract, the chain and the strip maths are the kit's
-`chimaeraproject-audio-processor` ([kit-audio.md](../kit-audio.md)). It knows no device, no
+`chimaeraproject-audio-processor` ([kit-audio.md](../kit-audio.md)), and the meters and the
+counters the kit's `chimaeraproject-audio-io` ([kit-audio-io.md](../kit-audio-io.md)). It knows no device, no
 PipeWire type and no plugin type: hosted processors arrive through the `Lender` trait.
 
 ## What it owns and what the others keep
@@ -180,16 +181,21 @@ is exclusive. Each dereference sits beside a `SAFETY` comment saying why.
 
 ## Meters and stats
 
-`MeterBank` is a fixed array: for each of the eight channel positions a `ChannelMeters
-{ monitor, master }` post-send, and one `StereoMeter` for each mix post-level (Monitor's is the
-Master mix while previewing). Each `PeakMeter` holds `f32` bits in an `AtomicU32`; the tick
-calls `record`, a `fetch_max` on the bits (non-negative floats order as their bits do, so a
-peak between two UI frames is never lost), and the window's frame calls `take`, which swaps in
-zero. Peak hold and fall-off are the reader's. `Stats { xruns, frames, dsp_load_permille, rate,
-quantum }` are relaxed atomics: frames processed, the last cycle's length, the rate, and the
-last cycle's processing time in thousandths of its budget (frames ÷ the graph's rate), timed
-with `Instant` (monotonic) and rounded up, so a tick that took any time reads at least 1.
-`xruns` is the backend's to count.
+Both are the kit's `chimaeraproject-audio-io` ([kit-audio-io.md](../kit-audio-io.md)),
+re-exported here. `MeterBank` is the kit's bank at this mixer's shape,
+`MeterBank<MAX_CHANNELS, 2, 2>`: for each of the eight channel positions two taps, its Monitor
+and Master sends post-send (`strip(index)[MONITOR]`, `[MASTER]`), and two buses, each mix
+post-level (`bus(MONITOR)`, Monitor's being the Master mix while previewing, and
+`bus(MASTER)`); an index past the bank reads its last strip, tap or bus, so the tick never
+indexes out of it. Each `PeakMeter` holds `f32` bits in an `AtomicU32`; the tick calls
+`record`, a `fetch_max` on the bits (non-negative floats order as their bits do, so a peak
+between two UI frames is never lost), and the host's frame calls `take`, which swaps in zero.
+Peak hold and fall-off are the reader's. `Stats { xruns, frames, dsp_load_permille, rate,
+quantum }` are relaxed atomics: the tick's `record_cycle(n, rate, elapsed)` adds the frames
+processed, stores the cycle's length, and stores its processing time in thousandths of its
+budget (frames ÷ the graph's rate), timed with `Instant` (monotonic) and rounded up, so a tick
+that took any time reads at least 1; `rate` is stored by `new` and `set_rate`. `xruns` is the
+backend's to count.
 
 ## The null backend
 

@@ -14,7 +14,7 @@ use std::sync::atomic::Ordering;
 
 use assert_no_alloc::{AllocDisabler, assert_no_alloc};
 use common::{Probe, TestRack, engine, insert, setup};
-use vixmix_engine::NullBackend;
+use vixmix_engine::{MASTER, MONITOR, NullBackend};
 use vixmix_model::{Command, MixId, apply, snapshot, taper};
 
 #[global_allocator]
@@ -77,8 +77,8 @@ fn eight_channels_with_chains_tick_without_allocating_from_the_second_block() {
     for frames in [64, 256, 1024, 256, 64] {
         assert_no_alloc(|| {
             null.pump(frames);
-            let _ = engine.meters().channel(0).monitor.take();
-            let _ = engine.meters().master().take();
+            let _ = engine.meters().tap(0, MONITOR).take();
+            let _ = engine.meters().bus(MASTER).take();
             let _ = engine.stats().dsp_load_permille.load(Ordering::Relaxed);
         });
     }
@@ -100,7 +100,7 @@ fn eight_channels_with_chains_tick_without_allocating_from_the_second_block() {
     for frames in [1024, 64, 256] {
         assert_no_alloc(|| {
             null.pump(frames);
-            let _ = engine.meters().monitor().take();
+            let _ = engine.meters().bus(MONITOR).take();
         });
     }
     assert_eq!(engine.generations(), (before + 1, before + 1));

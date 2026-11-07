@@ -3,6 +3,6 @@
   "private": true,
   "description": "Node is here only for the kit CLI: vix-mix is a Rust workspace. The tooling runs the hooks, the doctor, kit-check-docs and the dev registry; cargo does everything else.",
   "devDependencies": {
-    "@chimaeraproject/tooling": "^0.23.0"
+    "@chimaeraproject/tooling": "^0.24.0"
   }
 }

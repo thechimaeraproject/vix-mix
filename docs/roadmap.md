@@ -1,6 +1,6 @@
 # Roadmap
 
-**As of 2026-11-04.** What is built, what is next, and what the docs name that nobody has
+**As of 2026-11-07.** What is built, what is next, and what the docs name that nobody has
 built. A lane that ships flips its rows here in the same commit as its handoff's status line;
 the [build map](build-map.md) holds the order and the conflict rules.
 
@@ -24,6 +24,7 @@ the [build map](build-map.md) holds the order and the conflict rules.
 | The by-hand pass for the first real test on Fedora, waiting for handoff 08 to run it | [cookbook/by-hand-pass.md](cookbook/by-hand-pass.md) | 2026-11-04 |
 | Packaging for Linux: the desktop entry, the icon and the AppStream metadata in `packaging/linux/` with `install.sh`, installed after `cargo install` or from the release tarball (`dev package`); proven in the Ubuntu container, the install on Fedora waiting for Fedora KDE on the NV3 | [cookbook/install-on-fedora.md](cookbook/install-on-fedora.md), [handoff 08](handoffs/08-packaging-and-first-real-test.md) | 2026-11-04 |
 | The packaging finding: native, not Flatpak, with the evidence and the three options | [charter.md](charter.md) § Open | 2026-11-04 |
+| The kit lifts: the engine's meter bank and counters taken from the kit's `audio-io`, the console's meter faders, scale, peak hold and taper trait from its `egui-audio`, the copies deleted, the look gate's capture byte-identical | [kit-audio-io.md](kit-audio-io.md), [kit-egui-audio.md](kit-egui-audio.md), [handoff 07](handoffs/07-kit-lifts.md) | 2026-11-07 |
 
 ## Next
 
@@ -39,7 +40,7 @@ Wave 2, in parallel, each in its own worktree ([build map](build-map.md) § Wave
 
 Then wave 3: [06 — Host and integration](handoffs/06-host-and-integration.md), shipped
 2026-11-04 (see Built; the acceptance's Fedora bullet waits for the by-hand pass); then
-[07 — Kit lifts](handoffs/07-kit-lifts.md) and
+[07 — Kit lifts](handoffs/07-kit-lifts.md), shipped 2026-11-07 (see Built), and
 [08 — Packaging and the first real test](handoffs/08-packaging-and-first-real-test.md), shipped
 2026-11-04 (see Built) but for its step 4, the by-hand pass, which waits for Fedora KDE on the
 NV3 and fills [09 — Round 1 fixes](handoffs/09-round-1-fixes.md), seeded with the fifteen items
@@ -47,7 +48,8 @@ the earlier lanes left open for it.
 
 ## Named but not built
 
-- **A Windows backend**, `vixmix-cpal`, over the kit's `audio-io` crate once handoff 07 lifts it.
+- **A Windows backend**, `vixmix-cpal`, over the kit's `audio-io` crate with its device layer
+  (handoff 07 lifted the crate; Vix Mix takes it without that layer today).
 - **An RPM spec** that builds from a source tarball with the crates vendored, built with
   `rpmbuild` while the repository is private and through a COPR once it is public (the
   charter's packaging finding).

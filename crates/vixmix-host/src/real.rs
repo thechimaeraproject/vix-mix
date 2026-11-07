@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use chimaeraproject_vst3_host::{EditorEvent, EditorSize, HostContext};
 use raw_window_handle::RawWindowHandle;
-use vixmix_engine::{Engine, EngineConfig, InsertProblem, Lender, MAX_QUANTUM};
+use vixmix_engine::{Engine, EngineConfig, InsertProblem, Lender, MASTER, MAX_QUANTUM, MONITOR};
 use vixmix_model::{
     AppRef, Applied, Command, DeviceInfo, Insert, InstanceId, Mix, MixId, Refused, Setup, Strip,
     apply, persist, snapshot,
@@ -578,14 +578,14 @@ impl Host for RealHost {
             .take(self.setup.channels.len())
             .enumerate()
         {
-            let meters = bank.channel(index);
+            let sends = bank.strip(index);
             *levels = ChannelLevels {
-                monitor: stereo(meters.monitor.take()),
-                master: stereo(meters.master.take()),
+                monitor: stereo(sends[MONITOR].take()),
+                master: stereo(sends[MASTER].take()),
             };
         }
-        frame.monitor = stereo(bank.monitor().take());
-        frame.master = stereo(bank.master().take());
+        frame.monitor = stereo(bank.bus(MONITOR).take());
+        frame.master = stereo(bank.bus(MASTER).take());
         frame
     }
 

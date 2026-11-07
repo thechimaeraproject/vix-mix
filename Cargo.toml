@@ -47,15 +47,22 @@ ron = "0.12"
 # `kit bump` moves the tag, kit-source.json and Cargo.lock together; `kit link` patches them
 # to a kit checkout for a fix loop; `kit doctor`'s cargo rows hold the three in agreement.
 # Atomic writes, tolerant loads and the per-user configuration directory (docs/kit-fs.md).
-chimaeraproject-fs = { git = "https://github.com/thechimaeraproject/chimaeraproject-kit", tag = "kit-v0.23.0" }
+chimaeraproject-fs = { git = "https://github.com/thechimaeraproject/chimaeraproject-kit", tag = "kit-v0.24.0" }
 # The parameter model (ids, normalized values, mappings, declarations, sparse changes) and the
 # audio processor contract with its chain, bus buffers and strip maths (docs/kit-audio.md).
-chimaeraproject-param = { git = "https://github.com/thechimaeraproject/chimaeraproject-kit", tag = "kit-v0.23.0" }
-chimaeraproject-audio-processor = { git = "https://github.com/thechimaeraproject/chimaeraproject-kit", tag = "kit-v0.23.0" }
+chimaeraproject-param = { git = "https://github.com/thechimaeraproject/chimaeraproject-kit", tag = "kit-v0.24.0" }
+chimaeraproject-audio-processor = { git = "https://github.com/thechimaeraproject/chimaeraproject-kit", tag = "kit-v0.24.0" }
 # The VST3 host: scanning, loading, the plugin adapted to the processor contract, state, and
-# its editor in a window the app owns (docs/kit-vst3.md). All four at one tag, or the param
+# its editor in a window the app owns (docs/kit-vst3.md). Every kit crate at one tag, or the param
 # types arrive twice.
-chimaeraproject-vst3-host = { git = "https://github.com/thechimaeraproject/chimaeraproject-kit", tag = "kit-v0.23.0" }
+chimaeraproject-vst3-host = { git = "https://github.com/thechimaeraproject/chimaeraproject-kit", tag = "kit-v0.24.0" }
+# The meters the tick writes and the window reads, and the tick's counters (docs/kit-audio-io.md).
+# Without its `cpal` feature: PipeWire is the driver (vixmix-pipewire), so no device layer and no
+# ALSA to build against.
+chimaeraproject-audio-io = { git = "https://github.com/thechimaeraproject/chimaeraproject-kit", tag = "kit-v0.24.0", default-features = false }
+# The console's meter faders, their scale, peak hold and the taper they read through
+# (docs/kit-egui-audio.md). The app alone takes it.
+chimaeraproject-egui-audio = { git = "https://github.com/thechimaeraproject/chimaeraproject-kit", tag = "kit-v0.24.0" }
 
 # Errors, logging, tooling.
 thiserror = "2"
