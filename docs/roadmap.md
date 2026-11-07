@@ -21,7 +21,7 @@ the [build map](build-map.md) holds the order and the conflict rules.
 | The PipeWire backend: the streams, the rings and their latency governor, the tick in the first output to run, the registry with app identity, routing by serial through the `default` metadata, `apply` diffing, reconnect; integration tests against a headless daemon; the two-minute run at 256 with zero xruns passes on a quiet machine and waits for a shell with realtime scheduling to be called met | [reference/pipewire.md](reference/pipewire.md) | 2026-11-04 |
 | The cookbook for a headless PipeWire in CI, WSL2, a VM or a container | [cookbook/run-headless-pipewire.md](cookbook/run-headless-pipewire.md) | 2026-11-04 |
 | The host: boot in order, PipeWire kept on Linux with every app routed as it appears, `Applied` acted on part by part, the debounced save, undo of a removed channel or insert (the model's restore commands, change request 2), pass-throughs and notices surfaced, shutdown in the kit's order; proven on the null backend with a real plugin on both legs and against the headless daemon on Linux | [reference/host.md](reference/host.md) | 2026-11-04 |
-| The by-hand pass for the first real test on Fedora, waiting for handoff 08 to run it | [cookbook/by-hand-pass.md](cookbook/by-hand-pass.md) | 2026-11-04 |
+| The by-hand pass for the first real test on Fedora, waiting for handoff 08 to run it ([#19](https://github.com/thechimaeraproject/vix-mix/issues/19)) | [cookbook/by-hand-pass.md](cookbook/by-hand-pass.md) | 2026-11-04 |
 | Packaging for Linux: the desktop entry, the icon and the AppStream metadata in `packaging/linux/` with `install.sh`, installed after `cargo install` or from the release tarball (`dev package`); proven in the Ubuntu container, the install on Fedora waiting for Fedora KDE on the NV3 | [cookbook/install-on-fedora.md](cookbook/install-on-fedora.md), [handoff 08](handoffs/08-packaging-and-first-real-test.md) | 2026-11-04 |
 | The packaging finding: native, not Flatpak, with the evidence and the three options | [charter.md](charter.md) § Open | 2026-11-04 |
 | The kit lifts: the engine's meter bank and counters taken from the kit's `audio-io`, the console's meter faders, scale, peak hold and taper trait from its `egui-audio`, the copies deleted, the look gate's capture byte-identical | [kit-audio-io.md](kit-audio-io.md), [kit-egui-audio.md](kit-egui-audio.md), [handoff 07](handoffs/07-kit-lifts.md) | 2026-11-07 |
@@ -36,7 +36,7 @@ Wave 2, in parallel, each in its own worktree ([build map](build-map.md) § Wave
 | [02 — Engine](handoffs/02-engine.md) | chains lent through `Lender`, the dry/processed split, mix chains, the no-alloc proof with chains on | shipped 2026-11-04 |
 | [03 — PipeWire backend](handoffs/03-pipewire-backend.md) | the streams, rings, tick election, registry, routing and reconnect, tested against a headless daemon | shipped 2026-11-04 (see Built) |
 | [04 — Plugins](handoffs/04-plugins.md) | scan and cache, instances, the rack, state, editor sessions, tested with the kit's test plugin | shipped 2026-11-04 (see Built) |
-| [05 — App](handoffs/05-app.md) | the look gate, then the console exactly as prototype v5 against `FakeHost` | shipped 2026-11-04 (see Built); its CPU acceptance met per machine (the main session's ruling); change request 10 (agreed) and a frame for the meters alone left to round 1 |
+| [05 — App](handoffs/05-app.md) | the look gate, then the console exactly as prototype v5 against `FakeHost` | shipped 2026-11-04 (see Built); its CPU acceptance met per machine (the main session's ruling); change request 10 (agreed, [#11](https://github.com/thechimaeraproject/vix-mix/issues/11)) and a frame for the meters alone left to round 1 |
 
 Then wave 3: [06 — Host and integration](handoffs/06-host-and-integration.md), shipped
 2026-11-04 (see Built; the acceptance's Fedora bullet waits for the by-hand pass); then
@@ -45,6 +45,21 @@ Then wave 3: [06 — Host and integration](handoffs/06-host-and-integration.md),
 2026-11-04 (see Built) but for its step 4, the by-hand pass, which waits for Fedora KDE on the
 NV3 and fills [09 — Round 1 fixes](handoffs/09-round-1-fixes.md), seeded with the fifteen items
 the earlier lanes left open for it.
+
+Round 1 is tracked as issues on the repository, one per item that is a fix and one for the pass
+itself; an issue closes when its item is struck through in handoff 09.
+
+| Issue | What | Handoff 09 |
+|---|---|---|
+| [#19](https://github.com/thechimaeraproject/vix-mix/issues/19) | the first real test on Fedora KDE: the by-hand pass, its figures and checks (the umbrella) | the pass itself; items 1, 2, 5, 6, 8, 11 and 12 |
+| [#11](https://github.com/thechimaeraproject/vix-mix/issues/11) | a plugin editor's window resizes without telling the plugin; the plugin-folder bound (change request 10) | item 14 |
+| [#12](https://github.com/thechimaeraproject/vix-mix/issues/12) | SIGTERM and logout skip the shutdown order | item 10 |
+| [#13](https://github.com/thechimaeraproject/vix-mix/issues/13) | Vix Mix restarted within milliseconds of quitting can leave a playing app routed but silent | item 3 |
+| [#14](https://github.com/thechimaeraproject/vix-mix/issues/14) | no toast when Monitor's device goes while Master has no device | item 4 |
+| [#15](https://github.com/thechimaeraproject/vix-mix/issues/15) | Preferences: the Tab order of the folder field and its Add button | item 15 |
+| [#16](https://github.com/thechimaeraproject/vix-mix/issues/16) | the first start: the plugin scan before the first frame, Monitor's device not picked | item 7 |
+| [#17](https://github.com/thechimaeraproject/vix-mix/issues/17) | a frame for the meters alone, to get under 5 % of one core | item 13 |
+| [#18](https://github.com/thechimaeraproject/vix-mix/issues/18) | the window's app id on Wayland and the launcher's activation token | item 9 |
 
 ## Named but not built
 
