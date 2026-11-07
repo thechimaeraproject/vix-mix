@@ -45,7 +45,7 @@ here.
 1. **Install** by [install-on-fedora.md](../cookbook/install-on-fedora.md) (step 4 or 5) and
    start Vix Mix from the KDE launcher: handoff 08's acceptance is that it installs by the
    documented path and appears in the launcher with its icon (item 11).
-2. **Run [the by-hand pass](../cookbook/by-hand-pass.md)**, steps 1 to 12 in one sitting,
+2. **Run [the by-hand pass](../cookbook/by-hand-pass.md)** ([#19](https://github.com/thechimaeraproject/vix-mix/issues/19) tracks it), steps 1 to 12 in one sitting,
    checking the items below where they come up. Write every failure into the Goal.
 3. **Record the figures**: the latency at 128, 256 and 512 and the `pw-top` ERR count at 256 in
    [reference/pipewire.md](../reference/pipewire.md) § Latency (item 2), and flip handoff 08's
@@ -78,10 +78,11 @@ here.
    and the kernel, and the ERR count the `vix-mix.*` rows of `pw-top` reached in five minutes at
    256, with what was happening when one moved.
 3. **Vix Mix started again within milliseconds of quitting can leave a playing app routed but
-   silent.** Seen with `pw-play` in the container: the player kept playing through the quit
-   and was moving back to the default device when a mixer booted again at once routed it into
-   its channel, while the graph was still moving to the player's own quantum; the player's node
-   then erred every cycle and went away. A mixer started a second later did not break it, so
+   silent.** ([#13](https://github.com/thechimaeraproject/vix-mix/issues/13)) Seen with
+   `pw-play` in the container: the player kept playing through the quit and was moving back to
+   the default device when a mixer booted again at once routed it into its channel, while the
+   graph was still moving to the player's own quantum; the player's node then erred every cycle
+   and went away. A mixer started a second later did not break it, so
    `crates/vixmix-host/tests/headless.rs` waits for the player to settle before it boots again,
    and the by-hand pass step 9 asks you to note how soon after the quit you started Vix Mix
    (its "a player restarted into its channel" is that player, routed back by the mixer started
@@ -91,7 +92,8 @@ here.
    ([reference/host.md](../reference/host.md) § Shutdown; `vixmix-host`, with the backend
    reporting the move), and step 9's sentence should say the mixer, not the player, started
    again.
-4. **Monitor's device gone, with Master on "No device".** Where:
+4. **Monitor's device gone, with Master on "No device".**
+   ([#14](https://github.com/thechimaeraproject/vix-mix/issues/14)) Where:
    `crates/vixmix-host/src/audio.rs`. The toast "Monitor's output device is not there…" is said
    only when Master out takes the tick; with Master on "No device" the tick moves to the Master
    source instead and nothing is said, and the idle banner asks to pick a Monitor device
@@ -112,12 +114,13 @@ here.
    install-on-fedora.md step 6). Check: `rpm -qla | grep -F .vst3/ | cut -d/ -f1-5 | sort -u`
    names bundles under `/usr/lib64/vst3`, and their plugins appear in the browser with no folder
    added.
-7. **The first start.** The scan of every VST3 bundle runs before the window opens, with nothing
-   on screen ([reference/host.md](../reference/host.md) § Boot, step 2), and Monitor's device is
-   not picked on a first start (the banner asks). Check: how long the first start takes with
-   the machine's plugins and whether the wait reads as a hang; whether Monitor should start on
-   the default output. Both are the user's call; a progress display needs the scan off the
-   window's first frame (`vixmix-host` and the app).
+7. **The first start.** ([#16](https://github.com/thechimaeraproject/vix-mix/issues/16)) The
+   scan of every VST3 bundle runs before the window opens, with nothing on screen
+   ([reference/host.md](../reference/host.md) § Boot, step 2), and Monitor's device is not
+   picked on a first start (the banner asks). Check: how long the first start takes with the
+   machine's plugins and whether the wait reads as a hang; whether Monitor should start on the
+   default output. Both are the user's call; a progress display needs the scan off the window's
+   first frame (`vixmix-host` and the app).
 8. **What the window shows for the backend's states.** The banner says the backend's state
    (PipeWire's refusal, the mixer idle with what would drive it, the daemon gone), the host's
    notices and refusals go to the toast line, and an insert playing as a pass-through is marked
@@ -128,7 +131,8 @@ here.
    with only the Master source (an app recording it starts the mixer), running, the daemon gone
    (`systemctl --user restart pipewire pipewire-pulse wireplumber`), Monitor's device gone, a
    plugin missing (a bundle renamed), a scan failure.
-9. **The window's entry in the task manager, and the launch feedback.** Where:
+9. **The window's entry in the task manager, and the launch feedback.**
+   ([#18](https://github.com/thechimaeraproject/vix-mix/issues/18)) Where:
    `packaging/linux/org.chimaeraproject.vixmix.desktop` and `app/` (the window, lane 05). winit
    gives an X11 window the class `vix-mix`, the binary's name, which the desktop entry's
    `StartupWMClass` matches; on Wayland it sets no app id unless the app names one, so Plasma
@@ -146,13 +150,15 @@ here.
    its window `with_activation_token` (`WindowAttributesExtStartupNotify`), calls
    `reset_activation_token_env` so no child process inherits it, and the desktop entry then
    says `StartupNotify=true`.
-10. **Logging out with apps routed.** Where: `app/src/main.rs` (no signal handling) and
-    [reference/host.md](../reference/host.md) § Shutdown. A window asked to close (Plasma's
-    logout should ask) runs the shutdown order; a `SIGTERM` (`pkill vix-mix`) ends the process
-    without it, as `pkill -9` does in the by-hand pass step 9. Check: log out with Spotify in
-    Music and log in again: the setup as it was, Spotify on the default output; then the same
-    after `pkill vix-mix`. If an app is left on a sink that is gone, or the setup lost a change
-    older than a second, the app takes `SIGTERM` as a close request.
+10. **Logging out with apps routed.**
+    ([#12](https://github.com/thechimaeraproject/vix-mix/issues/12)) Where: `app/src/main.rs`
+    (no signal handling) and [reference/host.md](../reference/host.md) § Shutdown. A window
+    asked to close (Plasma's logout should ask) runs the shutdown order; a `SIGTERM` (`pkill
+    vix-mix`) ends the process without it, as `pkill -9` does in the by-hand pass step 9.
+    Check: log out with Spotify in Music and log in again: the setup as it was, Spotify on the
+    default output; then the same after `pkill vix-mix`. If an app is left on a sink that is
+    gone, or the setup lost a change older than a second, the app takes `SIGTERM` as a close
+    request.
 11. **The install itself.** Where: `packaging/linux/` and
     [install-on-fedora.md](../cookbook/install-on-fedora.md), built and validated only in the
     Ubuntu container so far (handoff 08's record). Check: step 1's `dnf` list is all the build
@@ -163,27 +169,31 @@ here.
     and 2 point at install-on-fedora.md for the packages and the build, and start Vix Mix from
     the launcher rather than repeating the `dnf` list and `cargo run --release -p vix-mix`, so
     every later pass proves the install too.
-13. **A frame for the meters alone.** Where: `app/src/app.rs` and `app/src/ui.rs`;
-    [reference/app.md](../reference/app.md) § Verification (the CPU bullet) and
-    [handoff 05](05-app.md)'s CPU deviation. The main session ruled handoff 05's "60 fps under
-    5 % CPU" per machine, met at 0.16 to 0.46 % on the 24-core Windows machine; of one core the
-    window takes 3.8 to 6.3 % in a release build and 5.5 to 11 % in a debug one at 60 frames a
-    second. Build: when nothing but the meters changed since the last frame, draw the meters
-    over the console's last tessellation and skip egui's pass (about 0.6 ms of the debug
-    build's 1.1 ms frame), a second drawing path that must know everything that can change.
-    Check: the per-core figure, measured as the reference measures it, under 5 % in a release
-    build on Windows and on Fedora, and `--dump-png` still byte for byte the look gate's.
-14. **Change request 10.** Where: `crates/vixmix-host` (`Host::resize_editor` in both hosts,
-    `FakeHost`'s doing nothing), `crates/vixmix-model` (`Command::SetPrefs`) and
-    `app/src/editors.rs` (the call, on the editor window's `Resized`);
-    [build-map.md](../build-map.md) § Change requests, row 10, agreed 2026-11-04. Build: the
-    host tells an editor's plugin the size its window took (`EditorSession::resize`, which the
-    kit does asynchronously), and the model refuses a seventeenth extra plugin folder with the
-    window's words (remove one first), as `popover::MAX_PLUGIN_DIRS` holds it today. Check: an
-    editor whose plugin asks for a new size draws at that size with no strip of the old one, on
-    Windows and on Fedora; a seventeenth folder, sent by any means, is refused with the fix.
+13. **A frame for the meters alone.**
+    ([#17](https://github.com/thechimaeraproject/vix-mix/issues/17)) Where: `app/src/app.rs`
+    and `app/src/ui.rs`; [reference/app.md](../reference/app.md) § Verification (the CPU
+    bullet) and [handoff 05](05-app.md)'s CPU deviation. The main session ruled handoff 05's
+    "60 fps under 5 % CPU" per machine, met at 0.16 to 0.46 % on the 24-core Windows machine;
+    of one core the window takes 3.8 to 6.3 % in a release build and 5.5 to 11 % in a debug one
+    at 60 frames a second. Build: when nothing but the meters changed since the last frame,
+    draw the meters over the console's last tessellation and skip egui's pass (about 0.6 ms of
+    the debug build's 1.1 ms frame), a second drawing path that must know everything that can
+    change. Check: the per-core figure, measured as the reference measures it, under 5 % in a
+    release build on Windows and on Fedora, and `--dump-png` still byte for byte the look
+    gate's.
+14. **Change request 10.** ([#11](https://github.com/thechimaeraproject/vix-mix/issues/11))
+    Where: `crates/vixmix-host` (`Host::resize_editor` in both hosts, `FakeHost`'s doing
+    nothing), `crates/vixmix-model` (`Command::SetPrefs`) and `app/src/editors.rs` (the call,
+    on the editor window's `Resized`); [build-map.md](../build-map.md) § Change requests, row
+    10, agreed 2026-11-04. Build: the host tells an editor's plugin the size its window took
+    (`EditorSession::resize`, which the kit does asynchronously), and the model refuses a
+    seventeenth extra plugin folder with the window's words (remove one first), as
+    `popover::MAX_PLUGIN_DIRS` holds it today. Check: an editor whose plugin asks for a new
+    size draws at that size with no strip of the old one, on Windows and on Fedora; a
+    seventeenth folder, sent by any means, is refused with the fix.
 
-15. **Preferences: the Tab order of the folder field and its Add button.** Where:
+15. **Preferences: the Tab order of the folder field and its Add button.**
+    ([#15](https://github.com/thechimaeraproject/vix-mix/issues/15)) Where:
     `app/src/popover.rs`, `folder_field` registers the Add button before the folder text field,
     so Tab from the field goes to Done and Shift+Tab goes back to Add, the reverse of the
     visual order (the field, then Add). Fix: lay the field out before the button, and pin it
