@@ -318,7 +318,7 @@ impl DspCell {
             text: dsp_percent(stats.dsp_load),
             fill,
             peak: peak
-                .filter(|p| *p > size::PEAK_SHOWN_ABOVE)
+                .filter(|p| *p > size::DSP_PEAK_SHOWN_ABOVE)
                 .map(|p| p.min(1.0)),
             over: peak.is_some_and(|p| p > 1.0),
         }

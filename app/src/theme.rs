@@ -118,6 +118,10 @@ pub mod size {
     pub const DISPLAY_GAP: f32 = 5.0;
     /// The DSP bar inside the display.
     pub const DSP_BAR: [f32; 2] = [36.0, 4.0];
+    /// The DSP bar's peak tick shows above this load, a fraction of the budget: below it the
+    /// tick would sit within a point of the bar's start. Its own, so tuning the meters' peak
+    /// hold does not move it.
+    pub const DSP_PEAK_SHOWN_ABOVE: f32 = 0.02;
 
     /// The console's padding and the gap between strips (the black between them).
     pub const CONSOLE_PAD: f32 = 2.0;
@@ -224,7 +228,7 @@ pub mod size {
     pub const TRIANGLE: [f32; 2] = [6.0, 8.0];
     /// A scale tick's length.
     pub const SCALE_TICK: f32 = 3.0;
-    /// The peak-hold line shows above this position, and the DSP peak tick above this load.
+    /// The peak-hold line shows above this position.
     pub const PEAK_SHOWN_ABOVE: f32 = 0.02;
 
     /// The mute and ear buttons, and the link button.
