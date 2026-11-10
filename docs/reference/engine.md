@@ -169,7 +169,7 @@ them and has no edit path of its own.
 |---|---|
 | the data thread (the tick) | `process` only; through it each chain's `process`, so each lent instance's `process` |
 | the host thread | `new`, `prepare`, `reap`, `set_rate`, `set_up_again`, `problems`, `config`, `generations`, `lender_generation`; every lend, setup, activation, deactivation and drop of an instance and of a graph |
-| any | `meters()` and `stats()`: relaxed atomics |
+| any | `meters()`, `stats()` and `dsp()`: relaxed atomics |
 
 **What the tick may not do**: allocate (beyond the first tick's one registration), take a lock,
 log, block, drop the last reference to a graph or an instance, call `set_bus_layout`,
@@ -197,6 +197,20 @@ budget (frames ÷ the graph's rate), timed with `Instant` (monotonic) and rounde
 that took any time reads at least 1; `rate` is stored by `new` and `set_rate`. `xruns` is the
 backend's to count.
 
+The last cycle's load is all a reader that samples it can see, and a plugin that works in
+blocks of its own (480 frames fed 256 at a time) makes cheap and expensive cycles in turn, so a
+window sampling it reads one or the other (issue 25). Beside `Stats`, `dsp()` returns the
+engine's `DspCounters { busy_ns, peak_permille }`, two more relaxed atomics the tick writes
+once a cycle from the same reading of the clock (`record(n, rate, elapsed)`, after
+`record_cycle`): `busy_ns` adds the cycle's processing time in nanoseconds (a `fetch_add`), and
+`peak_permille` keeps the highest single-cycle load since the reader last took it (a
+`fetch_max` of the same rounded-up permille, not capped at 1000, so a late cycle reads above
+it). The reader takes the peak with `take_peak()`, a swap to zero, so a cycle between two reads
+is never lost. The budget needs no counter of its own: it is `Stats::frames` over the rate. A
+reader that takes `busy_ns()` and `frames` at two moments has the load over everything that ran
+between them, every cycle counted once; the host's window over them is
+[host.md](host.md) § Every poll.
+
 ## The null backend
 
 `NullBackend::new(Arc<Engine>, max_frames)` owns eight channels of planar input, both outputs,
@@ -218,6 +232,8 @@ changes, and a data thread that pumps on command.
   tick; stats count frames, the quantum and the rate;
   the engine runs at the quantum limit whatever block it was given, and `set_rate` changes only
   a different rate.
+- `src/dsp.rs`: busy time adds up and the worst cycle is kept until taken, then reads zero; a
+  late cycle reads above 1000; an empty cycle or one at no rate adds its time and no load.
 - `tests/graph.rs`: a sine through a −6.02 dB chain with MON on and MST off lands in Monitor at
   half amplitude, bit for bit what the plugin made, and in Master dry and bit-exact; a send at
   −6.02 dB halves the sine and a muted send carries nothing; mute beats everything (a muted
@@ -228,7 +244,9 @@ changes, and a data thread that pumps on command.
   again until the rack changes and is lent when it turns up; a bypassed insert is left out yet
   stays lent; a mix runs its chain on the summed sends before its level; a tick of the whole
   quantum limit runs every frame through the chain; DSP load reads above 0 under the null
-  backend; a second tick at the same time plays silence.
+  backend; under it too the busy time only grows, the worst cycle is at least the last, the
+  load over everything that ran is never above the worst cycle, and a taken peak reads zero
+  until the next tick; a second tick at the same time plays silence.
 - `tests/handoff.rs`: the previous graph drops on the host thread only after the tick
   acknowledges the next (a homecoming counter and the thread id, with the data thread held
   mid-cycle by a gated probe while two graphs are prepared, both kept until the tick
@@ -244,5 +262,6 @@ changes, and a data thread that pumps on command.
 - `tests/no_alloc.rs`: eight channels, chains on three (one of them two inserts deep), both mix
   chains, one send muted, MST off on one channel, preview on, through the null backend under
   `assert_no_alloc` from the second tick, at 64, 256 and 1024 frames within one prepared graph,
-  then again across a graph swapped in by a fader move, reading meters and stats as it goes; an
+  then again across a graph swapped in by a fader move, reading meters and stats and taking the
+  worst cycle as it goes, and asserting the busy time and the worst cycle were written; an
   allocation aborts the test binary.

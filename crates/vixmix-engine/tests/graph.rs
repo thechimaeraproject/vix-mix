@@ -366,6 +366,47 @@ fn dsp_load_reads_above_zero_under_the_null_backend() {
 }
 
 #[test]
+fn busy_time_adds_up_and_the_worst_cycle_stays_until_taken_under_the_null_backend() {
+    let rack = TestRack::new();
+    let _ = rack.add_probe(1, Probe::new(0.5).0);
+    let mut snap = snap(1);
+    snap.channels[0].chain = vec![insert(1)];
+    let engine = engine();
+    engine.prepare(&snap, &*rack);
+    let (dsp, stats) = (engine.dsp(), engine.stats());
+    assert_eq!((dsp.busy_ns(), dsp.take_peak()), (0, 0), "nothing ran yet");
+
+    let mut null = NullBackend::new(Arc::clone(&engine), 1024);
+    feed(&mut null, 0, &sine(1024, 0.5));
+    let mut busy = 0;
+    for frames in [256, 1024, 64, 256] {
+        null.pump(frames);
+        let now = dsp.busy_ns();
+        assert!(now >= busy, "{frames} frames: the busy time only grows");
+        busy = now;
+    }
+    assert!(busy > 0, "four ticks took some time");
+    let worst = dsp.take_peak();
+    assert!(
+        worst >= stats.dsp_load_permille.load(Ordering::Relaxed),
+        "the worst cycle is at least the last"
+    );
+    // The load over everything that ran, busy time over the frames' budget at the rate, is
+    // never above the worst single cycle: an average with the peak beside it.
+    let frames = stats.frames.load(Ordering::Relaxed);
+    assert_eq!(frames, 256 + 1024 + 64 + 256);
+    let average_permille = busy as f64 / (frames as f64 / 48_000.0) / 1e6;
+    assert!(
+        average_permille <= f64::from(worst) + 1e-6,
+        "{average_permille} permille on average against {worst} at worst"
+    );
+    assert_eq!(dsp.take_peak(), 0, "taken, and nothing ran since");
+    null.pump(256);
+    assert!(dsp.take_peak() > 0, "the next cycle is the worst since");
+    assert!(dsp.busy_ns() >= busy);
+}
+
+#[test]
 fn a_second_tick_at_the_same_time_plays_silence_instead_of_touching_the_graph() {
     let rack = TestRack::new();
     let (held, control) = gate();

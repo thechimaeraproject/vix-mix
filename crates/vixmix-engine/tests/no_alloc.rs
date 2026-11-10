@@ -1,7 +1,8 @@
 //! The tick must never touch the allocator once its thread has run one: eight channels,
 //! chains on three of them and on both mixes, at varying cycle lengths within one prepared
 //! graph and across a graph swapped in mid-run, through the null backend exactly as the
-//! PipeWire data thread will call it.
+//! PipeWire data thread will call it, its meters, counters, busy time and worst cycle written
+//! and read as it goes.
 //!
 //! `assert_no_alloc`'s allocator aborts this test binary on the first allocation inside the
 //! closure (`memory allocation of N bytes failed`), so a regression cannot pass quietly. The
@@ -74,14 +75,26 @@ fn eight_channels_with_chains_tick_without_allocating_from_the_second_block() {
 
     // The warm-up tick.
     null.pump(256);
+    let busy = engine.dsp().busy_ns();
+    let mut worst = 0;
     for frames in [64, 256, 1024, 256, 64] {
         assert_no_alloc(|| {
             null.pump(frames);
             let _ = engine.meters().tap(0, MONITOR).take();
             let _ = engine.meters().bus(MASTER).take();
             let _ = engine.stats().dsp_load_permille.load(Ordering::Relaxed);
+            worst = worst.max(engine.dsp().take_peak());
         });
     }
+    // The busy time and the worst cycle were written inside, not merely allowed.
+    assert!(
+        engine.dsp().busy_ns() > busy,
+        "each tick adds its busy time"
+    );
+    assert!(
+        worst > 0,
+        "and keeps the worst cycle's load until it is taken"
+    );
 
     // A fader move swaps a new graph in (built on this, the host, thread). Its chains are
     // new, and their first block (the kit's "every parameter" block) allocates nothing.
@@ -101,6 +114,7 @@ fn eight_channels_with_chains_tick_without_allocating_from_the_second_block() {
         assert_no_alloc(|| {
             null.pump(frames);
             let _ = engine.meters().bus(MONITOR).take();
+            let _ = engine.dsp().take_peak();
         });
     }
     assert_eq!(engine.generations(), (before + 1, before + 1));
