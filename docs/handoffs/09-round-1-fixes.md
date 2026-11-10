@@ -91,7 +91,13 @@ here.
    ([#25](https://github.com/thechimaeraproject/vix-mix/issues/25)): `vixmix-engine`
    ([reference/engine.md](../reference/engine.md) § Meters and stats), `vixmix-host` and the
    header's display in the app. The figure is the busy time over the budget across a short
-   window, and the most expensive cycle stays visible as a peak.
+   window, and the most expensive cycle stays visible as a peak. Built 2026-11-10 (change
+   request 12): the tick keeps its busy time and its worst cycle, the host reads the load over
+   250 ms and holds the worst cycle for a second, and the header shows the average with a peak
+   tick on its bar, tenths below 1 %, and the number in the warning colour while a cycle is
+   over its budget. The look gate's reference capture was retaken for the tick
+   ([reference/app.md](../reference/app.md) § The capture). Still to do by hand on Fedora: the
+   plugin that showed it, at a quantum of 256, reads a steady figure.
 
 ## Open going in
 
