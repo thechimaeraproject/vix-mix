@@ -29,7 +29,15 @@ against no ALSA.
 The thread model, the graph and the driver: which thread ticks, the prepared graph and its
 handoff, sends and mixes, which meter means what (the channel's position in the snapshot, the
 two taps and buses), what the host makes of them (`MeterFrame`, `StatsFrame`), and the PipeWire
-client (`vixmix-pipewire`) with its own rings and counters (`BackendStats`). The device layer,
+client (`vixmix-pipewire`) with its own rings and counters (`BackendStats`). So do the
+windowed load and its peak (2026-11-10, issue 25): the kit's `dsp_load_permille` is the last
+cycle's load, as its reference says, and a window sampling it flickered between a plugin's
+cheap and expensive cycles. The engine keeps `DspCounters` beside `Stats` (the busy time, and
+the worst cycle until it is taken) and the host averages the busy time over `Stats::frames`
+÷ rate in a 250 ms window and holds the peak for a second
+([reference/engine.md](reference/engine.md) § Meters and stats,
+[reference/host.md](reference/host.md) § Every poll); the kit and its pin are unchanged, and
+nothing reads `dsp_load_permille` for the header any more. The device layer,
 `TimerOutput`, `NullOutput` and `AudioClock` are not used: the engine's `NullBackend` already
 drives the tick headless, and a Windows backend over the kit's devices is named in the roadmap.
 

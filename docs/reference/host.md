@@ -8,8 +8,8 @@ them in the order this page sets out (boot, routing, acting on each command's `A
 debounced autosave, the instances' lifecycle, shutdown); `FakeHost` serves prototype v5's
 example data with simulated meters and no audio, for the window's tests and the look gate.
 Every `Host` method runs on the UI thread; the host reaches the tick only through
-`Engine::prepare`, `reap`, `set_rate` and `set_up_again` and the meters, stats and problems
-it reads. It draws nothing and owns no window: the app hands it raw window handles for
+`Engine::prepare`, `reap`, `set_rate` and `set_up_again` and the meters, stats, DSP counters
+and problems it reads. It draws nothing and owns no window: the app hands it raw window handles for
 editors.
 
 ## What it owns and what the others keep
@@ -64,8 +64,11 @@ backend reconnects). `banner()` is the reason of `Absent` and `Idle`, and `DISCO
 `Disconnected`; `NO_BACKEND` is exactly "No audio backend on this platform". `live()` (meters
 move, which sets the window's 60 Hz repaint) is `Simulated` or `Running`. `MeterFrame
 { channels: [ChannelLevels; 8], monitor, master }` holds linear peaks (`Stereo { left, right
-}`) by channel position, copied once per frame; `StatsFrame { rate, quantum, dsp_load, xruns
-}` with `quantum_ms()`. `AppPresence { app, running }`. `tick_editors` pairs each event with
+}`) by channel position, copied once per frame; `StatsFrame { rate, quantum, dsp_load,
+dsp_peak, xruns }` with `quantum_ms()`: `dsp_load` is the load over the last quarter second
+(the busy time over the audio it made, every cycle counted), `dsp_peak` the worst single
+cycle's load in about the last second, held, both fractions of the budget and neither clamped,
+so an overload above 1 stays visible (§ Every poll). `AppPresence { app, running }`. `tick_editors` pairs each event with
 its instance, because the window keeps one editor window per instance. `resize_editor` tells
 an open editor its window now has `size` (`EditorSession::resize`: the kit's resize is
 asynchronous, so a plugin knows the size its window took only once told; change request 10):
@@ -177,6 +180,17 @@ second while the device is there, so the tick can move back and forth each secon
 device unplugged afterwards while the tick stays where it is (only a tick that moves says the
 toast; an idle banner names the device); devices and app streams update `devices()` and
 `apps()`, and each app that appeared is routed.
+Then the DSP load window (`load.rs`, `LoadWindow`) takes the engine's counters
+(`LoadReading::take`: `Stats::frames` and `rate`, `DspCounters::busy_ns`, and the worst cycle
+with `take_peak`) and the poll's time; it keeps no clock of its own. Once a window of 250 ms
+has run, the load is the busy time it moved over the budget of the frames it moved (frames ÷
+rate), so a plugin that makes cheap and expensive cycles in turn (issue 25: 480-frame blocks
+fed 256 at a time) reads its average, not whichever cycle was last; a cycle still running at
+a reading lands in the next window. The window's worst cycle takes the peak when it is as
+high, or once the peak has been held 1 s, so the peak falls to the newest window's. A window
+in which no frame ran (the engine idle) reads zero and the peak falls after its hold; a new
+rate, or counters that went back, begin the window again with what shows kept until it ends;
+no rate, or no frames, divides by nothing.
 Then `Engine::reap` and `Instances::reap`; `Instances::tick` (an editor's edit goes to its
 processor and makes the autosave due; a dirty plugin is `SetupChanged` and due;
 `IoChanged(instance)` calls `Engine::set_up_again(instance)`); the instances kept for an undo
@@ -200,8 +214,9 @@ the one named while it is not there: the backend says nothing new when the tick 
 is) and goes once Monitor plays; a device the backend reports is never called missing.
 
 `apps()` lists every app playing now, then every app a channel names that is not playing,
-then every other app seen since start (the newest 64), each once. `stats()` is the engine's:
-the rate, the last cycle's quantum, its DSP load and the xruns the backend counted.
+then every other app seen since start (the newest 64), each once. `stats()` is the engine's
+rate, the last cycle's quantum and the xruns the backend counted, with the load window's
+average and held peak as `dsp_load` and `dsp_peak`.
 
 `next_poll()` on `RealHost` is the earliest of: the autosave's due time, the first kept
 instance's end, 50 ms while an editor is open or an instance is still retiring, 50 ms while
@@ -244,7 +259,7 @@ its fader's linear gain, a muted send reads zero, and each mix reads the loudest
 into it times its own level (Monitor reads the Master sum while previewing). The randomness is a
 seeded xorshift, so a seed gives the same signal every run; `advance(ms)` steps it a 60 Hz
 frame at a time and `poll` advances to the wall clock. DSP load reads 6–9 %, as the
-prototype's. It hands out the same `Removed { message, undo }` as `RealHost`, stars plugins in
+prototype's, and its peak three points above it, so the header shows its peak tick. It hands out the same `Removed { message, undo }` as `RealHost`, stars plugins in
 its catalog, answers a rescan with `PluginsRescanned`, has no problems, and `next_poll` is
 `None` (its meters are live, so the window draws at its frame rate). It never writes a file,
 `open_editor` answers `HostError::Simulated`, and `resize_editor` does nothing.
@@ -261,7 +276,16 @@ its catalog, answers a rescan with `PluginsRescanned`, has no problems, and `nex
   restored at the next boot; quitting with a change pending saves it; an unreadable setup is
   kept aside; a removed channel comes back through the undo the host hands out, and a refused
   command changes nothing; a missing plugin is said once and listed as a problem; scan failures
-  make one toast. `autosave`: 500 ms of quiet, never longer than 5 s. `apps`: playing first,
+  make one toast; its stats' load and peak are numbers the header can show. `load`, on the
+  engine's own counters written from made-up cycle times at made-up instants, polled at 60 Hz
+  (no wall clock): nothing shows until a window has run; a 480-frame plugin fed 256-frame
+  blocks, whose last-cycle reading toggles between under 1 % and about 12 %, reads its
+  average within half a point window after window, with the expensive cycle as its peak
+  (`a_480_frame_plugin_fed_256_frame_blocks_reads_its_average_and_its_worst_cycle`); an idle
+  engine reads zero and its peak falls once held; a new rate begins the window again and no
+  window mixes the two rates; counters that do not move, no rate and counters that went back
+  read zero; a late window and a late cycle read above 1. `autosave`: 500 ms of quiet, never
+  longer than 5 s. `apps`: playing first,
   then the setup's, then those seen before, each once, and the seen list bounded. `undo`: a
   removal's undo puts back exactly what it took. `audio::linux` (Linux, no daemon): the graph
   is the setup's channels in order with the Master source; an app goes to its channel's sink,
@@ -281,7 +305,8 @@ its catalog, answers a rescan with `PluginsRescanned`, has no problems, and `nex
   it goes. `fake`: the first poll reports a simulated
   backend with the example's apps and devices; meters move, a muted send and a muted mix read
   zero, the same seed gives the same frames; previewing shows the Master sum on Monitor; a
-  removal hands out the undo that puts it back.
+  removal hands out the undo that puts it back; the DSP load reads 6 to 9 % with its peak
+  three points above.
 - **`tests/null_backend.rs`**, every platform, with `vixmix-plugins`' test plugin
   (`tests/common/mod.rs` lays it out as an installed bundle): a constant through the test
   plugin at gain 0.25 on a channel with MON on and MST off reads 0.2 on the Monitor send and mix

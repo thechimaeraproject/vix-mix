@@ -167,8 +167,13 @@ pub struct MeterFrame {
 pub struct StatsFrame {
     pub rate: u32,
     pub quantum: u32,
-    /// The last cycle's processing time as a fraction of its budget.
+    /// The DSP load over the last quarter second: the processing time over the audio it made
+    /// (the busy time over frames ÷ rate, every cycle in it counted), as a fraction; above 1
+    /// the mixer is late. Zero while nothing runs.
     pub dsp_load: f32,
+    /// The worst single cycle's load in about the last second, held: a fraction of that
+    /// cycle's budget, not clamped, so an overload above 1 stays visible.
+    pub dsp_peak: f32,
     pub xruns: u64,
 }
 
