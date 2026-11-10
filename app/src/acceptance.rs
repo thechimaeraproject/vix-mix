@@ -1230,6 +1230,36 @@ fn the_preferences_ask_for_a_quantum_and_take_plugin_folders() {
 }
 
 #[test]
+fn tab_goes_from_the_folder_field_to_its_add_button_as_they_read() {
+    let mut h = Harness::new();
+    let menu = Pos2::new(
+        size::HEADER_PAD_X + size::MENU_BUTTON[0] / 2.0,
+        size::HEADER / 2.0,
+    );
+    let _ = h.click(menu);
+    h.idle(2);
+    let _ = h.click(h.text("Preferences"));
+    h.idle(2);
+    let focused = |h: &Harness| h.ctx.memory(|m| m.focused());
+    let (field, add) = (popover::search_id("folder"), egui::Id::new("add folder"));
+    let _ = h.click(h.text("Another folder to scan"));
+    assert_eq!(focused(&h), Some(field));
+    let _ = h.type_text("D:/VST3");
+    // The field, then Add to its right: Tab goes forward to Add, Shift+Tab back.
+    assert!(h.key(Key::Tab, Modifiers::NONE).is_empty());
+    assert_eq!(focused(&h), Some(add), "Tab from the field reaches Add");
+    assert!(h.key(Key::Tab, Modifiers::SHIFT).is_empty());
+    assert_eq!(focused(&h), Some(field), "Shift+Tab from Add goes back");
+    // Add reached by Tab adds the folder typed.
+    let _ = h.key(Key::Tab, Modifiers::NONE);
+    let sent = h.key(Key::Enter, Modifiers::NONE);
+    let Command::SetPrefs(prefs) = one(&sent) else {
+        panic!("{sent:?}")
+    };
+    assert_eq!(prefs.plugin_dirs, [std::path::PathBuf::from("D:/VST3")]);
+}
+
+#[test]
 fn an_app_search_that_finds_nothing_says_so() {
     let mut h = Harness::new();
     let game = h.channel(1);

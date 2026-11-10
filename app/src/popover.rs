@@ -1150,7 +1150,9 @@ fn folder_row(ui: &mut Ui, path: &str, keyboard: bool) -> bool {
 }
 
 /// The field for another plugin folder and its Add button; returns whether one was added
-/// (Add, or Enter in the field).
+/// (Add, or Enter in the field). The field is registered before the button, so Tab goes from
+/// it to Add and Shift+Tab back, in the order they read; the button's place, which the
+/// field's width comes from, is worked out first without registering it.
 fn folder_field(ui: &mut Ui, id: Id, text: &mut String) -> bool {
     let [pad_x, pad_y] = pop::NAME_PAD;
     let (rect, _) = ui.allocate_exact_size(
@@ -1158,18 +1160,10 @@ fn folder_field(ui: &mut Ui, id: Id, text: &mut String) -> bool {
         Sense::hover(),
     );
     let y = rect.top() + pop::FIELD_HEIGHT / 2.0;
-    let add_width = widgets::button_width(ui.ctx(), "Add");
-    let add = widgets::button(
-        ui,
-        Id::new("add folder"),
-        rect.right() - pad_x - add_width,
-        y,
-        "Add",
-        ButtonKind::Plain,
-    );
+    let add_left = rect.right() - pad_x - widgets::button_width(ui.ctx(), "Add");
     let field = Rect::from_min_max(
         pos2(rect.left() + pad_x, y - pop::FIELD_HEIGHT / 2.0),
-        pos2(add.rect.left() - pop::NAME_GAP, y + pop::FIELD_HEIGHT / 2.0),
+        pos2(add_left - pop::NAME_GAP, y + pop::FIELD_HEIGHT / 2.0),
     );
     let focused = ui.memory(|m| m.has_focus(id));
     let painter = ui.painter().clone();
@@ -1195,6 +1189,14 @@ fn folder_field(ui: &mut Ui, id: Id, text: &mut String) -> bool {
         text,
         (font::mono(font::NOTE), PATH_LIMIT),
         "Another folder to scan",
+    );
+    let add = widgets::button(
+        ui,
+        Id::new("add folder"),
+        add_left,
+        y,
+        "Add",
+        ButtonKind::Plain,
     );
     add.clicked() || (response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)))
 }
