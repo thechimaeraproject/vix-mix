@@ -662,7 +662,7 @@ mod tests {
             assert!(texts.contains(&expected), "no `{expected}` in {texts:?}");
         }
         assert_eq!(dsp_number(&shapes).colour, colour::TEXT);
-        // The bar fills to the average and ticks at the peak, three points past it.
+        // The bar fills to the average and ticks at the peak, three percentage points past it.
         let (bar, fill, ticks) = dsp_bar(&shapes);
         let fill = fill.expect("the fill");
         assert_eq!(fill.left(), bar.left());

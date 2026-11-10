@@ -527,8 +527,8 @@ cargo run -p vix-mix -- --dump-png docs/design/prototype/egui-look-gate.png
 
 It was retaken on 2026-11-10, when the DSP cell gained its peak tick (issue 25): the capture
 at master first matched the old file byte for byte, and the new one differs from it in 16
-pixels alone, the tick (1 × 4 points at 2×) three points past the bar's fill, `FakeHost`'s
-peak above its load. Nothing else moved.
+pixels alone, the tick (1 × 4 points at 2×) three percentage points of load (about a point on
+the 36-point bar) past the bar's fill, `FakeHost`'s peak above its load. Nothing else moved.
 
 ## Verification
 
