@@ -134,8 +134,19 @@ console's meter faders, their scale, peak hold and the taper trait they read thr
 kit's `chimaeraproject-egui-audio`; this repository's copies are deleted, and the look gate's
 capture is byte-identical. Vix took both crates in the same kit release. Vix Mix keeps the
 graph, the driver, which meter is which, the taper itself, the theme and what each gesture
-sends. See `docs/kit-audio-io.md`, `docs/kit-egui-audio.md` and
+sends; since round 1 also the DSP load over a window and its peak, which the kit's last-cycle
+counter cannot give, and the look gate's reference was retaken for the header's peak tick.
+See `docs/kit-audio-io.md`, `docs/kit-egui-audio.md` and
 [handoff 07](docs/handoffs/07-kit-lifts.md).
+
+**Round 1's first batch is in (2026-11-10):** the first pass on Fedora ran as daily use, and
+[handoff 09](docs/handoffs/09-round-1-fixes.md) records it. Five issues are fixed: the editor
+told the size its window took and the plugin-folder bound in the model (11), Monitor's missing
+device named when only the Master source can tick (14), the Preferences Tab order (15), a DSP
+load read over a window with its peak (25), and the scan describing a bundle that must be
+loaded in a child process (26). Still open in round 1: issues 12, 13, 16, 17 and 18, the
+measured figures of handoff 09 items 1, 2 and 5, and the by-hand check on Fedora that each fix
+left in its item.
 
 ## Git workflow (read first)
 

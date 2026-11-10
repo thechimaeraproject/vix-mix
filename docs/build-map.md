@@ -19,7 +19,7 @@ commit that changes any of it.
 | [06 — Host and integration](handoffs/06-host-and-integration.md) | `crates/vixmix-host/`, `app/src/main.rs` wiring | 01, 02, 03, 04 | L |
 | [07 — Kit lifts](handoffs/07-kit-lifts.md) | `audio-io` and `egui-audio` in the kit repository | 06 | M |
 | [08 — Packaging and the first real test](handoffs/08-packaging-and-first-real-test.md) | the desktop entry, metainfo, install path, the first by-hand pass | 06 | S |
-| [09 — Round 1 fixes](handoffs/09-round-1-fixes.md) | what the first real test finds; its items are issues [#11](https://github.com/thechimaeraproject/vix-mix/issues/11) to [#19](https://github.com/thechimaeraproject/vix-mix/issues/19) ([#19](https://github.com/thechimaeraproject/vix-mix/issues/19) is the pass itself) | 08's step 4, on Fedora KDE | open |
+| [09 — Round 1 fixes](handoffs/09-round-1-fixes.md) | what the first real test finds; its items are issues [#11](https://github.com/thechimaeraproject/vix-mix/issues/11) to [#19](https://github.com/thechimaeraproject/vix-mix/issues/19) ([#19](https://github.com/thechimaeraproject/vix-mix/issues/19) is the pass itself, run 2026-11-10) and the two it found, [#25](https://github.com/thechimaeraproject/vix-mix/issues/25) and [#26](https://github.com/thechimaeraproject/vix-mix/issues/26) | 08's step 4, on Fedora KDE | open |
 
 ## Waves
 
