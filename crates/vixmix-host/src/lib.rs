@@ -24,6 +24,8 @@ pub use host::{
     AppPresence, BackendState, ChannelLevels, Host, HostError, HostEvent, MeterFrame, StatsFrame,
     Stereo, UNDO_TOAST,
 };
-pub use real::{BootOptions, RealHost};
+pub use real::{BootOptions, RealHost, answer_scan};
 /// An insert playing as a pass-through, and why: what [`Host::problems`] lists.
 pub use vixmix_engine::InsertProblem;
+/// How [`BootOptions::plugin_scan`] describes a bundle: in process, or through a child command.
+pub use vixmix_plugins::{Describe, ScanCommand};

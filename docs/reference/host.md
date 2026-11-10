@@ -78,12 +78,19 @@ its side: `None` when the host waits for nothing. `set_favorite` stars a plugin 
 
 ## `RealHost`
 
-`RealHost::boot(BootOptions { config_dir, debug_build, audio, plugin_dirs })`. The directory
+`RealHost::boot(BootOptions { config_dir, debug_build, audio, plugin_dirs, plugin_scan })`. The directory
 is `config_dir` or `persist::profile(debug_build)` (`HostError::NoConfigDir` when the platform
 names none). `audio` is an `AudioBackend`: `Null` (the default, so a test never touches a
 desktop's audio) or `System { app_name }` (`AudioBackend::APP` is `vix-mix`, what the app
 asks for; a test against the headless daemon names its own). `plugin_dirs` is `None` for the
 SDK's standard places and the preferences' extra directories, or `Some` for only these.
+`plugin_scan` is how the scan describes a bundle it must load, the plugins crate's `Describe`
+(re-exported with `ScanCommand`): `InProcess`, the default and a test's, or
+`InChild(ScanCommand)`, what the app asks for, its own executable with `--scan-bundle`, so a
+plugin that crashes while it loads is that bundle's failure and Vix Mix runs on
+([plugins.md](plugins.md) § Loading a bundle in a child process). `answer_scan(bundle)` is the
+child's side, what `vix-mix --scan-bundle` runs: the plugins crate's `answer_scan` under the
+name Vix Mix gives itself to plugins ("Vix Mix", in either process).
 
 ### Boot
 
@@ -92,12 +99,15 @@ In this order:
 1. `setup.ron` and `plugins.ron` are read (an unreadable file is a toast and the default; an
    unreadable `setup.ron` is moved aside at the first save), and the scan's record
    (`ScanCache::load`).
-2. The plugins are rescanned against the record: only a new or changed bundle is described.
-   `plugins.ron` is written only when the scan described something or a bundle went, so a
-   start that learned nothing writes nothing. Scan failures are logged and make one toast that
-   names the first two and counts the rest. The scan runs on the UI thread before the window
-   opens (the kit's thread table); a first start with many plugins takes a while, and later
-   starts reuse the record.
+2. The plugins are rescanned against the record: only a new or changed bundle is described,
+   as `plugin_scan` says (`rescan_with`; the app's loads each bundle without a readable
+   `moduleinfo.json` in a child process, one at a time, so a plugin that aborts or hangs while
+   it loads fails alone and the scan goes on). `plugins.ron` is written only when the scan
+   described something or a bundle went, so a start that learned nothing writes nothing. Scan
+   failures are logged and make one toast that names the first two and counts the rest. The
+   scan runs on the UI thread before the window opens (the kit's thread table); a first start
+   with many plugins takes a while, and later starts reuse the record. The menu's Rescan
+   plugins scans the same way.
 3. The engine is made (48 kHz until the backend says, `MAX_QUANTUM`), the rack and the
    instances; `Instances::sync` makes every insert's instance with its stored state (a plugin
    the catalog lacks is said once and its insert passes audio through, Vix's rule); the engine
@@ -287,6 +297,11 @@ its catalog, answers a rescan with `PluginsRescanned`, has no problems, and `nex
   with the state taken from the live plugin, moved again and quit at once is kept by the quit's
   save, and sounds so after a relaunch
   (`a_plugin_moved_while_it_plays_is_saved_with_its_new_state_and_sounds_so_after_a_relaunch`).
+- **`tests/scan_child.rs`**, every platform: `BootOptions::plugin_scan` reaches the scan. With
+  a child command that cannot start, the test plugin (which must be loaded) is a toast naming
+  it and the command and the catalog is empty; the next boot, with `vixmix-plugins`' test child
+  (`examples/scan_bundle.rs`), loads it there and finds it
+  (`the_boot_options_scan_loads_each_plugin_in_the_child_it_names`).
 - **`tests/headless.rs`**, Linux, against the daemon of `scripts/ci/headless-pipewire.sh`
   ([Run a headless PipeWire](../cookbook/run-headless-pipewire.md); without its marker each test
   says how to start it and passes, under `CI` it fails), one test at a time, under

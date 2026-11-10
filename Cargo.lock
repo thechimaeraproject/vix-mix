@@ -3381,6 +3381,7 @@ dependencies = [
  "chimaeraproject-fs",
  "chimaeraproject-param",
  "chimaeraproject-vst3-host",
+ "libc",
  "log",
  "raw-window-handle",
  "ron",

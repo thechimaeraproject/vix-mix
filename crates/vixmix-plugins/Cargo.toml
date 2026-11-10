@@ -24,6 +24,11 @@ ron.workspace = true
 thiserror.workspace = true
 log.workspace = true
 
+# A scan's child process leads a process group of its own; stopping it kills the group, so a
+# bridge's helper processes go with it (`killpg`). Already in the lock through the kit.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 assert_no_alloc.workspace = true # tests/no_alloc.rs: the lent handle must never touch the allocator
 # The test plugin's COM bindings (examples/test_gain.rs). The same major the kit's VST3 host
@@ -36,5 +41,27 @@ vst3 = "0.3"
 [[example]]
 name = "test_gain"
 crate-type = ["cdylib"]
+test = false
+doc = false
+
+# Two plugins that misbehave while they load, for the scan's child process
+# (tests/scan_child.rs): a VST3 module only as far as its entry points go, aborting in them or
+# never returning from them.
+[[example]]
+name = "test_abort"
+crate-type = ["cdylib"]
+test = false
+doc = false
+
+[[example]]
+name = "test_hang"
+crate-type = ["cdylib"]
+test = false
+doc = false
+
+# The scan's child for the tests, standing in for `vix-mix --scan-bundle`: `answer_scan` on its
+# first argument, with noise around the answer as a plugin would print.
+[[example]]
+name = "scan_bundle"
 test = false
 doc = false

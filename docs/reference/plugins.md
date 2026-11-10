@@ -9,13 +9,15 @@ halves to the engine's chains, the edit path from a plugin's own editor to its l
 state for `setup.ron`, and editor sessions. It follows the kit's thread table: scan, load,
 create, every controller call and every editor call on the UI thread; only a lent processor
 reaches the audio side. It owns no window: the app makes the editor's window and hands its raw
-handle in. `examples/test_gain.rs` is the test plugin the integration tests load (below).
+handle in. `examples/test_gain.rs` is the test plugin the integration tests load, with
+`examples/test_abort.rs`, `examples/test_hang.rs` and `examples/scan_bundle.rs` for the scan's
+child process (below).
 
 ## What it owns and what the others keep
 
 | The plugins crate | The others |
 |---|---|
-| where to scan, scanning, classifying and caching (`plugins.ron`), favourites and recent | the window: the browser, its keys and its layout; the model: the extra scan directories (`Prefs::plugin_dirs`) |
+| where to scan, scanning (in process, or a child process per bundle, both its sides), classifying and caching (`plugins.ron`), favourites and recent | the window: the browser, its keys and its layout; the model: the extra scan directories (`Prefs::plugin_dirs`); the host and the app: which way to scan, and the program the child is (`vix-mix --scan-bundle`) |
 | creating instances, loading and saving their state, retiring them in the kit's order, making them match a setup's inserts | the model: the `InstanceId`s and the state bytes in the setup; the host: when to sync, create and retire, and capturing state before a save |
 | the `Rack`, implementing the engine's `Lender`, and the forwarding handle it lends | the engine: when to lend, clearing chains before filling them, what each insert's `ProcessorParams` carries |
 | the edit ring from an instance's controller to its lent processor | the host: calling `Instances::tick` every UI tick |
@@ -51,6 +53,8 @@ bundles that worked. Which call when, for the host (06) and the menu (05):
 - **The menu's Rescan plugins:** the last outcome's `cache.forget_failures()`, then
   `catalog.rescan(dirs, host, &cache)`, `outcome.save(dir)` and `Instances::retry_failed()`
   (then `sync`), so an insert whose plugin was missing is tried again.
+- In both, the host calls `rescan_with` with the `Describe` its boot options name (the app's
+  is a child process per bundle, below); `rescan` is `rescan_with` in process.
 - **`Catalog::scan(dirs, host)`** describes everything and starts favourites and recent empty:
   for a first run without `plugins.ron`, or a test, never for a rescan.
 
@@ -58,6 +62,65 @@ Only audio classes whose sub-categories say `Fx` are kept (`ClassInfo::is_effect
 per class id (the first bundle in path order wins), sorted by name. The result is a
 `ScanOutcome { catalog, failures, cache, described, reused }`: each failure is the bundle's
 path and the kit's message, which ends with the fix.
+
+### Loading a bundle in a child process
+
+A plugin that aborts while its module loads (issue
+[#26](https://github.com/thechimaeraproject/vix-mix/issues/26): a bridged plugin whose
+`ModuleEntry` calls `std::terminate`) cannot be caught: it takes the process that loads it
+down, and with it every bundle after it. So `catalog.rescan_with(dirs, host, &cache, &how)`
+takes how to describe a bundle it cannot reuse, a `Describe`: `InProcess` (what `rescan` and
+`scan` do, and the default) or `InChild(ScanCommand)`. With `InChild`, a bundle whose
+`moduleinfo.json` is readable is described in this process, because the kit then runs none of
+its code (the kit's `scan_bundle` with `ScanOptions::load_without_moduleinfo` off, whose one
+refusal is a bundle it would have to load); every other bundle is loaded in a child process,
+one at a time:
+
+- **The command.** `ScanCommand { program, args, timeout }` runs `program`, then `args`, then
+  the bundle's path; `ScanCommand::new(program, args)` waits `SCAN_TIMEOUT` (60 seconds), and
+  `with_timeout` changes it (a test's). The app's is its own executable with `--scan-bundle`
+  ([app.md](app.md)); this crate's tests use `examples/scan_bundle.rs`. stdin is closed and
+  stderr inherited, so a plugin's own messages still reach the terminal or the journal; on
+  Unix the child leads a process group of its own.
+- **The child's side.** `answer_scan(bundle, host) -> i32` describes the bundle as an
+  in-process scan does (loading it when it must), writes the description (its effects, or the
+  kit's failure, and its warnings) in RON on one line of stdout that starts with `ANSWER_MARK`,
+  after a newline that ends any line a plugin left unfinished, and returns 0; 1 when stdout
+  would not take it. A plugin, and Wine under a bridge, write to stdout too, so the mark is how
+  the answer is found. On Windows it turns the crash dialogs off first (`SetErrorMode` and
+  `WerSetFlags`), so a plugin that aborts ends the child at once.
+- **The parent's side.** A thread drains the child's stdout to its end, keeping only the
+  newest marked line, at most 4 MiB of it, in a slot (latest wins); everything else is dropped
+  as it streams past. The scan polls the child every 5 ms and kills it at the timeout (on Unix
+  with its process group, so the helper processes a bridge starts go with it), and kills one
+  that has answered but not ended 5 seconds later. An answer stands whenever there is one: it
+  is written after the bundle was described and unloaded, so a crash after it is the process's
+  own teardown and is logged. Without one, the bundle fails: "the plugin crashed while it
+  loaded (signal 6, SIGABRT)" (on Windows an exception code, or exit code 3 for the C
+  runtime's abort), "the plugin took longer than 60 seconds to load, and its scan was
+  stopped", or "the scan's process ended without describing it (exit code N)", each followed
+  by "so it was skipped and the other plugins were scanned; fix or remove the plugin …, then
+  rescan plugins (menu, Rescan plugins)". An answer that does not read back, or one past the
+  bound, fails the bundle the same way.
+- **The cache covers it like any other failure.** A crash, a timeout or an end without an
+  answer is the bundle's failure, kept in `plugins.ron` and said again while the bundle is
+  unchanged, so a start does not load a broken plugin again, and the menu's Rescan plugins
+  (`forget_failures`) tries it again. A child that could not be started or watched at all is a
+  cause outside the bundle: it is reported and not kept, so the next scan tries the bundle
+  again.
+
+Known limits. Loading a plugin into a channel stays in process (the v1 decision), so a plugin
+that crashes when it is instantiated still takes Vix Mix down. The scan still runs on the UI
+thread before the window's first frame (issue
+[#16](https://github.com/thechimaeraproject/vix-mix/issues/16)), now a process start slower
+for each bundle without a `moduleinfo.json`. On Unix the child's own process group is not the
+terminal's foreground group: Ctrl+C in a terminal stops Vix Mix but not a child loading a
+plugin, which runs on until its plugin has loaded (one that never finishes stays until it is
+killed by hand); and a terminal set to `stty tostop` stops a child whose plugin writes to it,
+until the timeout kills it. A process a bridge starts in a session of its own (Wine's
+`wineserver`) is not in the group and is left to end by itself, as it does. A crash in the
+child is a crash of a `vix-mix` process: a desktop that collects core dumps (systemd-coredump,
+and KDE's crash handler that reads them) may report it although the window runs on.
 
 `plugins.ron`, beside `setup.ron`, holds the catalog's three lists and the scan's per-bundle
 record (`bundles`: path, time, effects, failure). `Catalog::load(dir)` reads the catalog and
@@ -212,6 +275,16 @@ component state is the gain as 8 bytes; it has no editor. `cargo test -p vixmix-
 it as a `cdylib`, and `tests/common/mod.rs` lays it out as `VixMixTestGain.vst3` under
 `CARGO_TARGET_TMPDIR`, one copy per test, failing with the build command if it is absent.
 
+Three more examples serve the scan's child process. `examples/test_abort.rs` and
+`examples/test_hang.rs` are VST3 modules only as far as their entry points go: the hook the
+kit's `Module::load` calls first on each platform (`InitDll`, `ModuleEntry`, `bundleEntry`)
+and `GetPluginFactory` call `std::process::abort()`, or sleep forever. `cargo test` builds both
+as `cdylib`s, and `install_example(dir, bundle_name, example)` lays any of the three plugins
+out as a bundle. `examples/scan_bundle.rs` is the child for the tests, standing in for
+`vix-mix --scan-bundle`: `answer_scan` on its first argument, with noise printed to stdout
+around the answer (a line before it left without its end), so every scan through it proves the
+answer survives what a plugin prints; `scan_child()` finds it.
+
 ## Verification
 
 `cargo test -p vixmix-plugins`, and `dev check` for the workspace. The unit tests:
@@ -230,7 +303,16 @@ home, and dropped on the thread that reaps, not the one that lent it; an instanc
 retires the old entry and each comes home to its own serial; an edit reaches the lent processor
 in its next block, whether sent while home or while lent; controller events become instance
 events and edits go to the ring; a plugin the catalog lacks is refused with the fix and nothing
-is racked; a missing plugin is reported once until a retry and lends nothing.
+is racked; a missing plugin is reported once until a retry and lends nothing. The child's
+answer (`child.rs`): it is one line and reads back whatever its text holds (quotes, newlines,
+a CRLF); noise around the marked line, lookalikes of the mark and a 3 MiB line of noise do not
+disturb it, whole or in pieces of 4096, 7 or 1 bytes; the newest answer wins, a CRLF is
+dropped and an answer without its newline at the end counts; an answer past the bound is said
+and a flood of noise holds no memory; a crash (SIGABRT, or 0xC0000409 on Windows), a timeout,
+an end without an answer at exit code 0 and a refusal at exit code 2 each fail the bundle with
+what happened, "skipped", the fix and Rescan plugins, and only the crash says it crashed; an
+answer stands when the process ends badly after it or is stopped, and one that does not read
+back or is past the bound fails; a command waits 60 seconds unless told otherwise.
 
 `tests/test_plugin.rs`, with the real test plugin: the scan finds it and files it under
 Utility, `plugins.ron` round-trips it, an unchanged bundle is reused and one whose binary was
@@ -244,6 +326,19 @@ with a notice; a retired instance lent on another thread is not reaped until tha
 its chain, then drops on the UI thread; `sync` makes the setup's instances and retires what it
 no longer names; the plugin has no editor and `tick` drains it quietly. `tests/no_alloc.rs`:
 blocks through the lent handle with one edit, several and none waiting allocate nothing.
+
+`tests/scan_child.rs`, through the test child: with a bundle described by its
+`moduleinfo.json`, the aborting plugin and the test plugin in name order, the scan finishes,
+both good plugins are in the catalog (the one after the crash loaded in a child of its own)
+and the aborting one is one failure naming it, saying it crashed, and the fix (on Windows a
+crash dialog would have held the child until the timeout); a second scan with that record
+reuses the failure and spawns nothing (its command cannot even start); after
+`forget_failures` it is loaded again and fails again, alone. A plugin that never finishes
+loading is stopped at a 2-second timeout, the scan goes on to the test plugin, and the
+failure is kept. A bundle with a `moduleinfo.json` needs no child (described with a command
+that cannot start), while one that must be loaded is a failure naming the command, not kept,
+and found by the next scan with a child that runs. The child answers on one marked line among
+its noise and exits 0.
 
 What is not tested here: an editor in a real window (the test plugin has none; lane 05 opens
 one), a plugin whose buses change, and the engine's own chains, which lane 02 builds; the lent

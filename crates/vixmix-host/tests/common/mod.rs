@@ -99,6 +99,7 @@ pub fn boot(config: &Path, plugins: &Path, audio: AudioBackend) -> RealHost {
         debug_build: true,
         audio,
         plugin_dirs: Some(vec![plugins.to_path_buf()]),
+        ..BootOptions::default()
     })
     .unwrap()
 }
