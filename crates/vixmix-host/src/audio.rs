@@ -438,7 +438,9 @@ pub(crate) mod linux {
                         // Another output ticks while the device the setup names for Monitor
                         // is not there: said once for that device, in words for whichever
                         // output ticks. Before Monitor's device is picked (a first start)
-                        // there is nothing to say.
+                        // there is nothing to say, nor while the backend reports it (Monitor's
+                        // stream refused on a device that is there): both texts say it is not
+                        // there, and the backend connects that stream again each second.
                         (TickSource::MasterOut | TickSource::MasterSource, Some(device))
                             if self.told_gone.as_deref() != Some(device.name.as_str()) =>
                         {
@@ -504,8 +506,9 @@ pub(crate) mod linux {
             self.waiting_for = setup
                 .monitor
                 .device
-                .clone()
-                .filter(|monitor| away && !reported(monitor.name.as_str()));
+                .as_ref()
+                .filter(|monitor| away && !reported(monitor.name.as_str()))
+                .cloned();
         }
 
         fn route(&mut self, node: u32, to: Option<String>) {
@@ -758,6 +761,15 @@ pub(crate) mod linux {
             let _ = pw.hear(BackendEvent::TickSource(TickSource::MasterOut));
             assert_eq!(pw.heard.toasts, gone());
             // Plugged in, Monitor plays; unplugged again, said again.
+            let _ = pw.hear(BackendEvent::TickSource(TickSource::Monitor));
+            let _ = pw.hear(BackendEvent::TickSource(TickSource::MasterOut));
+            assert_eq!(pw.heard.toasts, [gone(), gone()].concat());
+            // Plugged in, Monitor plays, then its stream is refused while the backend still
+            // reports the headphones: they are there, so nothing calls them missing.
+            let _ = pw.hear(BackendEvent::DeviceAdded(DeviceInfo {
+                device: headphones.clone(),
+                direction: DeviceDirection::Output,
+            }));
             let _ = pw.hear(BackendEvent::TickSource(TickSource::Monitor));
             let _ = pw.hear(BackendEvent::TickSource(TickSource::MasterOut));
             assert_eq!(pw.heard.toasts, [gone(), gone()].concat());
