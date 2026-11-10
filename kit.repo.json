@@ -41,6 +41,9 @@
     "required": [
       "check (linux)",
       "check (windows)"
+    ],
+    "onMerge": [
+      "linux-build.yml"
     ]
   },
   "deploy": {
