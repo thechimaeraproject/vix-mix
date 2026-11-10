@@ -449,7 +449,6 @@ mod tests {
         shell.events(
             vec![vixmix_host::HostEvent::EditorClosed(a)],
             0.0,
-            &host,
             &mut editors,
         );
         assert!(editors.is_empty());

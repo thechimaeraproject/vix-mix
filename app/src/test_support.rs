@@ -310,8 +310,7 @@ impl Harness {
     /// the window's clock.
     fn serve(&mut self) {
         let events = self.host.poll();
-        self.shell
-            .events(events, self.time, &self.host, &mut self.editors);
+        self.shell.events(events, self.time, &mut self.editors);
     }
 
     /// One frame per entry, the commands of all of them in order.

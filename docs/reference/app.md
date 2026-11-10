@@ -25,7 +25,7 @@ back; on `png` for the capture. Its tests also take `vixmix-plugins`, because th
 | `main.rs` | the command line, the event loop (X11 on Linux), or the capture |
 | `app.rs` | the winit `ApplicationHandler`: the host and its polls, the window, the editor windows, one frame (or, hidden, one tick without a frame) at a time, what the window's events say of whether it can be seen, egui's viewport facts, the window's least size |
 | `pacing.rs` | when the next frame comes (`Pacer`, `pacing::plan`): the 60 Hz grid, input under the same cap, a refused frame's slot, the hidden window's ticks, the host's own polls between frames |
-| `shell.rs` | the window's state between frames (`Shell`), what it takes from the host's events (`Shell::events`) and what it does with a frame's `Intent`s: commands applied, refusals and notes to the toast line, popovers opened and closed, Undo, stars and a rescan through the host, editors queued and then opened (`open_editors`) |
+| `shell.rs` | the window's state between frames (`Shell`), what it takes from the host's events (`Shell::events`) and what it does with a frame's `Intent`s: commands applied, refusals to the toast line, popovers opened and closed, Undo, stars and a rescan through the host, editors queued and then opened (`open_editors`) |
 | `ui.rs` | what a frame draws and senses: the header and its display, the banner, the console, the open popover, the toast line |
 | `console.rs` | the console row: where each strip goes, the rects a popover hangs from and a drag lands in, the insert drag resolved after the last strip |
 | `strip.rs` | a channel strip and a mix strip: rows, header, the scale's marks and style (drawn by the kit), readouts, mute, link and ear, the add-channel column, the text helpers |
@@ -105,17 +105,16 @@ itself). A frame never changes the setup it is drawing; the headless tests drive
 
 **`Shell::dispatch`** applies each command through `Host::apply`. A refusal goes to the toast
 line as the model words it (each says what to do). The editors of the inserts a command
-removes close through the host first. A change earns its note: "Moved" or "Copied <plugin> to
-<strip>" for a drag between strips or a copy, "Added <plugin> to <strip>", "Monitor output now
-plays Master" and "Monitor output back to the Monitor mix" (2.4 s). A star goes to
+removes close through the host first. A change that worked says nothing on the toast line:
+the console shows it (the insert in its new slot, the ear lit), and a toast that only repeated
+what the user just did was noise. A star goes to
 `Host::set_favorite` (the host keeps it in `plugins.ron`), Rescan plugins to
 `Host::rescan_plugins`.
 
 **`Shell::events`** takes what one poll of the host reported: the backend's state (the
 banner), a `Toast` (8 s; it says what to do), a `Removed { message, undo }` (the host's words
-with Undo, [Toasts and Undo](#toasts-and-undo)), `PluginsRescanned` ("Rescanned the plugin
-folders: N plugins", only when the host said nothing of its own in the same poll, so a warning
-about the rescan stays on the line), `EditorClosed`. The setup, the apps, the devices and the
+with Undo, [Toasts and Undo](#toasts-and-undo)), `PluginsRescanned` (an open browser lists
+what it found; nothing is said), `EditorClosed`. The setup, the apps, the devices and the
 inserts playing as pass-throughs the next frame reads from the host.
 
 **One clock.** The window's clock counts seconds from when it opened (`Running::opened`). Each
@@ -200,8 +199,8 @@ constants, and nothing else in the app spells a colour or a size:
   headings, the footer and its 22-point buttons); the menu (180 wide, 26-point rows); the
   browser (620 × 440, the 172-point nav, 22-point nav items, 24-point plugin rows with the
   16-point star column and the 128 and 92 columns, the A to Z headings, the 32-point footer);
-  the toast (12 from the bottom, its padding and gap, 5 s with an action, 2.4 s without, 8 s
-  from the host, the 0.15 s fade); the drag ghost (14 and 10 from the pointer, its padding).
+  the toast (12 from the bottom, its padding and gap, 5 s with an action, 8 s
+  for any other message, the 0.15 s fade); the drag ghost (14 and 10 from the pointer, its padding).
 - **`font`**: the families and the size each text is set in (title 13, display 11, strip
   name 12.5, FX 10, toggles 9, slots 11.5, scale 9, readouts 10, add column 10, body 12, small
   11.5, name field 12.5, search 13, headings 10, notes 10.5, the browser's columns 11, its
@@ -356,8 +355,8 @@ appearance that is the frame after the unseen one, whose disabled rows cannot ho
 - **The add-channel menu** (180 wide), beside the add column: App channel, Hardware input
   (`AddChannel { kind }`).
 - **The menu**, under the menu button: Preferences, and Rescan plugins
-  (`Host::rescan_plugins`, the menu closing; the toast line says what the catalog holds after,
-  unless the host said something of its own about it).
+  (`Host::rescan_plugins`, the menu closing; the toast line shows only what the host says
+  about it, a plugin gone missing).
 - **The preferences** (270 wide): the quantum asked of PipeWire as radios (128, 256, 512
   samples; `SetPrefs`), the extra plugin folders each with its bin, a field and Add for
   another (`SetPrefs` with the folder added or removed, the rest kept; a folder takes at most
@@ -540,8 +539,9 @@ gesture sent, and what is in view is what the last frame painted whole inside it
   `the_banner_says_when_the_mixer_is_idle_or_the_daemon_is_gone`;
 - the clock: `a_host_message_after_a_quiet_spell_shows_for_its_whole_time` (a host's toast
   polled 20 s after the last frame shows, still shows 7 s on, and is gone after its 8 s),
-  `a_rescan_that_holds_the_window_still_says_what_it_found` (a rescan answered 5 s after the
-  frame that asked still shows its note, for its 2.4 s from the answer).
+  `a_rescan_that_holds_the_window_still_shows_the_hosts_warning_for_its_whole_time` (a rescan
+  answered 5 s after the frame that asked shows the host's warning for its 8 s from the
+  answer).
 
 **The parts:**
 

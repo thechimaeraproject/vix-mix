@@ -249,7 +249,12 @@ fn mute_link_and_the_ear_toggle() {
         vec![Command::SetPreview(true)]
     );
     h.idle(2);
-    assert!(h.find("Monitor output now plays Master").is_some());
+    // A gesture that worked says nothing: the ear shows it.
+    assert!(
+        h.shell.toasts.current(h.shell.now).is_none(),
+        "{:?}",
+        h.drawn()
+    );
     assert_eq!(
         h.click(row.center() - vec2(offset, 0.0)),
         vec![Command::SetMixMute {
@@ -380,7 +385,11 @@ fn an_insert_dragged_to_another_strip_moves_or_with_ctrl_copies() {
         "the same instance moves"
     );
     h.idle(2);
-    assert!(h.find("Moved Pro-C 2 to Game").is_some(), "{:?}", h.drawn());
+    assert!(
+        h.shell.toasts.current(h.shell.now).is_none(),
+        "{:?}",
+        h.drawn()
+    );
 
     // With Ctrl, a copy: the original stays.
     let limiter = h.slot(mic, 1).center();
@@ -404,7 +413,11 @@ fn an_insert_dragged_to_another_strip_moves_or_with_ctrl_copies() {
     assert_eq!(h.setup().channels[0].chain.len(), 2);
     assert_eq!(h.setup().channels[1].chain.len(), 2);
     h.idle(1);
-    assert!(h.find("Copied Pro-L 2 to Game").is_some());
+    assert!(
+        h.shell.toasts.current(h.shell.now).is_none(),
+        "{:?}",
+        h.drawn()
+    );
 }
 
 #[test]
@@ -469,7 +482,11 @@ fn the_browser_searches_and_enter_adds_the_first_hit() {
     assert_eq!(h.shell.popover, None, "adding closes the browser");
     assert_eq!(h.setup().channels[1].chain[0].plugin.name, "TDR Nova");
     h.idle(2);
-    assert!(h.find("Added TDR Nova to Game").is_some());
+    assert!(
+        h.shell.toasts.current(h.shell.now).is_none(),
+        "{:?}",
+        h.drawn()
+    );
 }
 
 #[test]
@@ -1060,16 +1077,19 @@ fn the_preferences_ask_for_a_quantum_and_take_plugin_folders() {
     let _ = h.click(menu);
     assert_eq!(h.shell.popover, Some(Popover::Menu));
     h.idle(2);
-    // Rescan plugins asks the host and closes the menu; when the host has nothing of its
-    // own to say about it, the toast line says what the catalog holds now.
+    // Rescan plugins asks the host and closes the menu; a rescan the host has nothing to say
+    // about shows nothing (an open browser lists what it found).
     let from = h.host.calls.len();
     assert!(h.click(h.text("Rescan plugins")).is_empty());
     assert_eq!(h.host.calls[from..], [Call::Rescan]);
     assert_eq!(h.shell.popover, None);
+    h.host.news = vec![vixmix_host::HostEvent::PluginsRescanned];
     h.idle(1);
-    let plugins = h.host.catalog().plugins.len();
-    let said = format!("Rescanned the plugin folders: {plugins} plugins");
-    assert!(h.find(&said).is_some(), "{:?}", h.drawn());
+    assert!(
+        h.shell.toasts.current(h.shell.now).is_none(),
+        "{:?}",
+        h.drawn()
+    );
     // A host that warned about the rescan keeps its warning on the toast line.
     h.host.news = vec![
         vixmix_host::HostEvent::Toast("Pro-C 2 is missing: rescan plugins".to_string()),
@@ -1203,7 +1223,7 @@ fn a_host_message_after_a_quiet_spell_shows_for_its_whole_time() {
 }
 
 #[test]
-fn a_rescan_that_holds_the_window_still_says_what_it_found() {
+fn a_rescan_that_holds_the_window_still_shows_the_hosts_warning_for_its_whole_time() {
     let mut h = Harness::new();
     let menu = Pos2::new(
         size::HEADER_PAD_X + size::MENU_BUTTON[0] / 2.0,
@@ -1217,15 +1237,18 @@ fn a_rescan_that_holds_the_window_still_says_what_it_found() {
     let from = h.host.calls.len();
     let _ = h.click(h.text("Rescan plugins"));
     assert_eq!(h.host.calls[from..], [Call::Rescan]);
+    let said = "Pro-C 2 is missing: rescan plugins";
+    h.host.news = vec![
+        vixmix_host::HostEvent::Toast(said.to_string()),
+        vixmix_host::HostEvent::PluginsRescanned,
+    ];
     h.host.busy = false;
     h.quiet(5.0);
     h.idle(1);
-    let plugins = h.host.catalog().plugins.len();
-    let said = format!("Rescanned the plugin folders: {plugins} plugins");
-    assert!(h.find(&said).is_some(), "{:?}", h.drawn());
-    // Its 2.4 s count from the answer.
-    h.wait(2.0);
-    assert!(h.find(&said).is_some(), "{:?}", h.drawn());
+    assert!(h.find(said).is_some(), "{:?}", h.drawn());
+    // Its 8 s count from the answer, not from the frame that asked.
+    h.wait(7.0);
+    assert!(h.find(said).is_some(), "{:?}", h.drawn());
 }
 
 /// Opens the plugin browser from Game's "+ Add plugin", and lets it settle.

@@ -333,10 +333,10 @@ pub mod pop {
     pub const TOAST_PAD: [f32; 4] = [5.0, 6.0, 5.0, 12.0];
     pub const TOAST_GAP: f32 = 10.0;
     /// How long a toast shows, in seconds: with an action (Undo: the prototype's 5 s, which
-    /// is the host's `UNDO_TOAST`, as long as it keeps what was removed), without one, and a
-    /// message from the host, which says what to do and wants reading.
+    /// is the host's `UNDO_TOAST`, as long as it keeps what was removed), and any other
+    /// message (a refusal, the host's), which says what to do and wants reading. A change
+    /// that worked has no toast: the console shows it.
     pub const TOAST_WITH_ACTION_S: f64 = vixmix_host::UNDO_TOAST.as_secs_f64();
-    pub const TOAST_S: f64 = 2.4;
     pub const TOAST_HOST_S: f64 = 8.0;
     /// The toast's fade in and out (`transition: opacity .15s`).
     pub const TOAST_FADE_S: f32 = 0.15;

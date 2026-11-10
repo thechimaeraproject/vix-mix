@@ -299,8 +299,7 @@ impl Running {
         let events = self.host.poll();
         let news = !events.is_empty();
         let now = self.clock();
-        self.shell
-            .events(events, now, &*self.host, &mut self.editors);
+        self.shell.events(events, now, &mut self.editors);
         self.editors.tick(self.host.as_mut());
         news
     }
