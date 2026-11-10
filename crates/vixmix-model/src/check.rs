@@ -45,12 +45,17 @@ pub enum Invalid {
     },
     #[error("the quantum is {0}, which the preferences do not offer: set it to 128, 256 or 512")]
     NotAQuantum(u32),
+    #[error(
+        "it lists {found} plugin folders and vix-mix scans at most {max}: remove folders until {max} are left"
+    )]
+    TooManyPluginDirs { found: usize, max: usize },
 }
 
 /// Whether `setup` keeps every rule `apply` keeps: at most [`MAX_CHANNELS`] channels, ids
 /// unique, every channel named, an app in one channel only, faders in 0..=1, plugins stored by
-/// id and bundle name, the mixes in their places and a quantum the preferences offer. The id
-/// counters are not checked: `persist` raises them instead.
+/// id and bundle name, the mixes in their places, a quantum the preferences offer and at most
+/// [`Prefs::MAX_PLUGIN_DIRS`] plugin folders. The id counters are not checked: `persist`
+/// raises them instead.
 pub(crate) fn check(setup: &Setup) -> Result<(), Invalid> {
     if setup.channels.len() > MAX_CHANNELS {
         return Err(Invalid::TooManyChannels {
@@ -111,6 +116,12 @@ pub(crate) fn check(setup: &Setup) -> Result<(), Invalid> {
     }
     if !Prefs::QUANTA.contains(&setup.prefs.quantum) {
         return Err(Invalid::NotAQuantum(setup.prefs.quantum));
+    }
+    if setup.prefs.plugin_dirs.len() > Prefs::MAX_PLUGIN_DIRS {
+        return Err(Invalid::TooManyPluginDirs {
+            found: setup.prefs.plugin_dirs.len(),
+            max: Prefs::MAX_PLUGIN_DIRS,
+        });
     }
     Ok(())
 }
@@ -207,5 +218,30 @@ mod tests {
 
         let quantum = refused_by(|s| s.prefs.quantum = 64);
         assert!(quantum.to_string().contains("128, 256 or 512"));
+
+        let folders = refused_by(|s| {
+            s.prefs.plugin_dirs = (0..=Prefs::MAX_PLUGIN_DIRS)
+                .map(|i| format!("/opt/vst3/{i}").into())
+                .collect();
+        });
+        assert_eq!(
+            folders,
+            Invalid::TooManyPluginDirs { found: 17, max: 16 },
+            "{folders}"
+        );
+        assert!(
+            folders
+                .to_string()
+                .contains("remove folders until 16 are left")
+        );
+    }
+
+    #[test]
+    fn sixteen_plugin_folders_pass() {
+        let mut setup = example::setup();
+        setup.prefs.plugin_dirs = (0..Prefs::MAX_PLUGIN_DIRS)
+            .map(|i| format!("/opt/vst3/{i}").into())
+            .collect();
+        check(&setup).unwrap();
     }
 }

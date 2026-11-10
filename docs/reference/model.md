@@ -2,7 +2,8 @@
 **Owns:** `crates/vixmix-model/`
 
 **Reference — the contract as [handoff 01](../handoffs/01-model.md) built it, with the undo
-commands of change request 2 that [handoff 06](../handoffs/06-host-and-integration.md) added.**
+commands of change request 2 that [handoff 06](../handoffs/06-host-and-integration.md) added
+and the bound on the plugin folders of change request 10 (round 1).**
 `vixmix-model` is the whole setup as pure data: up to eight channels with their sources,
 chains and sends; the Monitor and Master mixes; the commands that change it, validated and
 applied whole or not at all, each saying exactly what it changed; the fader taper; RON
@@ -36,8 +37,10 @@ PipeWire's `pipewire.access.portal.app_id`, `application.process.binary` and
 else name. `DeviceRef { name, description }` is `node.name` and `node.description`;
 `DeviceInfo` is a present device with its direction, here because both the Linux-only backend
 and the host name it. `Prefs { quantum, plugin_dirs }`: 128, 256 or 512 frames asked through
-`node.latency`, and extra VST3 directories. `Setup::default()` is the first start: one hardware
-channel named Mic with no device yet, everything at unity, no plugins.
+`node.latency` (`Prefs::QUANTA`), and extra VST3 directories, at most 16
+(`Prefs::MAX_PLUGIN_DIRS`, which the window's preferences read). `Setup::default()` is the
+first start: one hardware channel named Mic with no device yet, everything at unity, no
+plugins.
 
 `ChannelId(u32)` and `InstanceId(u32)` are `Copy` with public fields; `MixId` is `Monitor` or
 `Master`. **`Send` shadows the standard `Send` marker trait** where it is imported by name:
@@ -95,7 +98,9 @@ What each does, as the prototype does it:
 - **Devices, plugins, preferences.** `SetMixDevice { Monitor, None }` is refused
   (`MonitorNeedsDevice`); an `AddInsert` whose id is not `vst3:` and 32 hex digits
   (`NotAPluginId`), or whose bundle is a path (`BundleIsAPath`), is refused; a quantum other
-  than 128, 256 or 512 is refused (`NotAQuantum`).
+  than 128, 256 or 512 is refused (`NotAQuantum`), and so is a `SetPrefs` with more than 16
+  extra plugin folders (`TooManyPluginDirs`: "16 plugin folders is the most there can be, not
+  17: remove one first", the window's words; change request 10).
 
 Every `Refused` message ends with what to do instead.
 
@@ -192,8 +197,8 @@ nothing to write). Serializing cannot fail.
    `apply` keeps (`persist::Invalid`, inside `PersistError::Invalid`): at most 8 channels,
    unique channel ids and instance ids, every channel named, an app in one channel only,
    every fader in 0..=1, every plugin stored by id and bundle name, `monitor` and `master`
-   in their places, a quantum the preferences offer. Each message names the rule and the edit
-   that fixes the file.
+   in their places, a quantum the preferences offer, at most 16 plugin folders. Each message
+   names the rule and the edit that fixes the file.
 
 ## The engine snapshot
 
@@ -218,12 +223,13 @@ nine inserts. `FakeHost` serves it; nothing in a real run reads it.
 
 - **`tests/applied.rs`** — `every_applied_matches_the_diff_it_made`: a property over 512
   sequences of up to 47 commands each, from the first start or the example, drawn against the
-  setup reached so far (unknown ids, bad slots, bad positions, bad plugins and apps that match
-  each other in each of the three ways included). A refused command changes nothing and says a
-  fix; an applied one answers exactly the `Applied` the diff calls for, part by part, with the
-  parts written in the test from the outside (the whole setup, the snapshot, the graph's
-  inputs, the app and channel pairs, the instances, the new channel); and the setup reached
-  round-trips through `to_ron` and `parse`, so every setup commands make keeps the load rules.
+  setup reached so far (unknown ids, bad slots, bad positions, bad plugins, a seventeenth
+  plugin folder and apps that match each other in each of the three ways included). A refused
+  command changes nothing and says a fix; an applied one answers exactly the `Applied` the diff
+  calls for, part by part, with the parts written in the test from the outside (the whole
+  setup, the snapshot, the graph's inputs, the app and channel pairs, the instances, the new
+  channel); and the setup reached round-trips through `to_ron` and `parse`, so every setup
+  commands make keeps the load rules.
   The undo commands draw from what the sequence removed so far (and from what it did not, to
   be refused).
   `the_sequences_change_the_setup_through_every_command` holds the generator to landing every
@@ -235,10 +241,11 @@ nine inserts. `FakeHost` serves it; nothing in a real run reads it.
   command that changes nothing says so, for every kind that can; a fader moved within silence
   saved but not prepared; linked faders clamped at both ends; inserts moved within and between
   strips and copied with their state and bypass; a removed channel's instances retired and its
-  apps routed; plugins refused by id or path; Monitor keeps a device; the quantum; a removed
-  channel back in its place with its ids, bypass and state while an app another channel took
-  stays there, a removed insert back in its gap, and a restore of anything not removed (in
-  use, never handed out, past the end, past eight channels, nameless) refused.
+  apps routed; plugins refused by id or path; Monitor keeps a device; the quantum; sixteen
+  plugin folders taken and a seventeenth refused with the limit and the fix, nothing changed; a
+  removed channel back in its place with its ids, bypass and state while an app another
+  channel took stays there, a removed insert back in its gap, and a restore of anything not
+  removed (in use, never handed out, past the end, past eight channels, nameless) refused.
 - **`taper`** — every table point exact both ways, silence at or below 0.002, the ramp, the
   prototype's values between points, the clamps, the readout strings, and two properties (a
   position survives a round trip through decibels; louder never reads quieter).
@@ -246,7 +253,8 @@ nine inserts. `FakeHost` serves it; nothing in a real run reads it.
   base64; `tests/fixtures/setup-v1.ron` (the bootstrap's own output) converted forward with its
   counters and state; a missing file is the first start, a bad one and one that is not text say
   why; a newer format refused and format 0 unknown; a file that breaks a rule refused with its
-  fix; counters raised, never lowered; the profile rule.
+  fix, one with seventeen plugin folders among them; counters raised, never lowered; the
+  profile rule.
 - **`check`**, **`base64`**, **`snapshot`**, **`example`**, **`setup`** — each rule a hand edit
   can break, named with its fix; RFC 4648's vectors, refusals and a round-trip property; unity
   exactly 1.0, the example in order with every part the engine runs; the example is the

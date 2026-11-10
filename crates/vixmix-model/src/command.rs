@@ -215,6 +215,8 @@ pub enum Refused {
     BundleIsAPath { bundle: String },
     #[error("{quantum} is not a quantum the preferences offer: ask for 128, 256 or 512 frames")]
     NotAQuantum { quantum: u32 },
+    #[error("{max} plugin folders is the most there can be, not {found}: remove one first")]
+    TooManyPluginDirs { found: usize, max: usize },
     #[error(
         "this setup has handed out every {what} id there is: move setup.ron aside and start from a new setup"
     )]
@@ -309,6 +311,12 @@ pub fn apply(setup: &mut Setup, cmd: Command) -> Result<Applied, Refused> {
             if !Prefs::QUANTA.contains(&prefs.quantum) {
                 return Err(Refused::NotAQuantum {
                     quantum: prefs.quantum,
+                });
+            }
+            if prefs.plugin_dirs.len() > Prefs::MAX_PLUGIN_DIRS {
+                return Err(Refused::TooManyPluginDirs {
+                    found: prefs.plugin_dirs.len(),
+                    max: Prefs::MAX_PLUGIN_DIRS,
                 });
             }
             if setup.prefs == prefs {
@@ -1445,6 +1453,40 @@ mod tests {
         )
         .unwrap();
         assert!(applied.save && !applied.graph);
+    }
+
+    #[test]
+    fn a_seventeenth_plugin_folder_is_refused_with_the_limit_and_the_fix() {
+        let folders = |n: usize| -> Vec<std::path::PathBuf> {
+            (0..n).map(|i| format!("/opt/vst3/{i}").into()).collect()
+        };
+        let mut setup = Setup::default();
+        // Sixteen, the most there can be, are taken.
+        let full = Prefs {
+            plugin_dirs: folders(Prefs::MAX_PLUGIN_DIRS),
+            ..Prefs::default()
+        };
+        let applied = apply(&mut setup, Command::SetPrefs(full.clone())).unwrap();
+        assert!(applied.save && !applied.graph);
+        assert_eq!(setup.prefs, full);
+        // A seventeenth is refused, whatever else the command asks, and nothing changes.
+        let before = setup.clone();
+        let refused = apply(
+            &mut setup,
+            Command::SetPrefs(Prefs {
+                quantum: 512,
+                plugin_dirs: folders(Prefs::MAX_PLUGIN_DIRS + 1),
+            }),
+        )
+        .unwrap_err();
+        assert_eq!(refused, Refused::TooManyPluginDirs { found: 17, max: 16 });
+        let message = refused.to_string();
+        assert!(
+            message.starts_with("16 plugin folders is the most there can be"),
+            "{message}"
+        );
+        assert!(message.ends_with("remove one first"), "{message}");
+        assert_eq!(setup, before);
     }
 
     #[test]

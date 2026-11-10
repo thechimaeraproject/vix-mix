@@ -238,8 +238,9 @@ pub struct Prefs {
     /// The quantum asked of PipeWire through `node.latency` at 48 kHz: 128, 256 or 512. A
     /// request, never forced; the graph decides.
     pub quantum: u32,
-    /// Directories scanned for VST3 bundles besides the SDK's standard places. Written as
-    /// text; a path that is not UTF-8 is written with its unreadable part replaced.
+    /// Directories scanned for VST3 bundles besides the SDK's standard places, at most
+    /// [`Prefs::MAX_PLUGIN_DIRS`]. Written as text; a path that is not UTF-8 is written with its
+    /// unreadable part replaced.
     #[serde(serialize_with = "lossy_paths")]
     pub plugin_dirs: Vec<PathBuf>,
 }
@@ -253,6 +254,10 @@ fn lossy_paths<S: serde::Serializer>(paths: &[PathBuf], serializer: S) -> Result
 impl Prefs {
     /// The quanta the preferences offer.
     pub const QUANTA: [u32; 3] = [128, 256, 512];
+
+    /// The most extra plugin folders the preferences hold: `SetPrefs` refuses more, and so
+    /// does a `setup.ron` that lists more.
+    pub const MAX_PLUGIN_DIRS: usize = 16;
 }
 
 impl Default for Prefs {

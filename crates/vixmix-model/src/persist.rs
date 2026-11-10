@@ -236,6 +236,31 @@ mod tests {
     }
 
     #[test]
+    fn a_file_with_more_plugin_folders_than_the_preferences_hold_is_refused() {
+        let mut setup = with_state();
+        let folders = |n: usize| -> Vec<PathBuf> {
+            (0..n).map(|i| format!("/opt/vst3/{i}").into()).collect()
+        };
+        setup.prefs.plugin_dirs = folders(crate::Prefs::MAX_PLUGIN_DIRS);
+        assert_eq!(parse(to_ron(&setup).as_bytes()).unwrap(), setup);
+        setup.prefs.plugin_dirs = folders(crate::Prefs::MAX_PLUGIN_DIRS + 1);
+        let error = parse(to_ron(&setup).as_bytes()).unwrap_err();
+        assert!(
+            matches!(
+                error,
+                PersistError::Invalid(Invalid::TooManyPluginDirs { found: 17, max: 16 })
+            ),
+            "{error}"
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("remove folders until 16 are left"),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn counters_a_hand_edit_left_behind_are_raised_never_lowered() {
         let mut setup = example::setup();
         setup.next_channel = ChannelId(3);
