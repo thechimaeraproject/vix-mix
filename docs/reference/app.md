@@ -16,13 +16,14 @@ the meter fader, its scale, peak hold and the taper trait the meters read throug
 ([kit-egui-audio.md](../kit-egui-audio.md)); on the kit's `chimaeraproject-vst3-host` only to
 name the `EditorEvent` and `EditorSize` that `Host::tick_editors` and `Host::open_editor` hand
 back; on `png` for the capture. Its tests also take `vixmix-plugins`, because their
-`Recorder` implements `Host`, whose `catalog` names `Catalog`.
+`Recorder` implements `Host`, whose `catalog` names `Catalog`, and to read the scan's
+`ANSWER_MARK` and `SCAN_TIMEOUT`.
 
 ## The files
 
 | File | What it is |
 |---|---|
-| `main.rs` | the command line, the event loop (X11 on Linux), or the capture |
+| `main.rs` | the command line, the event loop (X11 on Linux), or the capture, or the plugin scan's child (`--scan-bundle`); how the real host scans (`plugin_scan`) |
 | `app.rs` | the winit `ApplicationHandler`: the host and its polls, the window, the editor windows, one frame (or, hidden, one tick without a frame) at a time, what the window's events say of whether it can be seen, egui's viewport facts, the window's least size |
 | `pacing.rs` | when the next frame comes (`Pacer`, `pacing::plan`): the 60 Hz grid, input under the same cap, a refused frame's slot, the hidden window's ticks, the host's own polls between frames |
 | `shell.rs` | the window's state between frames (`Shell`), what it takes from the host's events (`Shell::events`) and what it does with a frame's `Intent`s: commands applied, refusals to the toast line, popovers opened and closed, Undo, stars and a rescan through the host, editors queued and then opened (`open_editors`) |
@@ -174,6 +175,19 @@ the headless proof that the window works and paces at 60 Hz; `--dump-png <file>`
 frame of `FakeHost`'s console offscreen and exits 0 without opening a window ([The
 capture](#the-capture)). `--dump-png` with `--quit-after-frames` is refused, as is anything
 else, with exit 2 and what to write instead.
+
+`--scan-bundle <bundle>` is the plugin scan's, not a user's: the real host boots with
+`BootOptions::plugin_scan` set to this program (`std::env::current_exe()`) with
+`--scan-bundle`, and runs it once for each bundle it must load, so a plugin that aborts or
+hangs while it loads takes only that process down ([plugins.md](plugins.md) § Loading a
+bundle in a child process; issue
+[#26](https://github.com/thechimaeraproject/vix-mix/issues/26)). If the program cannot name
+itself, the scan stays in process and the log says why. `main` handles the flag first, before
+any event loop, window, host or configuration is touched: `vixmix_host::answer_scan(bundle)`
+writes the bundle's description on one line of stdout marked `vixmix-scan-answer: ` and the
+process exits with its code (0 once the answer is written, a bundle that failed included).
+The flag without a bundle, or with any other flag, is refused with exit 2. Packaging is
+unchanged: it is the same binary.
 
 ## The look
 
@@ -602,7 +616,16 @@ gesture sent, and what is in view is what the last frame painted whole inside it
 **The parts:**
 
 - `main.rs`: the flags parse and default to the real host running until closed; every refusal
-  names what to write instead.
+  names what to write instead (`--scan-bundle` without a bundle, or beside another flag,
+  included); the real host scans each bundle it loads in this program with `--scan-bundle`
+  and the scan's 60-second timeout.
+- `tests/scan_bundle.rs`, the binary itself (`CARGO_BIN_EXE_vix-mix`): `--scan-bundle` on a
+  bundle described by its `moduleinfo.json` answers on one marked line and exits 0; on a path
+  that is not a bundle it answers with that failure and exits 0; without a bundle it is
+  refused with exit 2 and what to write. The bundle carries no binary because
+  `cargo test -p vix-mix` does not build the plugins crate's test plugins; loading one in the
+  child, and one that aborts there, are `vixmix-plugins`' tests through the same
+  `answer_scan`.
 - `theme.rs`: every character the console prints comes from the Plex face itself in all five
   families, and the check catches a fallback; the plain families are Plex with egui's fonts
   behind it.

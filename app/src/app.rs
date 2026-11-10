@@ -184,6 +184,7 @@ impl Running {
                     debug_build: cfg!(debug_assertions),
                     audio: AudioBackend::APP,
                     plugin_dirs: None,
+                    plugin_scan: crate::plugin_scan(),
                 })
                 .map_err(|e| e.to_string())?,
             )

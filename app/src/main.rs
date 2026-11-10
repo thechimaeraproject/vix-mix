@@ -15,7 +15,9 @@
 //! v5's example data and simulated meters) instead of the real host,
 //! `--quit-after-frames N` closes the window once N frames have been drawn, so a headless run
 //! proves the window works, and `--dump-png <file>` draws `FakeHost`'s console once, offscreen
-//! at the prototype's scale, into a PNG. See `docs/reference/app.md`.
+//! at the prototype's scale, into a PNG. `--scan-bundle <bundle>` is for the plugin scan, which
+//! runs this program with it for each bundle it must load, so a plugin that crashes while it
+//! loads takes only that process down. See `docs/reference/app.md`.
 //!
 //! [`Host`]: vixmix_host::Host
 
@@ -45,14 +47,20 @@ mod widgets;
 
 use std::path::PathBuf;
 
+use vixmix_host::{Describe, ScanCommand};
 use winit::error::EventLoopError;
 use winit::event_loop::EventLoop;
 
 const USAGE: &str = "\
-usage: vix-mix [--fake] [--quit-after-frames <n>] | --dump-png <file>
+usage: vix-mix [--fake] [--quit-after-frames <n>] | --dump-png <file> | --scan-bundle <bundle>
   --fake               run against FakeHost: the prototype's example console, simulated meters, no audio
   --quit-after-frames  close the window once this many frames have been drawn
-  --dump-png           draw FakeHost's console once, offscreen at twice the size, into a PNG, and exit";
+  --dump-png           draw FakeHost's console once, offscreen at twice the size, into a PNG, and exit
+  --scan-bundle        describe one VST3 bundle on a marked line of stdout and exit: the plugin scan runs each bundle it loads this way";
+
+/// The flag of the plugin scan's child process: Vix Mix runs itself with it for each bundle
+/// its scan must load ([`plugin_scan`]).
+const SCAN_BUNDLE: &str = "--scan-bundle";
 
 /// What the command line asked for.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -61,6 +69,8 @@ pub struct Startup {
     pub quit_after_frames: Option<u64>,
     /// Draw one frame into this PNG instead of opening the window.
     pub dump_png: Option<PathBuf>,
+    /// Describe this bundle for a plugin scan in another process, and exit.
+    pub scan_bundle: Option<PathBuf>,
 }
 
 impl Startup {
@@ -95,9 +105,16 @@ impl Startup {
                     })?;
                     startup.dump_png = Some(PathBuf::from(path));
                 }
+                SCAN_BUNDLE => {
+                    let path = rest.next().ok_or_else(|| {
+                        "`--scan-bundle` wants the VST3 bundle to describe, e.g. `--scan-bundle ~/.vst3/Echo.vst3`"
+                            .to_string()
+                    })?;
+                    startup.scan_bundle = Some(PathBuf::from(path));
+                }
                 other => {
                     return Err(format!(
-                        "`{other}` is not something vix-mix takes; it takes --fake, --quit-after-frames <n> and --dump-png <file>"
+                        "`{other}` is not something vix-mix takes; it takes --fake, --quit-after-frames <n>, --dump-png <file> and --scan-bundle <bundle>"
                     ));
                 }
             }
@@ -108,7 +125,33 @@ impl Startup {
                     .to_string(),
             );
         }
+        let with_scan_bundle = Startup {
+            scan_bundle: startup.scan_bundle.clone(),
+            ..Startup::default()
+        };
+        if startup.scan_bundle.is_some() && startup != with_scan_bundle {
+            return Err(
+                "`--scan-bundle` describes one plugin bundle and exits without a window or a host, so it takes nothing else; drop the other flags"
+                    .to_string(),
+            );
+        }
         Ok(startup)
+    }
+}
+
+/// How the real host describes a plugin bundle it must load: in a child process of this
+/// program (`--scan-bundle`), one bundle at a time, so a plugin that crashes or hangs while it
+/// loads fails alone and Vix Mix keeps running. In this process, with a warning, when this
+/// program cannot name itself.
+fn plugin_scan() -> Describe {
+    match std::env::current_exe() {
+        Ok(program) => Describe::InChild(ScanCommand::new(program, [SCAN_BUNDLE])),
+        Err(error) => {
+            log::warn!(
+                "the plugin scan loads plugins in this process, so one that crashes while it loads closes Vix Mix: this program's own path could not be read ({error})"
+            );
+            Describe::InProcess
+        }
     }
 }
 
@@ -122,6 +165,9 @@ fn main() {
             std::process::exit(2);
         }
     };
+    if let Some(bundle) = &startup.scan_bundle {
+        std::process::exit(vixmix_host::answer_scan(bundle));
+    }
     if let Some(path) = &startup.dump_png {
         match capture::dump_png(path) {
             Ok([width, height]) => {
@@ -190,10 +236,31 @@ mod tests {
                 fake: true,
                 quit_after_frames: Some(3),
                 dump_png: None,
+                scan_bundle: None,
             }
         );
         let dump = Startup::parse(&args(&["--dump-png", "gate.png"])).unwrap();
         assert_eq!(dump.dump_png, Some(PathBuf::from("gate.png")));
+        let scan = Startup::parse(&args(&["--scan-bundle", "/usr/lib64/vst3/Echo.vst3"])).unwrap();
+        assert_eq!(
+            scan,
+            Startup {
+                scan_bundle: Some(PathBuf::from("/usr/lib64/vst3/Echo.vst3")),
+                ..Startup::default()
+            }
+        );
+    }
+
+    #[test]
+    fn the_real_host_scans_each_bundle_it_loads_in_this_program_with_the_flag() {
+        let Describe::InChild(command) = plugin_scan() else {
+            panic!("this program can name itself");
+        };
+        assert_eq!(command.program, std::env::current_exe().unwrap());
+        assert_eq!(command.args, [std::ffi::OsString::from(SCAN_BUNDLE)]);
+        assert_eq!(command.timeout, vixmix_plugins::SCAN_TIMEOUT);
+        let parsed = Startup::parse(&args(&[SCAN_BUNDLE, "Echo.vst3"])).unwrap();
+        assert_eq!(parsed.scan_bundle, Some(PathBuf::from("Echo.vst3")));
     }
 
     #[test]
@@ -204,12 +271,17 @@ mod tests {
             (vec!["--quit-after-frames", "0"], "1 or more"),
             (
                 vec!["--fullscreen"],
-                "--fake, --quit-after-frames <n> and --dump-png",
+                "--fake, --quit-after-frames <n>, --dump-png <file> and --scan-bundle <bundle>",
             ),
             (vec!["--dump-png"], "--dump-png look-gate.png"),
             (
                 vec!["--dump-png", "a.png", "--quit-after-frames", "3"],
                 "drop one of them",
+            ),
+            (vec!["--scan-bundle"], "--scan-bundle ~/.vst3/Echo.vst3"),
+            (
+                vec!["--fake", "--scan-bundle", "Echo.vst3"],
+                "drop the other flags",
             ),
         ] {
             let error = Startup::parse(&args(&words)).expect_err("refused");

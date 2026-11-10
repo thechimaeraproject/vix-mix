@@ -5,7 +5,9 @@
 //! `target/<profile>/examples/`; this lays it out the way an installed plugin is laid out
 //! (`<dir>/VixMixTestGain.vst3/Contents/<arch>-<os>/VixMixTestGain.<ext>`) under
 //! `CARGO_TARGET_TMPDIR`, so the source tree stays clean, as the kit's own
-//! `crates/vst3-host/tests/common/mod.rs` does.
+//! `crates/vst3-host/tests/common/mod.rs` does. The plugins that misbehave while they load
+//! (`examples/test_abort.rs`, `examples/test_hang.rs`) are laid out the same way, and the
+//! scan's child (`examples/scan_bundle.rs`) is found beside them.
 
 #![allow(dead_code)]
 
@@ -34,30 +36,53 @@ pub const BUNDLE_NAME: &str = "VixMixTestGain.vst3";
 pub const ENGINE: EngineConfig = EngineConfig::new(48_000, 64, 2);
 pub const FRAMES: usize = 64;
 
-/// The built example, or a panic that says how to build it.
-fn built_example() -> PathBuf {
+/// The built example `name` (`file` on this platform), or a panic that says how to build it.
+fn built_example(name: &str, file: &str) -> PathBuf {
     let exe = std::env::current_exe().expect("the test binary knows its own path");
     // target/<profile>/deps/<test>.exe -> target/<profile>/examples/
     let profile_dir = exe
         .parent()
         .and_then(Path::parent)
         .expect("the test binary lives in target/<profile>/deps");
-    let file = if cfg!(target_os = "windows") {
-        "test_gain.dll"
-    } else if cfg!(target_os = "macos") {
-        "libtest_gain.dylib"
-    } else {
-        "libtest_gain.so"
-    };
     let path = profile_dir.join("examples").join(file);
     assert!(
         path.is_file(),
-        "the test plugin `{}` has not been built; run `cargo test -p vixmix-plugins` (which \
-         builds examples), or `cargo build -p vixmix-plugins --example test_gain` before \
+        "the example `{}` has not been built; run `cargo test -p vixmix-plugins` (which \
+         builds examples), or `cargo build -p vixmix-plugins --example {name}` before \
          running one test target alone",
         path.display()
     );
     path
+}
+
+/// The `cdylib` example `name` (a plugin's binary), built.
+fn built_plugin(name: &str) -> PathBuf {
+    let file = if cfg!(target_os = "windows") {
+        format!("{name}.dll")
+    } else if cfg!(target_os = "macos") {
+        format!("lib{name}.dylib")
+    } else {
+        format!("lib{name}.so")
+    };
+    built_example(name, &file)
+}
+
+/// The scan's child for these tests (`examples/scan_bundle.rs`), built.
+pub fn scan_child() -> PathBuf {
+    built_example(
+        "scan_bundle",
+        &format!("scan_bundle{}", std::env::consts::EXE_SUFFIX),
+    )
+}
+
+/// Lays out the `cdylib` example `example` as the bundle `bundle_name` in `dir`, the way an
+/// installed plugin is laid out, and returns the bundle.
+pub fn install_example(dir: &Path, bundle_name: &str, example: &str) -> PathBuf {
+    let bundle = dir.join(bundle_name);
+    let target = binary_path(&bundle, Os::current(), Arch::current());
+    std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+    std::fs::copy(built_plugin(example), &target).unwrap();
+    bundle
 }
 
 fn root() -> &'static Path {
@@ -86,7 +111,7 @@ pub fn plugin_dir(name: &str) -> PathBuf {
 /// and returns where it went.
 pub fn install_binary(bundle: &Path) -> PathBuf {
     let target = binary_path(bundle, Os::current(), Arch::current());
-    std::fs::copy(built_example(), &target).unwrap();
+    std::fs::copy(built_plugin("test_gain"), &target).unwrap();
     target
 }
 

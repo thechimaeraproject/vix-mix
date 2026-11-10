@@ -34,6 +34,7 @@ fn a_pipewire_that_refuses_is_the_null_backend_with_its_reason_and_is_asked_agai
             app_name: "vixmix-host-refused",
         },
         plugin_dirs: Some(Vec::new()),
+        ..BootOptions::default()
     };
     let remote = std::env::var_os("PIPEWIRE_REMOTE");
     // SAFETY: this binary has one test and no thread of its own reads the environment now:

@@ -15,7 +15,8 @@ use vixmix_model::{
     apply, persist, snapshot,
 };
 use vixmix_plugins::{
-    Catalog, EditorSession, InstanceEvent, Instances, Rack, ScanCache, ScanOutcome, search_dirs,
+    Catalog, Describe, EditorSession, InstanceEvent, Instances, Rack, ScanCache, ScanOutcome,
+    search_dirs,
 };
 
 use crate::apps::{presence, remember};
@@ -38,6 +39,17 @@ const MAX_KEPT: usize = 64;
 /// How many scan failures a toast names before it counts the rest.
 const FAILURES_NAMED: usize = 2;
 
+/// The name Vix Mix gives itself to plugins (`IHostApplication::getName`), in this process and
+/// in a scan's child.
+const VST3_HOST_NAME: &str = "Vix Mix";
+
+/// What `vix-mix --scan-bundle <bundle>` does: the child's side of a plugin scan
+/// (`vixmix_plugins::answer_scan`) under the name Vix Mix gives itself to plugins. Returns the
+/// process's exit code.
+pub fn answer_scan(bundle: &Path) -> i32 {
+    vixmix_plugins::answer_scan(bundle, &HostContext::new(VST3_HOST_NAME))
+}
+
 /// Where [`RealHost::boot`] reads and writes, and what it plays through.
 #[derive(Clone, Debug, Default)]
 pub struct BootOptions {
@@ -52,6 +64,10 @@ pub struct BootOptions {
     /// Where to look for plugins: `None` is the SDK's standard places and the preferences'
     /// extra directories; `Some` is only these (a test's).
     pub plugin_dirs: Option<Vec<PathBuf>>,
+    /// How the scan describes a bundle it must load: in this process (the default, a test's)
+    /// or in a child process per bundle (the app's `--scan-bundle`), so a plugin that crashes
+    /// while it loads fails alone.
+    pub plugin_scan: Describe,
 }
 
 /// A removed insert whose instance stays live until its undo toast dies.
@@ -68,6 +84,7 @@ pub struct RealHost {
     unreadable: bool,
     vst3: HostContext,
     plugin_dirs: Option<Vec<PathBuf>>,
+    plugin_scan: Describe,
     catalog: Catalog,
     cache: ScanCache,
     engine: Arc<Engine>,
@@ -103,7 +120,7 @@ impl RealHost {
         if let Some(problem) = problem {
             events.push(HostEvent::Toast(problem.to_string()));
         }
-        let vst3 = HostContext::new("Vix Mix");
+        let vst3 = HostContext::new(VST3_HOST_NAME);
         let (catalog, problem) = Catalog::load(&dir).into_parts();
         if let Some(problem) = problem {
             events.push(HostEvent::Toast(problem.to_string()));
@@ -120,6 +137,7 @@ impl RealHost {
             unreadable,
             vst3,
             plugin_dirs: options.plugin_dirs,
+            plugin_scan: options.plugin_scan,
             catalog,
             cache,
             engine,
@@ -209,7 +227,9 @@ impl RealHost {
             self.cache.forget_failures();
         }
         let dirs = self.scan_dirs();
-        let outcome = self.catalog.rescan(&dirs, &self.vst3, &self.cache);
+        let outcome = self
+            .catalog
+            .rescan_with(&dirs, &self.vst3, &self.cache, &self.plugin_scan);
         log::info!(
             "plugins: {} found, {} bundles described, {} unchanged, {} failed",
             outcome.catalog.plugins.len(),
@@ -750,6 +770,7 @@ mod tests {
             debug_build: true,
             audio: AudioBackend::Null,
             plugin_dirs: Some(Vec::new()),
+            plugin_scan: Describe::InProcess,
         }
     }
 

@@ -5,7 +5,9 @@
 //! one, loading it and asking its factory: the slow part of a scan, and the part that runs a
 //! plugin's code. So each bundle the scan describes is remembered in `plugins.ron` with its
 //! modification time and what it gave (its effects, or why it failed), and a rescan reuses
-//! that for a bundle whose time has not moved.
+//! that for a bundle whose time has not moved. A plugin that aborts while it loads takes the
+//! process that loads it down, so [`Describe::InChild`] loads each bundle in a child process
+//! of its own (`crate::child`), and a crash there is that bundle's failure like any other.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -18,6 +20,7 @@ use chimaeraproject_vst3_host::{
 use serde::{Deserialize, Serialize};
 
 use crate::catalog::{Catalog, PluginEntry, PluginKind, write_file};
+use crate::child::ScanCommand;
 
 /// Where to scan: the SDK's standard places (`default_search_dirs()`), then the preferences'
 /// extra directories (`Prefs::plugin_dirs`), each once.
@@ -85,6 +88,46 @@ impl ScanCache {
     }
 }
 
+/// How a rescan describes a bundle it cannot reuse from the cache.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum Describe {
+    /// In this process, through the kit's `scan_bundle`: a plugin that aborts or hangs while
+    /// it loads takes this process with it. The default, for tests and tools.
+    #[default]
+    InProcess,
+    /// A bundle with a readable `moduleinfo.json` in this process, which runs none of its
+    /// code; any other in a child process through this command, one at a time, so a plugin
+    /// that crashes or hangs while it loads is that bundle's failure and the scan goes on.
+    InChild(ScanCommand),
+}
+
+/// What describing one bundle gave: its effects, or why it could not be read, and the warnings
+/// that did not stop it. What a child process sends back (`crate::child`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct Description {
+    pub(crate) entries: Vec<PluginEntry>,
+    pub(crate) failure: Option<String>,
+    pub(crate) warnings: Vec<String>,
+}
+
+impl Description {
+    pub(crate) fn failed(failure: String) -> Description {
+        Description {
+            failure: Some(failure),
+            ..Description::default()
+        }
+    }
+
+    fn of(bundle: ScannedBundle) -> Description {
+        Description {
+            entries: effects_of(&bundle),
+            failure: None,
+            warnings: bundle.warnings,
+        }
+    }
+}
+
 /// What a scan produced: the catalog, every bundle that could not be described (each a
 /// message ending with what to do), the cache for the next rescan, and how many bundles were
 /// described afresh or reused unchanged.
@@ -116,8 +159,25 @@ impl Catalog {
     /// modification time moved since `cache` was made; an unchanged bundle gives what it gave
     /// last time, a failure included (see [`ScanCache::forget_failures`]). Audio classes whose
     /// sub-categories say `Fx` are kept, one entry per class (the first bundle in path order),
-    /// sorted by name. Favourites and recent are carried over from `self`.
+    /// sorted by name. Favourites and recent are carried over from `self`. Every bundle is
+    /// described in this process ([`Describe::InProcess`]); see
+    /// [`rescan_with`](Catalog::rescan_with).
     pub fn rescan(&self, dirs: &[PathBuf], host: &HostContext, cache: &ScanCache) -> ScanOutcome {
+        self.rescan_with(dirs, host, cache, &Describe::InProcess)
+    }
+
+    /// [`rescan`](Catalog::rescan), describing each bundle as `how` says. With
+    /// [`Describe::InChild`] a bundle the child could not describe (it crashed, ended without
+    /// an answer or took longer than the command's timeout) is a failure kept like any other;
+    /// one whose child could not be started at all is reported and not kept, so the next scan
+    /// tries it again.
+    pub fn rescan_with(
+        &self,
+        dirs: &[PathBuf],
+        host: &HostContext,
+        cache: &ScanCache,
+        how: &Describe,
+    ) -> ScanOutcome {
         let mut outcome = ScanOutcome::default();
         for path in find_bundles(dirs) {
             // Everything cached is written to plugins.ron as text: a path that is not UTF-8
@@ -140,7 +200,24 @@ impl Catalog {
                 }
                 None => {
                     outcome.described += 1;
-                    describe(path, modified, host)
+                    match describe(&path, host, how) {
+                        Ok(description) => {
+                            for warning in &description.warnings {
+                                log::warn!("{}: {warning}", path.display());
+                            }
+                            CachedBundle {
+                                path,
+                                modified,
+                                entries: description.entries,
+                                failure: description.failure,
+                            }
+                        }
+                        // The cause is not the bundle's: said, never kept.
+                        Err(failure) => {
+                            outcome.failures.push(failure);
+                            continue;
+                        }
+                    }
                 }
             };
             outcome.failures.extend(bundle.failure.iter().cloned());
@@ -165,27 +242,33 @@ impl Catalog {
     }
 }
 
-/// Describes one bundle through the kit: its effects, or why it could not be read. Warnings
-/// that did not stop it are logged here, on the UI thread.
-fn describe(path: PathBuf, modified: Option<(u64, u32)>, host: &HostContext) -> CachedBundle {
-    match scan_bundle(&path, host, &ScanOptions::default()) {
-        Ok(bundle) => {
-            for warning in &bundle.warnings {
-                log::warn!("{}: {warning}", path.display());
-            }
-            CachedBundle {
-                entries: effects_of(&bundle),
-                path,
-                modified,
-                failure: None,
+/// Describes one bundle as `how` says. `Err` is a failure whose cause is not the bundle (its
+/// child could not be run at all): reported, and not kept.
+fn describe(path: &Path, host: &HostContext, how: &Describe) -> Result<Description, String> {
+    match how {
+        Describe::InProcess => Ok(describe_here(path, host, &ScanOptions::default())),
+        Describe::InChild(command) => {
+            // A readable moduleinfo.json describes the bundle without running any of its
+            // code, so it needs no child. With loading turned off, the kit's one refusal is a
+            // bundle it would have to load, and that one is loaded in the child.
+            let without_loading = ScanOptions {
+                load_without_moduleinfo: false,
+                ..ScanOptions::default()
+            };
+            match scan_bundle(path, host, &without_loading) {
+                Ok(bundle) => Ok(Description::of(bundle)),
+                Err(_) => command.describe(path),
             }
         }
-        Err(error) => CachedBundle {
-            failure: Some(format!("{}: {error}", path.display())),
-            path,
-            modified,
-            entries: Vec::new(),
-        },
+    }
+}
+
+/// Describes one bundle through the kit in this process: its effects, or why it could not be
+/// read (the bundle's path and the kit's message, which ends with the fix).
+pub(crate) fn describe_here(path: &Path, host: &HostContext, options: &ScanOptions) -> Description {
+    match scan_bundle(path, host, options) {
+        Ok(bundle) => Description::of(bundle),
+        Err(error) => Description::failed(format!("{}: {error}", path.display())),
     }
 }
 
