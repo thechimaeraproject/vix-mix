@@ -250,9 +250,15 @@ them. `paint_filled` fills a closed run as a fan from its centre (the browser's 
   three lines, lit under the pointer or while its menu is open), the title "Vix Mix" (600, 13),
   and the display centred: cells on black split by hairlines, `48 kHz`, `256 samples`,
   `5.3 ms` (the number in mono 500, the unit faint) and `DSP` with its 36-point bar and
-  percentage; the rate drops a needless decimal (`48`, `44.1`), and every number is a dash
-  until the host reports a rate. No in-app window buttons: the desktop draws the window's
-  decorations.
+  percentage (`ui::DspCell`): the bar fills to the host's `dsp_load`, its average over a
+  quarter second, and a hairline tick in the peak-hold colour marks `dsp_peak`, the worst
+  cycle held about a second, its left edge at the peak as a meter's peak-hold line sits on
+  its level, pinned at the bar's end above 100 % and not drawn at or below 2 %; the
+  percentage is the average (`ui::dsp_percent`), a whole percent from 1 % up and past 100 %,
+  `0%` only for none and tenths below 1 % (`0.4%`), in the mute colour while the peak is over
+  100 %; the rate drops a needless decimal (`48`, `44.1`), and every number is a dash until
+  the host reports a rate, with no tick. No in-app window buttons: the desktop draws the
+  window's decorations.
 - **The banner**, the host's `BackendState::banner()` when it has one, a hairline in the
   mute colour round it: "No audio backend on this platform" on Windows; on Linux PipeWire's
   refusal (`Absent`), the mixer connected but idle with what would drive it (`Idle`), or the
@@ -519,6 +525,11 @@ gestures built it still draws the look gate's PNG byte for byte, because nothing
 cargo run -p vix-mix -- --dump-png docs/design/prototype/egui-look-gate.png
 ```
 
+It was retaken on 2026-11-10, when the DSP cell gained its peak tick (issue 25): the capture
+at master first matched the old file byte for byte, and the new one differs from it in 16
+pixels alone, the tick (1 × 4 points at 2×) three points past the bar's fill, `FakeHost`'s
+peak above its load. Nothing else moved.
+
 ## Verification
 
 `cargo test -p vix-mix`, headless on both CI legs (egui runs without a window or a GPU).
@@ -672,7 +683,12 @@ gesture sent, and what is in view is what the last frame painted whole inside it
 - `meters.rs`: a level reads on the fader's taper; a peak holds 900 ms then falls 0.006 a
   frame to the level; the console's meters follow the host's frame by position.
 - `ui.rs`, headless frames of `ui::draw` that press nothing and ask nothing: the header names
-  the app and shows the display; the display says kHz without a needless decimal; the banner
+  the app and shows the display, the DSP bar filled to the load with the peak's tick past the
+  fill; the display says kHz without a needless decimal; headless frames of the display alone
+  from a given `StatsFrame`: the DSP number reads tenths below 1 % and `0%` only for none,
+  bright; the tick sits at the peak and, over the budget, pins at the bar's end while the
+  number takes the mute colour (and passes 100 % when the average does), and a peak at or
+  under 2 % draws none; with no rate the cell is a dash with no tick; the banner
   shows for no backend and not while the mixer runs (Idle and Disconnected are the
   acceptance's); the console draws the example's strips, inserts,
   readouts, scales and the add column; a muted send reads struck through and a bypassed insert
@@ -710,7 +726,8 @@ gesture sent, and what is in view is what the last frame painted whole inside it
   before it was minimised): no frame while minimised, drawing again at once when restored.
 - `cargo run -p vix-mix -- --quit-after-frames 3` runs on the real host and exits 0.
 - The capture command above writes the 1800 × 976 PNG, byte for byte the look gate's (again
-  on the branch rebased onto lane 06's host).
+  on the branch rebased onto lane 06's host, and at master before the DSP peak tick on
+  2026-11-10, on the RTX 3090 under Vulkan; the reference was then retaken, § The capture).
 - An editor: a scratch profile (`CHIMAERA_CONFIG_DIR`) with Goodhertz's Tone Control 3 on Mic
   opened it in a window titled "Ghz Tone Control 3 · Mic · slot 1" at the 552 × 404 it asked
   for, drawn by the plugin, and closed it through the host when its window closed (again
