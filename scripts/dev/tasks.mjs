@@ -53,4 +53,12 @@ export const TASKS = [
     title: "Linux only: the release tarball in target/package/ (binary, desktop entry, icon, metainfo, install.sh)",
     commands: [{ exe: "{bash}", args: ["scripts/package/linux-tarball.sh"] }],
   },
+  {
+    // docs/cookbook/install-on-fedora.md step 5. On a system without rpmbuild the script says
+    // what to install and exits 1.
+    id: "rpm",
+    section: "Package",
+    title: "Fedora only: the RPM of HEAD in target/package/ (vendored, built with rpmbuild)",
+    commands: [{ exe: "{bash}", args: ["scripts/package/rpm.sh"] }],
+  },
 ];

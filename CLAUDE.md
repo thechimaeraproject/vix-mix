@@ -115,8 +115,11 @@ scalable icon in the console's colours and the AppStream metadata, under one id
 (`org.chimaeraproject.vixmix`), in `packaging/linux/` with `install.sh`, and the release tarball
 in `scripts/package/linux-tarball.sh` (`dev package`): Vix Mix installs after
 `cargo install --path app --locked` or from the tarball, into `~/.local` or `/usr/local`, proven
-in the Ubuntu container. The charter's packaging finding recommends native (the tarball now, an
-RPM next, a COPR once public), not Flatpak. It does not own what the by-hand pass will fix: that
+in the Ubuntu container. The charter's packaging finding recommends native, not Flatpak, and
+the user took it (2026-11-10): an RPM (`packaging/linux/vix-mix.spec`, built from a source
+tarball with every crate vendored by `scripts/package/rpm.sh`, `dev rpm`), which
+`.github/workflows/linux-build.yml` builds in a Fedora container beside the tarball after every
+merge; a COPR once public. It does not own what the by-hand pass will fix: that
 pass (handoff 08 step 4) has not run, and
 [handoff 09](docs/handoffs/09-round-1-fixes.md) holds what it must check. See
 `docs/cookbook/install-on-fedora.md` and the two handoffs.
@@ -163,10 +166,10 @@ crates/vixmix-host/        the orchestrator behind the Host trait: RealHost, Fak
 app/                       the vix-mix binary: winit + egui-winit + egui-wgpu over a Host
 docs/                      index, charter, roadmap, build map, reference, handoffs, the design pack, kit-*.md records
 scripts/dev/tasks.mjs      the dev registry; scripts/dev.mjs, dev.bat and dev.sh are its front door
-scripts/package/           the Linux release tarball (dev package)
-packaging/linux/           the desktop entry, icon, AppStream metainfo and install.sh
+scripts/package/           the Linux release tarball and the RPM (dev package, dev rpm)
+packaging/linux/           the desktop entry, icon, AppStream metainfo, install.sh and the RPM spec
 .github/workflows/ci.yml   check (linux) with a headless PipeWire, check (windows)
-.github/workflows/linux-build.yml   the release tarball as an artifact, on master after every merge (ci.onMerge)
+.github/workflows/linux-build.yml   the tarball and the RPM as artifacts, on master after every merge (ci.onMerge)
 ```
 
 The dependency direction: the model depends on no workspace crate; the engine on the model; the

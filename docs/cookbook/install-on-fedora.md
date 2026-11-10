@@ -1,9 +1,9 @@
 # Install Vix Mix on Fedora
 
-Vix Mix as a desktop app on Fedora KDE: built from the checkout, installed with `cargo install`
-or from the release tarball, and in the KDE launcher with its icon. It is a native install, not
+Vix Mix as a desktop app on Fedora KDE: installed as an RPM, with `cargo install` from the
+checkout, or from the release tarball, and in the KDE launcher with its icon. It is a native install, not
 a Flatpak: a sandboxed VST3 host cannot load the plugins the machine has, and yabridge does not
-work inside one ([the charter](../charter.md) § Open, Packaging). The packaging files are
+work inside one ([the charter](../charter.md) § Decisions, Packaging, and § Rejected). The packaging files are
 `packaging/linux/`; [handoff 08](../handoffs/08-packaging-and-first-real-test.md) made them.
 
 What goes where. `<data>` is `~/.local/share` for an install for you alone (`$XDG_DATA_HOME`
@@ -16,6 +16,10 @@ when it is set), or `<prefix>/share` with `--prefix` (`/usr/local/share` for eve
 | `packaging/linux/org.chimaeraproject.vixmix.svg` | `<data>/icons/hicolor/scalable/apps/` |
 | `packaging/linux/org.chimaeraproject.vixmix.metainfo.xml` | `<data>/metainfo/` |
 | `app/assets/fonts/OFL.txt`, the licence of the fonts built into the binary | `<data>/licenses/vix-mix/` |
+
+The RPM (step 5) puts the same files in Fedora's places instead: the binary in `/usr/bin`, the
+rest under `/usr/share`, the fonts' licence in `/usr/share/licenses/vix-mix/`; its desktop entry
+names `vix-mix` bare, which `/usr/bin` on `PATH` finds.
 
 `org.chimaeraproject.vixmix` is the one id the desktop entry, the icon and the AppStream
 metadata share. Your setup lives in `~/.config/vix-mix/` and no step here touches it.
@@ -75,12 +79,46 @@ by its absolute path, so the launcher starts it whatever the desktop session's `
 finds the binary on `PATH` or in `~/.cargo/bin`, and says to run the first command when there
 is none. To update later: `git pull`, then the same two commands.
 
-## 5. Or install from the tarball
+## 5. Or install a package: the RPM or the tarball
 
-**Without building it.** Every merge to `master` builds the tarball on GitHub
-(`.github/workflows/linux-build.yml`, which `kit merge` dispatches). Take the newest run's
-artifact, which holds the tarball and its `.sha256`; the repository is private, so sign in
-first (`gh auth login`):
+### The RPM
+
+The install `dnf` keeps track of, for every user of the machine. Every merge to `master` builds
+it in a Fedora container on GitHub (`.github/workflows/linux-build.yml`, which `kit merge`
+dispatches), as the artifact `vix-mix-fedora-rpm`. It needs none of steps 1 to 4, only `gh`
+signed in (`sudo dnf install gh`, then `gh auth login`: the repository is private):
+
+```bash
+run="$(gh run list --repo thechimaeraproject/vix-mix --workflow linux-build.yml --branch master \
+  --status success --limit 1 --json databaseId --jq '.[0].databaseId')"
+gh run download "$run" --repo thechimaeraproject/vix-mix --name vix-mix-fedora-rpm
+sha256sum -c vix-mix-*.rpm.sha256
+sudo dnf install ./vix-mix-*.rpm
+```
+
+`dnf` brings what it runs with (PipeWire's libraries, WirePlumber, the icon theme). Its release
+names the commit it was built from (`1.<UTC time>git<short id>`), so a newer build upgrades an
+older one: download it the same way, then `sudo dnf upgrade ./vix-mix-*.rpm`. It is built on
+the Fedora release current when it was built, and installs there and on newer ones.
+
+To build it yourself on Fedora, with steps 1 and 3 done, in the checkout:
+
+```bash
+sudo dnf install rpm-build rustup desktop-file-utils libappstream-glib
+rustup-init -y        # step 2's rustup, from Fedora's package; skip it if Rust is there
+scripts/package/rpm.sh
+```
+
+It builds the commit checked out (not your uncommitted changes, which it says it leaves out),
+from a source tarball with every crate vendored, so `rpmbuild` reads nothing from the network,
+and writes `target/package/vix-mix-<version>-1.<snapshot>.fc<N>.x86_64.rpm` with its
+`.sha256`. `--release` names it after the version alone; `./dev.sh rpm` runs the same script.
+The spec is `packaging/linux/vix-mix.spec`.
+
+### The tarball
+
+**Without building it.** Every merge to `master` builds the tarball on GitHub too, as the
+artifact `vix-mix-linux-x86_64`, which holds the tarball and its `.sha256`:
 
 ```bash
 gh run download --repo thechimaeraproject/vix-mix --name vix-mix-linux-x86_64 \
@@ -132,7 +170,8 @@ places ([the by-hand pass](by-hand-pass.md) step 1 lists them).
 
 ```bash
 packaging/linux/install.sh --uninstall && cargo uninstall vix-mix     # what step 4 installed
-vix-mix-<version>-linux-x86_64/install.sh --uninstall                 # what step 5 installed
+sudo dnf remove vix-mix                                               # the RPM (step 5)
+vix-mix-<version>-linux-x86_64/install.sh --uninstall                 # the tarball (step 5)
 ```
 
 Give `--uninstall` the same `--prefix` the install had. It removes the desktop entry, the
@@ -147,9 +186,11 @@ desktop-file-validate ~/.local/share/applications/org.chimaeraproject.vixmix.des
 appstreamcli validate --no-net ~/.local/share/metainfo/org.chimaeraproject.vixmix.metainfo.xml
 ```
 
-(`sudo dnf install desktop-file-utils appstream` if the last two are missing.) `Exec` names
+(`sudo dnf install desktop-file-utils appstream` if the last two are missing.) For the RPM the
+files are under `/usr/share` instead, and `rpm -q vix-mix` names the build installed. `Exec`
+names
 the installed `vix-mix` by its absolute path in double quotes and `TryExec` by the same path
-bare, `desktop-file-validate` prints nothing, and `appstreamcli` ends with
+bare (the RPM's both name `vix-mix` bare), `desktop-file-validate` prints nothing, and `appstreamcli` ends with
 `Validation was successful`. In KDE, the launcher lists Vix Mix with its icon, and starting it
 opens the window titled "Vix Mix". While it runs, its entry in the task manager should show
 the same icon, and the launch cursor should stop bouncing once the window is up; a generic
