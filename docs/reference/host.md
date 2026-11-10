@@ -149,11 +149,15 @@ again and each is routed again. At most 128 devices and 256 app streams are foll
 
 `poll()` pumps the null backend one quantum (256 frames), or handles PipeWire's events (at most
 1024 a poll): `Connected { rate }` calls `Engine::set_rate`, `TickSource` and `QuantumChanged`
-update the state, Master out driving the tick while the setup names a device for Monitor is a
-toast ("Monitor's output device is not there…"), said once for that device until Monitor plays
-again (not at each reconnect while it stays away, and never on a first start before Monitor's
-device is picked), devices and app streams update `devices()` and `apps()`, and each app that
-appeared is routed.
+update the state, Master out or the Master source driving the tick while the device the setup
+names for Monitor is not among the devices the backend reports is a toast, said once for that
+device until Monitor plays again (not at each reconnect while it stays away, and never on a
+first start before Monitor's device is picked): "Monitor's output device is not there…" when
+Master out plays, or, when no mix plays to a device, "Monitor's output device “Headphones” is
+not there and no mix plays to a device: the mixer waits for it…", which names the device, says
+the mixer runs only while an app records “Vix Mix Master” until then, and says to plug it in or
+pick another output for Monitor; devices and app streams update `devices()` and `apps()`, and
+each app that appeared is routed.
 Then `Engine::reap` and `Instances::reap`; `Instances::tick` (an editor's edit goes to its
 processor and makes the autosave due; a dirty plugin is `SetupChanged` and due;
 `IoChanged(instance)` calls `Engine::set_up_again(instance)`); the instances kept for an undo
@@ -166,7 +170,15 @@ the save runs when due.
 backend says which output drives the tick; `Idle` with "The mixer is stopped…" when nothing
 can (`TickSource::Stopped`), or with "No mix plays to a device, so the mixer runs only while an
 app records “Vix Mix Master”…" when only the Master source could and the engine has not run a
-cycle for 250 ms; `Running { rate, quantum }` once the tick has run.
+cycle for 250 ms; `Running { rate, quantum }` once the tick has run. While the device the setup
+names for Monitor is not among the devices the backend reports, both `Idle` banners name it
+instead and say the mixer waits for it: with nothing driving it, "The mixer is stopped:
+Monitor's output device “Headphones” is not there and no other output runs…" (`Stopped` comes
+so when the Master source's stream was given up on too, and for a moment at each connection
+before the streams are made); with only the Master source, the words of its toast above. The
+name follows each tick source, device and setup change (another device picked for Monitor is
+the one named while it is not there: the backend says nothing new when the tick stays where it
+is) and goes once Monitor plays; a device the backend reports is never called missing.
 
 `apps()` lists every app playing now, then every app a channel names that is not playing,
 then every other app seen since start (the newest 64), each once. `stats()` is the engine's:
@@ -237,9 +249,12 @@ and `open_editor` answers `HostError::Simulated`.
   backend says (connecting, idle while only an unrecorded Master source could drive the mixer,
   running at the quantum it reports, nothing said when Master out ticks before Monitor has a
   device, disconnected until the daemon is back, idle when nothing drives it); Monitor's device
-  gone is said once when the setup names it, not again at a reconnect while it stays away, and
-  again once Monitor played and lost it again
-  (`monitor_gone_is_said_once_when_the_device_the_setup_names_is_not_there`); every app is
+  gone is said once when the setup names it, in Master out's words or the Master source's, not
+  again at a reconnect while it stays away, and again once Monitor played and lost it again
+  (`monitor_gone_is_said_once_when_the_device_the_setup_names_is_not_there`); the idle banner
+  names Monitor's missing device, stopped or with only the Master source, until Monitor plays,
+  never names one the backend reports, and follows another device picked for Monitor
+  (`the_idle_banner_names_monitors_device_while_the_mixer_waits_for_it`); every app is
   routed the moment it appears, to its channel or home, follows a rename and is forgotten when
   it goes. `fake`: the first poll reports a simulated
   backend with the example's apps and devices; meters move, a muted send and a muted mix read

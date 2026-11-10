@@ -162,7 +162,7 @@ impl Audio {
     pub fn apply_graph(&mut self, setup: &Setup) {
         #[cfg(target_os = "linux")]
         if let Kind::PipeWire(pw) = &mut self.kind {
-            pw.apply_graph(setup);
+            pw.apply_graph(setup, &self.devices);
         }
         let _ = setup;
     }
@@ -239,7 +239,7 @@ pub(crate) mod linux {
     use std::time::{Duration, Instant};
 
     use vixmix_engine::Engine;
-    use vixmix_model::{AppRef, DeviceInfo, Setup, Source};
+    use vixmix_model::{AppRef, DeviceInfo, DeviceRef, Setup, Source};
     use vixmix_pipewire::{
         Backend, BackendConfig, BackendEvent, BackendGraph, DISPLAY_NAME, GraphChannel, GraphInput,
         TickSource, channel_node_name,
@@ -276,6 +276,23 @@ pub(crate) mod linux {
     /// output drives the mixer.
     pub(crate) const MONITOR_GONE: &str = "Monitor's output device is not there: Monitor is silent until it comes back or you pick another; Master still plays";
 
+    /// The toast, and the banner while nothing records the Master source, when the device the
+    /// setup names for Monitor (`device`, its description) is not there and no mix plays to a
+    /// device: only the Master source can drive the mixer.
+    pub(crate) fn monitor_waits(device: &str) -> String {
+        format!(
+            "Monitor's output device \u{201c}{device}\u{201d} is not there and no mix plays to a device: the mixer waits for it, and until then runs only while an app records \u{201c}{DISPLAY_NAME} Master\u{201d}; plug it in or pick another output for Monitor"
+        )
+    }
+
+    /// The banner while nothing drives the mixer and the device the setup names for Monitor
+    /// (`device`, its description) is not there.
+    pub(crate) fn stopped_waiting(device: &str) -> String {
+        format!(
+            "The mixer is stopped: Monitor's output device \u{201c}{device}\u{201d} is not there and no other output runs; the mixer waits for it: plug it in or pick another output for Monitor"
+        )
+    }
+
     pub(crate) struct PipeWire {
         /// `None` once it has left.
         backend: Option<Backend>,
@@ -289,9 +306,12 @@ pub(crate) mod linux {
         lost: bool,
         /// Which output drives the engine; `None` until the backend says.
         tick: Option<TickSource>,
-        /// The Monitor device [`MONITOR_GONE`] was said for, until Monitor plays again: said
-        /// once, not again at each reconnect while it stays away.
+        /// The Monitor device [`MONITOR_GONE`] or [`monitor_waits`] was said for, until
+        /// Monitor plays again: said once, not again at each reconnect while it stays away.
         told_gone: Option<String>,
+        /// The device the setup names for Monitor while another output, or none, has the tick
+        /// and the backend does not report that device: the idle banners name it.
+        waiting_for: Option<DeviceRef>,
         /// The newest routing the host asked for, per app stream playing now.
         routed: Vec<(u32, Option<String>)>,
         /// The engine's frame count, and whether it moved within [`TICK_GAP`].
@@ -328,6 +348,7 @@ pub(crate) mod linux {
                 lost: false,
                 tick: None,
                 told_gone: None,
+                waiting_for: None,
                 routed: Vec::new(),
                 frames: engine.stats().frames.load(Ordering::Relaxed),
                 moved_at: Instant::now(),
@@ -335,18 +356,20 @@ pub(crate) mod linux {
             })
         }
 
-        /// Connected but not running yet, running, idle with why, or lost.
+        /// Connected but not running yet, running, idle with why (naming Monitor's device when
+        /// the mixer waits for it), or lost.
         pub fn state(&self) -> BackendState {
             if self.lost {
                 return BackendState::Disconnected;
             }
+            let waiting = self.waiting_for.as_ref().map(|d| d.description.as_str());
             match (self.tick, self.running) {
                 (None, _) => BackendState::Connecting,
                 (Some(TickSource::Stopped), _) => BackendState::Idle {
-                    reason: STOPPED.to_string(),
+                    reason: waiting.map_or_else(|| STOPPED.to_string(), stopped_waiting),
                 },
                 (Some(TickSource::MasterSource), _) if !self.ticking => BackendState::Idle {
-                    reason: only_recorded(),
+                    reason: waiting.map_or_else(only_recorded, monitor_waits),
                 },
                 (_, Some((rate, quantum))) => BackendState::Running { rate, quantum },
                 _ => BackendState::Connecting,
@@ -402,28 +425,32 @@ pub(crate) mod linux {
                     }
                 }
                 BackendEvent::TickSource(source) => {
-                    match source {
-                        // Monitor plays: a later loss of its device is news again.
-                        TickSource::Monitor => self.told_gone = None,
-                        // Master out ticks while the setup names a device for Monitor: that
-                        // device is not there. Before Monitor's device is picked (a first
-                        // start) there is nothing to say.
-                        TickSource::MasterOut => {
-                            if let Some(device) = &setup.monitor.device
-                                && self.told_gone.as_deref() != Some(device.name.as_str())
-                            {
-                                heard.toasts.push(MONITOR_GONE.to_string());
-                                self.told_gone = Some(device.name.clone());
-                            }
-                        }
-                        TickSource::MasterSource | TickSource::Stopped => {}
-                    }
                     // The backend sends it once per connection: one that is not `Stopped`
                     // says the daemon is back, even before a tick can run.
                     if source != TickSource::Stopped {
                         self.lost = false;
                     }
                     self.tick = Some(source);
+                    self.follow(setup, devices);
+                    match (source, &self.waiting_for) {
+                        // Monitor plays: a later loss of its device is news again.
+                        (TickSource::Monitor, _) => self.told_gone = None,
+                        // Another output ticks while the device the setup names for Monitor
+                        // is not there: said once for that device, in words for whichever
+                        // output ticks. Before Monitor's device is picked (a first start)
+                        // there is nothing to say.
+                        (TickSource::MasterOut | TickSource::MasterSource, Some(device))
+                            if self.told_gone.as_deref() != Some(device.name.as_str()) =>
+                        {
+                            heard.toasts.push(if source == TickSource::MasterOut {
+                                MONITOR_GONE.to_string()
+                            } else {
+                                monitor_waits(&device.description)
+                            });
+                            self.told_gone = Some(device.name.clone());
+                        }
+                        _ => {}
+                    }
                 }
                 BackendEvent::DeviceAdded(info) => {
                     // Devices are reported again only once the daemon is back.
@@ -433,10 +460,12 @@ pub(crate) mod linux {
                         devices.push(info);
                     }
                     heard.devices = true;
+                    self.follow(setup, devices);
                 }
                 BackendEvent::DeviceRemoved(name) => {
                     devices.retain(|d| d.device.name != name);
                     heard.devices = true;
+                    self.follow(setup, devices);
                 }
                 BackendEvent::AppStreamAdded(stream) => {
                     streams.retain(|s| s.node != stream.node);
@@ -462,6 +491,23 @@ pub(crate) mod linux {
             }
         }
 
+        /// Keeps [`PipeWire::waiting_for`] true to the newest tick source, setup and devices:
+        /// Master out or the Master source ticks, or nothing does, while the device the setup
+        /// names for Monitor is not among those the backend reports. `None` once Monitor
+        /// plays, or before Monitor's device is picked.
+        fn follow(&mut self, setup: &Setup, devices: &[DeviceInfo]) {
+            let away = matches!(
+                self.tick,
+                Some(TickSource::MasterOut | TickSource::MasterSource | TickSource::Stopped)
+            );
+            let reported = |name: &str| devices.iter().any(|d| d.device.name == name);
+            self.waiting_for = setup
+                .monitor
+                .device
+                .clone()
+                .filter(|monitor| away && !reported(monitor.name.as_str()));
+        }
+
         fn route(&mut self, node: u32, to: Option<String>) {
             if let Some(backend) = &self.backend {
                 backend.route(node, to.as_deref());
@@ -470,8 +516,10 @@ pub(crate) mod linux {
             self.routed.push((node, to));
         }
 
-        /// The quantum first, so a stream the graph makes asks for it from the start.
-        pub fn apply_graph(&mut self, setup: &Setup) {
+        /// The quantum first, so a stream the graph makes asks for it from the start. Another
+        /// device picked for Monitor is the one the banner names while it is not there (the
+        /// backend says nothing new when the tick stays where it is).
+        pub fn apply_graph(&mut self, setup: &Setup, devices: &[DeviceInfo]) {
             if let Some(backend) = &self.backend {
                 if setup.prefs.quantum != self.quantum {
                     backend.set_quantum(setup.prefs.quantum);
@@ -479,6 +527,7 @@ pub(crate) mod linux {
                 backend.apply(&graph(setup));
             }
             self.quantum = setup.prefs.quantum;
+            self.follow(setup, devices);
         }
 
         pub fn reroute(&mut self, setup: &Setup, streams: &[Stream]) {
@@ -546,7 +595,7 @@ pub(crate) mod linux {
     mod tests {
         use super::*;
         use vixmix_engine::{EngineConfig, MAX_QUANTUM};
-        use vixmix_model::{Command, DeviceDirection, DeviceRef, MixId, apply, example};
+        use vixmix_model::{Command, DeviceDirection, MixId, apply, example};
         use vixmix_pipewire::AppStream;
 
         /// A backend's host half with no daemon behind it: what `hear` makes of each event.
@@ -572,6 +621,7 @@ pub(crate) mod linux {
                         lost: false,
                         tick: None,
                         told_gone: None,
+                        waiting_for: None,
                         routed: Vec::new(),
                         frames: 0,
                         moved_at: Instant::now(),
@@ -693,11 +743,11 @@ pub(crate) mod linux {
                 &mut setup,
                 Command::SetMixDevice {
                     mix: MixId::Monitor,
-                    device: Some(headphones),
+                    device: Some(headphones.clone()),
                 },
             )
             .unwrap();
-            let mut pw = Offline::new(setup);
+            let mut pw = Offline::new(setup.clone());
             let gone = || vec![MONITOR_GONE.to_string()];
             // Started with the headphones unplugged: said once.
             let _ = pw.hear(BackendEvent::TickSource(TickSource::MasterOut));
@@ -711,6 +761,160 @@ pub(crate) mod linux {
             let _ = pw.hear(BackendEvent::TickSource(TickSource::Monitor));
             let _ = pw.hear(BackendEvent::TickSource(TickSource::MasterOut));
             assert_eq!(pw.heard.toasts, [gone(), gone()].concat());
+
+            // With Master on "No device" the Master source ticks instead: said once too, in
+            // words that name the device and do not say Master plays.
+            let mut pw = Offline::new(setup);
+            let waits = || vec![monitor_waits("Headphones")];
+            let _ = pw.hear(BackendEvent::TickSource(TickSource::MasterSource));
+            assert_eq!(pw.heard.toasts, waits());
+            assert!(
+                pw.heard.toasts[0].contains("\u{201c}Headphones\u{201d}")
+                    && !pw.heard.toasts[0].contains("Master still plays"),
+                "{:?}",
+                pw.heard.toasts
+            );
+            // The daemon restarts while they are still away: not said again.
+            let _ = pw.hear(BackendEvent::Disconnected);
+            let _ = pw.hear(BackendEvent::TickSource(TickSource::Stopped));
+            let _ = pw.hear(BackendEvent::TickSource(TickSource::MasterSource));
+            assert_eq!(pw.heard.toasts, waits());
+            // Master given a device and taken off it again while they are away: nothing new.
+            let _ = pw.hear(BackendEvent::TickSource(TickSource::MasterOut));
+            let _ = pw.hear(BackendEvent::TickSource(TickSource::MasterSource));
+            assert_eq!(pw.heard.toasts, waits());
+            // Plugged in, Monitor plays; unplugged again, said again.
+            let _ = pw.hear(BackendEvent::DeviceAdded(DeviceInfo {
+                device: headphones,
+                direction: DeviceDirection::Output,
+            }));
+            let _ = pw.hear(BackendEvent::TickSource(TickSource::Monitor));
+            let _ = pw.hear(BackendEvent::DeviceRemoved("alsa.headphones".into()));
+            let _ = pw.hear(BackendEvent::TickSource(TickSource::MasterSource));
+            assert_eq!(pw.heard.toasts, [waits(), waits()].concat());
+        }
+
+        #[test]
+        fn the_idle_banner_names_monitors_device_while_the_mixer_waits_for_it() {
+            let headphones = DeviceRef {
+                name: "alsa.headphones".into(),
+                description: "Headphones".into(),
+            };
+            let output = |device: &DeviceRef| DeviceInfo {
+                device: device.clone(),
+                direction: DeviceDirection::Output,
+            };
+            let mut setup = Setup::default();
+            let _ = apply(
+                &mut setup,
+                Command::SetMixDevice {
+                    mix: MixId::Monitor,
+                    device: Some(headphones.clone()),
+                },
+            )
+            .unwrap();
+            let mut pw = Offline::new(setup);
+            let _ = pw.hear(BackendEvent::DeviceAdded(output(&headphones)));
+            let _ = pw.hear(BackendEvent::TickSource(TickSource::Monitor));
+            let running = BackendState::Running {
+                rate: 48_000,
+                quantum: 256,
+            };
+            assert_eq!(
+                pw.hear(BackendEvent::Connected {
+                    rate: 48_000,
+                    quantum: 256
+                }),
+                running
+            );
+            // Unplugged with Master on "No device", and nothing records the Master source: the
+            // banner names the headphones and says the mixer waits for them.
+            let _ = pw.hear(BackendEvent::DeviceRemoved("alsa.headphones".into()));
+            let waits = BackendState::Idle {
+                reason: monitor_waits("Headphones"),
+            };
+            assert_eq!(
+                pw.hear(BackendEvent::TickSource(TickSource::MasterSource)),
+                waits
+            );
+            let banner = waits.banner().unwrap();
+            assert!(
+                banner.contains("\u{201c}Headphones\u{201d}") && banner.contains("waits"),
+                "{banner}"
+            );
+            // The Master source given up on too: stopped, and still waiting for them.
+            assert_eq!(
+                pw.hear(BackendEvent::TickSource(TickSource::Stopped)),
+                BackendState::Idle {
+                    reason: stopped_waiting("Headphones")
+                }
+            );
+            let _ = pw.hear(BackendEvent::TickSource(TickSource::MasterSource));
+            // Plugged back: Monitor plays, and no banner names them.
+            let _ = pw.hear(BackendEvent::DeviceAdded(output(&headphones)));
+            assert_eq!(
+                pw.hear(BackendEvent::TickSource(TickSource::Monitor)),
+                running
+            );
+            // Monitor's stream given up on while the headphones are there: they are not called
+            // missing, on the banner or the toast line.
+            assert_eq!(
+                pw.hear(BackendEvent::TickSource(TickSource::MasterSource)),
+                BackendState::Idle {
+                    reason: only_recorded()
+                }
+            );
+            assert_eq!(pw.heard.toasts, [monitor_waits("Headphones")]);
+            let _ = pw.hear(BackendEvent::TickSource(TickSource::Monitor));
+            // Unplugged again, then another output picked for Monitor while the tick stays on
+            // the Master source: the banner follows the setup.
+            let _ = pw.hear(BackendEvent::DeviceRemoved("alsa.headphones".into()));
+            let _ = pw.hear(BackendEvent::TickSource(TickSource::MasterSource));
+            let dac = DeviceRef {
+                name: "alsa.usb-dac".into(),
+                description: "USB DAC".into(),
+            };
+            let _ = apply(
+                &mut pw.setup,
+                Command::SetMixDevice {
+                    mix: MixId::Monitor,
+                    device: Some(dac),
+                },
+            )
+            .unwrap();
+            pw.pw.apply_graph(&pw.setup, &pw.devices);
+            assert_eq!(
+                pw.pw.state(),
+                BackendState::Idle {
+                    reason: monitor_waits("USB DAC")
+                },
+                "a device that is not there either is the one it waits for"
+            );
+            let speakers = DeviceRef {
+                name: "alsa.speakers".into(),
+                description: "Speakers".into(),
+            };
+            let _ = pw.hear(BackendEvent::DeviceAdded(output(&speakers)));
+            let _ = apply(
+                &mut pw.setup,
+                Command::SetMixDevice {
+                    mix: MixId::Monitor,
+                    device: Some(speakers),
+                },
+            )
+            .unwrap();
+            pw.pw.apply_graph(&pw.setup, &pw.devices);
+            assert_eq!(
+                pw.pw.state(),
+                BackendState::Idle {
+                    reason: only_recorded()
+                },
+                "a device that is there is never called missing"
+            );
+            assert_eq!(
+                pw.hear(BackendEvent::TickSource(TickSource::Monitor)),
+                running
+            );
         }
 
         #[test]
