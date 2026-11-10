@@ -52,7 +52,7 @@ itself; an issue closes when its item is struck through in handoff 09.
 | Issue | What | Handoff 09 |
 |---|---|---|
 | [#19](https://github.com/thechimaeraproject/vix-mix/issues/19) | the first real test on Fedora KDE: the by-hand pass, its figures and checks (the umbrella); closed 2026-11-10, the pass ran | items 6, 8, 11 and 12 struck; the figures of items 1, 2 and 5 not measured, open without an issue |
-| [#26](https://github.com/thechimaeraproject/vix-mix/issues/26) | found by the pass: a plugin that aborts while loading takes the scan and Vix Mix down | the Goal's first finding, step 5 |
+| [#26](https://github.com/thechimaeraproject/vix-mix/issues/26) | found by the pass: a plugin that aborts while loading takes the scan and Vix Mix down; fixed and closed 2026-11-10 | the Goal's first finding, step 5, built |
 | [#25](https://github.com/thechimaeraproject/vix-mix/issues/25) | found by the pass: the DSP readout flickers between about 12 % and 0 % | the Goal's second finding, step 6 |
 | [#11](https://github.com/thechimaeraproject/vix-mix/issues/11) | a plugin editor's window resizes without telling the plugin; the plugin-folder bound (change request 10); fixed and closed 2026-11-10 | item 14, struck |
 | [#12](https://github.com/thechimaeraproject/vix-mix/issues/12) | SIGTERM and logout skip the shutdown order | item 10 |
