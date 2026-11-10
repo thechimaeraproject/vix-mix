@@ -156,8 +156,10 @@ first start before Monitor's device is picked): "Monitor's output device is not 
 Master out plays, or, when no mix plays to a device, "Monitor's output device “Headphones” is
 not there and no mix plays to a device: the mixer waits for it…", which names the device, says
 the mixer runs only while an app records “Vix Mix Master” until then, and says to plug it in or
-pick another output for Monitor; devices and app streams update `devices()` and `apps()`, and
-each app that appeared is routed.
+pick another output for Monitor. Monitor's stream refused while the backend reports its device
+says neither: both say the device is not there, and the backend connects that stream again each
+second while the device is there, so the tick can move back and forth each second; devices and
+app streams update `devices()` and `apps()`, and each app that appeared is routed.
 Then `Engine::reap` and `Instances::reap`; `Instances::tick` (an editor's edit goes to its
 processor and makes the autosave due; a dirty plugin is `SetupChanged` and due;
 `IoChanged(instance)` calls `Engine::set_up_again(instance)`); the instances kept for an undo
@@ -250,7 +252,8 @@ and `open_editor` answers `HostError::Simulated`.
   running at the quantum it reports, nothing said when Master out ticks before Monitor has a
   device, disconnected until the daemon is back, idle when nothing drives it); Monitor's device
   gone is said once when the setup names it, in Master out's words or the Master source's, not
-  again at a reconnect while it stays away, and again once Monitor played and lost it again
+  again at a reconnect while it stays away, again once Monitor played and lost it again, and
+  not when Monitor's stream is refused while the backend reports its device
   (`monitor_gone_is_said_once_when_the_device_the_setup_names_is_not_there`); the idle banner
   names Monitor's missing device, stopped or with only the Master source, until Monitor plays,
   never names one the backend reports, and follows another device picked for Monitor
