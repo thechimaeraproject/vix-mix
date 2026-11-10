@@ -22,7 +22,7 @@ use vixmix_plugins::Catalog;
 use winit::raw_window_handle::{RawWindowHandle, Win32WindowHandle};
 use winit::window::WindowId;
 
-use crate::console;
+use crate::console::Geometry;
 use crate::editors::{EditorWindow, EditorWindows, Opener};
 use crate::fader::Target;
 use crate::shell::{Intent, Shell};
@@ -428,23 +428,33 @@ impl Harness {
         self.setup().channels[index].id
     }
 
-    /// Where `strip` is drawn: the console's top-left corner sits under the header.
+    /// The console as the last frame laid it out, for the setup as it is now.
+    pub fn geometry(&self) -> Geometry {
+        Geometry::new(self.shell.console, self.setup().channels.len())
+    }
+
+    /// How far the channels are scrolled: where the next frame draws them.
+    pub fn scroll(&self) -> f32 {
+        self.shell.gestures.scroll.offset
+    }
+
+    /// Where `strip` is drawn, scrolled as the channels are (the part out of view included).
     pub fn strip(&self, strip: Strip) -> Rect {
-        let origin = Pos2::new(0.0, size::HEADER);
-        let (rects, _) = console::strips(origin, self.setup());
-        rects
-            .into_iter()
-            .find(|(s, _)| *s == strip)
-            .map(|(_, r)| r)
+        self.geometry()
+            .strip(strip, self.setup(), self.scroll())
             .expect("the strip is on the console")
     }
 
     /// Where the add-channel column is drawn.
     pub fn add_column(&self) -> Rect {
-        let origin = Pos2::new(0.0, size::HEADER);
-        console::strips(origin, self.setup())
-            .1
+        self.geometry()
+            .add_column(self.setup(), self.scroll())
             .expect("the console has room for a channel")
+    }
+
+    /// The travel of a fader: its column less the inset at each end.
+    pub fn travel(&self, target: Target) -> f32 {
+        self.fader(target).height() - 2.0 * size::FADER_INSET
     }
 
     /// A fader's column.

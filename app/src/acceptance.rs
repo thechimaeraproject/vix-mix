@@ -15,9 +15,6 @@ use crate::shell::Intent;
 use crate::test_support::{Call, FakeWindows, Harness};
 use crate::theme::{pop, size};
 
-/// The travel of a channel's fader: its column less 6 at each end.
-const TRAVEL: f32 = 210.0 - 2.0 * 6.0;
-
 fn close(a: f32, b: f32) -> bool {
     (a - b).abs() < 1e-5
 }
@@ -48,7 +45,7 @@ fn a_fader_drag_moves_the_send_by_the_pointers_travel() {
     // Up 20 points in two moves: each move sends where the fader has got to.
     let sent = h.drag(from, &[from - vec2(0.0, 10.0), from - vec2(0.0, 20.0)]);
     assert_eq!(sent.len(), 2, "{sent:?}");
-    let expected = before.monitor.position + 20.0 / TRAVEL;
+    let expected = before.monitor.position + 20.0 / h.travel(target);
     let Command::SetSend { ch, mix, position } = sent[1] else {
         panic!("{sent:?}")
     };
@@ -123,7 +120,10 @@ fn a_press_on_the_line_grabs_it_where_it_is() {
     }
     let at = h.fader_line(target) + vec2(0.0, 3.0);
     let sent = h.drag(at, &[at - vec2(0.0, 10.0)]);
-    assert!(close(send_position(one(&sent)), start + 10.0 / TRAVEL));
+    assert!(close(
+        send_position(one(&sent)),
+        start + 10.0 / h.travel(target)
+    ));
 }
 
 #[test]
@@ -140,8 +140,9 @@ fn a_drag_after_a_jump_goes_on_from_where_it_jumped() {
     let positions: Vec<f32> = sent.iter().map(send_position).collect();
     assert_eq!(positions.len(), 3, "{sent:?}");
     assert!(close(positions[0], jumped));
-    assert!(close(positions[1], jumped + 10.0 / TRAVEL));
-    assert!(close(positions[2], jumped + 20.0 / TRAVEL));
+    let travel = h.travel(target);
+    assert!(close(positions[1], jumped + 10.0 / travel));
+    assert!(close(positions[2], jumped + 20.0 / travel));
     // With Shift the jump is still to the pointer; the drag after it a fifth as far.
     h.wait(1.0);
     let at = h.fader(target).center_bottom() - vec2(0.0, 100.0);
@@ -152,7 +153,7 @@ fn a_drag_after_a_jump_goes_on_from_where_it_jumped() {
     let positions: Vec<f32> = sent.iter().map(send_position).collect();
     assert_eq!(positions.len(), 2, "{sent:?}");
     assert!(close(positions[0], jumped));
-    assert!(close(positions[1], jumped + 30.0 / TRAVEL * FINE_DRAG));
+    assert!(close(positions[1], jumped + 30.0 / travel * FINE_DRAG));
 }
 
 #[test]
@@ -184,7 +185,7 @@ fn with_shift_a_drag_moves_a_fifth_as_far() {
     let from = h.fader_line(target);
     h.modifiers = Modifiers::SHIFT;
     let sent = h.drag(from, &[from + vec2(0.0, 30.0)]);
-    let expected = taper::UNITY - 30.0 / TRAVEL * FINE_DRAG;
+    let expected = taper::UNITY - 30.0 / h.travel(target) * FINE_DRAG;
     assert_eq!(
         one(&sent),
         &Command::SetSend {
@@ -202,11 +203,12 @@ fn on_a_linked_channel_the_other_send_moves_with_it() {
     let game = h.channel(1);
     assert!(h.setup().channels[1].link);
     let before = h.setup().channels[1].clone();
-    let from = h.fader_line(Target::Send {
+    let target = Target::Send {
         ch: game,
         mix: MixId::Monitor,
-    });
-    let sent = h.drag(from, &[from + vec2(0.0, 19.8)]);
+    };
+    let from = h.fader_line(target);
+    let sent = h.drag(from, &[from + vec2(0.0, 0.1 * h.travel(target))]);
     // The window sends the one fader; the model moves its partner by as much.
     let Command::SetSend { ch, mix, position } = *one(&sent) else {
         panic!("{sent:?}")
@@ -1116,13 +1118,12 @@ fn the_window_keeps_room_for_the_header_over_a_narrow_console() {
             .expect("removed");
     }
     h.idle(1);
-    let console = crate::console::size(1);
-    assert_eq!(console.x, 370.0);
-    let needed = h.shell.content;
-    assert!(needed.width() > console.x, "{needed:?}");
-    assert_eq!(needed.bottom(), size::HEADER + console.y);
+    let console = crate::console::least_size(1);
+    let needed = h.shell.least;
+    assert!(needed.x > console.x, "{needed:?}");
+    assert_eq!(needed.y, size::HEADER + console.y);
     // At that width the display clears the title.
-    h.screen = egui::Rect::from_min_size(Pos2::ZERO, needed.size());
+    h.screen = egui::Rect::from_min_size(Pos2::ZERO, needed);
     h.idle(2);
     let title = h.text_rect(crate::ui::TITLE);
     let rate = h.text_rect("48");
@@ -1133,8 +1134,9 @@ fn the_window_keeps_room_for_the_header_over_a_narrow_console() {
 fn a_long_chain_scrolls_in_its_well() {
     let mut h = Harness::new();
     let game = Strip::Channel(h.channel(1));
-    // Nine inserts: more than the well's 128 points hold.
-    for at in 0..9 {
+    // As many inserts as the well is slots tall: with "+ Add plugin", more than it holds.
+    let room = (crate::strip::Rows::of(h.strip(game)).fx.height() / size::SLOT) as usize;
+    for at in 0..room {
         let _ = h
             .host
             .inner
@@ -1483,15 +1485,22 @@ fn shown(h: &Harness, view: egui::Rect, text: &str) -> bool {
 /// The wheel turned by `delta` points over `at` (less than zero scrolls down), and the
 /// frames the wheel's smoothing takes to apply all of it.
 fn wheel(h: &mut Harness, at: Pos2, delta: f32) {
+    wheel_with(h, at, delta, Modifiers::NONE);
+}
+
+/// The same with `modifiers` held (Shift turns the wheel sideways).
+fn wheel_with(h: &mut Harness, at: Pos2, delta: f32, modifiers: Modifiers) {
+    h.modifiers = modifiers;
     let _ = h.pass(vec![
         egui::Event::PointerMoved(at),
         egui::Event::MouseWheel {
             unit: egui::MouseWheelUnit::Point,
             delta: vec2(0.0, delta),
             phase: egui::TouchPhase::Move,
-            modifiers: Modifiers::NONE,
+            modifiers,
         },
     ]);
+    h.modifiers = Modifiers::NONE;
     h.idle(30);
 }
 
@@ -1868,4 +1877,304 @@ fn shift_tab_through_sixteen_plugin_folders_shows_each() {
         assert_eq!(focused(&h), Some(bin(i)));
         assert!(in_view(&h, &folder(i)), "Shift+Tab to folder {i}, shown");
     }
+}
+
+/// The window resized to `width` x `height` points, and the frames it takes to settle.
+fn resize(h: &mut Harness, width: f32, height: f32) {
+    h.screen = egui::Rect::from_min_size(Pos2::ZERO, vec2(width, height));
+    h.idle(2);
+}
+
+/// Two hardware channels added to the example's six: the console is full.
+fn eight_channels(h: &mut Harness) {
+    for _ in 0..2 {
+        let _ = h
+            .host
+            .inner
+            .apply(Command::AddChannel {
+                kind: ChannelKind::Hardware,
+            })
+            .expect("room for a channel");
+    }
+    h.idle(1);
+}
+
+/// Where a channel's or a mix's mute button is.
+fn mute_at(h: &Harness, target: Target) -> Pos2 {
+    let column = h.fader(target);
+    let row = match target {
+        Target::Send { ch, .. } => h.buttons(Strip::Channel(ch)),
+        Target::Level(mix) => h.buttons(Strip::Mix(mix)),
+    };
+    Pos2::new(column.center().x, row.center().y)
+}
+
+/// Whether `strip` shows whole between the console's left edge and Monitor.
+fn whole_in_view(h: &Harness, strip: Strip) -> bool {
+    let view = h.geometry().view;
+    let rect = h.strip(strip);
+    rect.left() >= view.left() && rect.right() <= view.right()
+}
+
+#[test]
+fn a_taller_window_gives_the_well_a_little_more_and_the_faders_the_rest() {
+    let mut h = Harness::new();
+    let mic = h.channel(0);
+    // The natural size: the prototype's rows.
+    resize(&mut h, 900.0, 488.0);
+    let rows = crate::strip::Rows::of(h.strip(Strip::Channel(mic)));
+    assert_eq!((rows.fx.height(), rows.faders.height()), (151.0, 210.0));
+    // 90 points taller: the well a third of them, the faders the rest.
+    resize(&mut h, 900.0, 578.0);
+    let rows = crate::strip::Rows::of(h.strip(Strip::Channel(mic)));
+    assert_eq!((rows.fx.height(), rows.faders.height()), (181.0, 270.0));
+    let monitor = crate::strip::Rows::of(h.strip(Strip::Mix(MixId::Monitor)));
+    assert_eq!(
+        monitor.faders.y_range(),
+        rows.faders.y_range(),
+        "the mixes too"
+    );
+    // What is drawn is where it is: the mute at the strip's new bottom, a drag on the
+    // longer fader by its longer travel.
+    let target = Target::Send {
+        ch: mic,
+        mix: MixId::Monitor,
+    };
+    assert_eq!(
+        h.click(mute_at(&h, target)),
+        vec![Command::SetMute {
+            ch: mic,
+            mix: MixId::Monitor,
+            mute: true
+        }]
+    );
+    let start = h.setup().channels[0].monitor.position;
+    let from = h.fader_line(target);
+    let sent = h.drag(from, &[from - vec2(0.0, 26.0)]);
+    assert_eq!(h.travel(target), 270.0 - 2.0 * size::FADER_INSET);
+    assert!(close(
+        send_position(one(&sent)),
+        start + 26.0 / h.travel(target)
+    ));
+}
+
+#[test]
+fn a_shorter_window_keeps_all_six_scale_marks_apart() {
+    let mut h = Harness::new();
+    let least = crate::ui::least_size(h.setup());
+    assert_eq!(least.y, size::HEADER + 364.0);
+    resize(&mut h, 900.0, least.y);
+    let mic = Strip::Channel(h.channel(0));
+    let rows = crate::strip::Rows::of(h.strip(mic));
+    assert_eq!(
+        (rows.fx.height(), rows.faders.height()),
+        (151.0, size::FADER_MIN)
+    );
+    // The scale between Mic's faders: all six marks, none over another.
+    let middle = crate::strip::channel_columns(rows.faders)[1];
+    let mut marks: Vec<egui::Rect> = h
+        .texts
+        .iter()
+        .filter(|(t, r, _)| {
+            crate::strip::SCALE.iter().any(|m| m.label == t) && middle.contains(r.center())
+        })
+        .map(|(_, r, _)| *r)
+        .collect();
+    assert_eq!(marks.len(), 6, "{marks:?}");
+    marks.sort_by(|a, b| a.top().total_cmp(&b.top()));
+    for pair in marks.windows(2) {
+        assert!(pair[0].bottom() <= pair[1].top(), "{pair:?}");
+    }
+    // Shorter than that the window may not go.
+    assert_eq!(h.shell.least.y, least.y);
+}
+
+#[test]
+fn a_wide_window_keeps_the_channels_left_and_the_mixes_at_its_right_edge() {
+    let mut h = Harness::new();
+    resize(&mut h, 1600.0, 600.0);
+    assert_eq!(h.strip(Strip::Mix(MixId::Master)).right(), 1598.0);
+    assert_eq!(h.strip(Strip::Channel(h.channel(0))).left(), 2.0);
+    assert_eq!(h.geometry().max_scroll(), 0.0);
+    // Master's mute where Master now is.
+    assert_eq!(
+        h.click(mute_at(&h, Target::Level(MixId::Master))),
+        vec![Command::SetMixMute {
+            mix: MixId::Master,
+            mute: true
+        }]
+    );
+}
+
+#[test]
+fn a_narrow_window_scrolls_the_channels_and_keeps_monitor_and_master_whole() {
+    let mut h = Harness::new();
+    eight_channels(&mut h);
+    resize(&mut h, 700.0, 600.0);
+    let at = h.geometry();
+    assert_eq!(at.master.right(), 698.0, "Master against the right edge");
+    assert!(at.max_scroll() > 0.0);
+    let last = h.channel(7);
+    assert!(!whole_in_view(&h, Strip::Channel(last)));
+    // The plain wheel over the channels scrolls them sideways, to their end and no further.
+    let over = crate::strip::Rows::of(h.strip(Strip::Channel(h.channel(0))))
+        .faders
+        .center();
+    wheel(&mut h, over, -2000.0);
+    assert_eq!(h.scroll(), at.max_scroll());
+    assert!(whole_in_view(&h, Strip::Channel(last)));
+    // The last channel answers where it now shows.
+    let target = Target::Send {
+        ch: last,
+        mix: MixId::Monitor,
+    };
+    assert_eq!(
+        h.click(mute_at(&h, target)),
+        vec![Command::SetMute {
+            ch: last,
+            mix: MixId::Monitor,
+            mute: true
+        }]
+    );
+    // Monitor and Master never moved, and still answer.
+    assert_eq!(h.geometry().master, at.master);
+    assert_eq!(
+        h.click(mute_at(&h, Target::Level(MixId::Master))),
+        vec![Command::SetMixMute {
+            mix: MixId::Master,
+            mute: true
+        }]
+    );
+    // Shift with the wheel turned up scrolls them back.
+    wheel_with(&mut h, over, 2000.0, Modifiers::SHIFT);
+    assert_eq!(h.scroll(), 0.0);
+    // The wheel over Master scrolls nothing.
+    wheel(&mut h, at.master.center(), -2000.0);
+    assert_eq!(h.scroll(), 0.0);
+}
+
+#[test]
+fn adding_a_channel_in_a_narrow_window_scrolls_it_into_view_with_its_panel() {
+    let mut h = Harness::new();
+    resize(&mut h, 600.0, 600.0);
+    // The add column is past the view's end: scroll to it.
+    let over = crate::strip::Rows::of(h.strip(Strip::Channel(h.channel(0))))
+        .faders
+        .center();
+    wheel(&mut h, over, -2000.0);
+    let _ = h.click(h.add_column().center());
+    assert_eq!(h.shell.popover, Some(Popover::AddChannel));
+    h.idle(2);
+    let _ = h.click(h.text("Hardware input"));
+    h.idle(2);
+    let added = h.setup().channels.last().unwrap().id;
+    assert!(whole_in_view(&h, Strip::Channel(added)));
+    let Some(Popover::Source(panel)) = &h.shell.popover else {
+        panic!("its panel stays open: {:?}", h.shell.popover)
+    };
+    assert_eq!(panel.ch, added);
+}
+
+#[test]
+fn tab_to_a_channel_out_of_view_scrolls_it_in() {
+    let mut h = Harness::new();
+    eight_channels(&mut h);
+    resize(&mut h, 700.0, 600.0);
+    let last = Strip::Channel(h.channel(7));
+    assert!(!whole_in_view(&h, last));
+    let head = crate::strip::head_id(last);
+    let mut tabs = 0;
+    while !h.ctx.memory(|m| m.has_focus(head)) {
+        let _ = h.key(Key::Tab, Modifiers::NONE);
+        tabs += 1;
+        assert!(tabs < 400, "Tab never reached the last channel's header");
+    }
+    h.idle(2);
+    assert!(whole_in_view(&h, last), "scrolled {}", h.scroll());
+    // A wheel after it scrolls away from it; the focus that stays does not pull it back.
+    let over = crate::strip::Rows::of(h.strip(last)).faders.center();
+    wheel(&mut h, over, 2000.0);
+    assert_eq!(h.scroll(), 0.0);
+}
+
+#[test]
+fn a_popover_follows_its_header_and_closes_sending_its_rename_when_scrolled_out() {
+    let mut h = Harness::new();
+    eight_channels(&mut h);
+    resize(&mut h, 700.0, 600.0);
+    let game = h.channel(1);
+    let _ = h.click(h.head(Strip::Channel(game)).center());
+    h.idle(2);
+    let Some(Popover::Source(panel)) = &mut h.shell.popover else {
+        panic!("{:?}", h.shell.popover)
+    };
+    panel.name = "Games".to_string();
+    let done = h.text_rect("Done");
+    // Over Mic's faders, clear of the panel under Game's header.
+    let over = crate::strip::Rows::of(h.strip(Strip::Channel(h.channel(0))))
+        .faders
+        .center();
+    wheel(&mut h, over, -50.0);
+    assert!((h.scroll() - 50.0).abs() < 0.01, "{}", h.scroll());
+    assert!(matches!(h.shell.popover, Some(Popover::Source(_))));
+    let moved = h.text_rect("Done");
+    assert_eq!(
+        moved.left(),
+        done.left() - 50.0,
+        "the panel follows its header"
+    );
+    // Game's header scrolled wholly out of view: the panel closes, keeping its name.
+    wheel(&mut h, over, -400.0);
+    assert_eq!(h.shell.popover, None);
+    assert_eq!(h.setup().channel(game).unwrap().name, "Games");
+}
+
+#[test]
+fn a_drop_over_monitor_lands_there_not_on_the_hidden_channel_under_it() {
+    let mut h = Harness::new();
+    eight_channels(&mut h);
+    resize(&mut h, 700.0, 600.0);
+    let mic = Strip::Channel(h.channel(0));
+    let monitor = Strip::Mix(MixId::Monitor);
+    // A channel lies under Monitor, scrolled out of view.
+    let hidden = (0..8)
+        .map(|i| Strip::Channel(h.channel(i)))
+        .find(|s| h.strip(*s).intersects(h.strip(monitor)));
+    assert!(hidden.is_some());
+    let from = h.slot(mic, 0).center();
+    let over = crate::strip::Rows::of(h.strip(monitor)).faders.center();
+    let sent = h.drag(from, &[from + vec2(10.0, 0.0), over]);
+    let Command::MoveInsert { to, .. } = one(&sent) else {
+        panic!("{sent:?}")
+    };
+    assert_eq!(to.strip, monitor);
+}
+
+#[test]
+fn an_insert_dragged_to_the_views_edge_scrolls_the_channels() {
+    let mut h = Harness::new();
+    eight_channels(&mut h);
+    resize(&mut h, 700.0, 600.0);
+    let mic = Strip::Channel(h.channel(0));
+    let from = h.slot(mic, 0).center();
+    let edge = Pos2::new(h.geometry().view.right() - 10.0, from.y);
+    let press = |pressed| egui::Event::PointerButton {
+        pos: from,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Modifiers::NONE,
+    };
+    let _ = h.pass(vec![egui::Event::PointerMoved(from), press(true)]);
+    let _ = h.pass(vec![egui::Event::PointerMoved(from + vec2(10.0, 0.0))]);
+    let _ = h.pass(vec![egui::Event::PointerMoved(edge)]);
+    // Held there: the channels scroll towards it, frame by frame.
+    h.idle(10);
+    let scrolled = h.scroll();
+    assert!(scrolled > 0.0, "{scrolled}");
+    h.idle(5);
+    assert!(h.scroll() > scrolled);
+    // Escape lets it go; nothing moves.
+    let _ = h.key(Key::Escape, Modifiers::NONE);
+    let sent = h.pass(vec![press(false)]);
+    assert!(sent.is_empty(), "{sent:?}");
 }

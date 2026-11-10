@@ -190,11 +190,12 @@ impl Running {
         // The console's own size, as the prototype's window is; the first frame grows it to
         // fit a banner.
         let natural = ui::natural_size(host.setup());
+        let least = ui::least_size(host.setup());
         let attributes = Window::default_attributes()
             .with_title("Vix Mix")
             .with_theme(Some(winit::window::Theme::Dark))
             .with_inner_size(winit::dpi::LogicalSize::new(natural.x, natural.y))
-            .with_min_inner_size(winit::dpi::LogicalSize::new(natural.x, natural.y));
+            .with_min_inner_size(winit::dpi::LogicalSize::new(least.x, least.y));
         let window = Arc::new(
             event_loop
                 .create_window(attributes)
@@ -227,7 +228,7 @@ impl Running {
             pacer: Pacer::new(Instant::now()),
             viewport_checked: None,
             first_drawn: None,
-            min_size: natural,
+            min_size: least,
         })
     }
 
@@ -439,11 +440,12 @@ impl Running {
         }
     }
 
-    /// Keeps the window at least as big as the content the last frame drew (the console,
-    /// and the banner above it when there is one): its least size follows, and a window
-    /// smaller than that grows to it.
+    /// Keeps the window at least as big as its content's least (the console at its least
+    /// and the header's width, and the banner above it when there is one): its least size
+    /// follows, and a window smaller than that grows to it. A bigger window the console
+    /// fills.
     fn fit(&mut self) {
-        let needed = self.shell.content.max.to_vec2();
+        let needed = self.shell.least;
         if needed.x <= 0.0 || needed == self.min_size {
             return;
         }
