@@ -215,7 +215,10 @@ pub enum Refused {
     BundleIsAPath { bundle: String },
     #[error("{quantum} is not a quantum the preferences offer: ask for 128, 256 or 512 frames")]
     NotAQuantum { quantum: u32 },
-    #[error("{max} plugin folders is the most there can be, not {found}: remove one first")]
+    #[error(
+        "{max} plugin folders is the most there can be, not {found}: {}",
+        remove_folders(.found, .max)
+    )]
     TooManyPluginDirs { found: usize, max: usize },
     #[error(
         "this setup has handed out every {what} id there is: move setup.ron aside and start from a new setup"
@@ -229,6 +232,16 @@ pub enum Refused {
         "{what} {id} is not one this setup removed (it is in use, or was never handed out): only a removed {what} can be put back; add a new one instead"
     )]
     NotRemoved { what: &'static str, id: u32 },
+}
+
+/// The fix [`Refused::TooManyPluginDirs`] teaches: one over the bound (an Add past it) in the
+/// window's words, more than one by how many are left, because removing one is not enough.
+fn remove_folders(found: &usize, max: &usize) -> String {
+    if *found == *max + 1 {
+        "remove one first".to_owned()
+    } else {
+        format!("remove folders until {max} are left")
+    }
 }
 
 /// Applies `cmd` to `setup` whole, or refuses it and leaves `setup` as it was.
@@ -1486,6 +1499,20 @@ mod tests {
             "{message}"
         );
         assert!(message.ends_with("remove one first"), "{message}");
+        assert_eq!(setup, before);
+        // Further past the bound, removing one is not enough: it says how many are left.
+        let refused = apply(
+            &mut setup,
+            Command::SetPrefs(Prefs {
+                plugin_dirs: folders(20),
+                ..Prefs::default()
+            }),
+        )
+        .unwrap_err();
+        assert_eq!(
+            refused.to_string(),
+            "16 plugin folders is the most there can be, not 20: remove folders until 16 are left"
+        );
         assert_eq!(setup, before);
     }
 

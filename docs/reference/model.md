@@ -100,7 +100,8 @@ What each does, as the prototype does it:
   (`NotAPluginId`), or whose bundle is a path (`BundleIsAPath`), is refused; a quantum other
   than 128, 256 or 512 is refused (`NotAQuantum`), and so is a `SetPrefs` with more than 16
   extra plugin folders (`TooManyPluginDirs`: "16 plugin folders is the most there can be, not
-  17: remove one first", the window's words; change request 10).
+  17: remove one first", the window's words; change request 10; a list further past the
+  bound is told to remove folders until 16 are left).
 
 Every `Refused` message ends with what to do instead.
 
