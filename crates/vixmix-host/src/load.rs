@@ -7,8 +7,12 @@
 //! cumulative busy time and frames at each poll, and once a window has run divides what each
 //! moved: the busy time over the audio those frames make at the rate. Every cycle counts once,
 //! and one still running at a reading lands in the next window, so nothing is lost to
-//! sampling. The worst cycle, which the engine keeps until it is taken, is held apart so the
-//! average never hides a cycle that came near its deadline.
+//! sampling. The two counters are read one after the other while the tick may be writing
+//! them, so a cycle that ends between the two reads can put its frames in one window and its
+//! busy time in the next: at most one cycle's busy time moves, a quarter of a point of a
+//! 250 ms window for the issue's 12 % cycle, and the next window takes it back. The worst
+//! cycle, which the engine keeps until it is taken, is held apart so the average never hides
+//! a cycle that came near its deadline.
 //!
 //! It keeps no clock: [`RealHost`](crate::RealHost)'s poll hands it the counters and the
 //! time, and a test hands it made-up ones.
@@ -38,7 +42,10 @@ pub struct LoadReading {
 }
 
 impl LoadReading {
-    /// Reads the engine's counters, taking its worst cycle: what each poll does.
+    /// Reads the engine's counters, taking its worst cycle: what each poll does. The reads are
+    /// relaxed and one after the other while the tick may be writing, so a cycle can straddle
+    /// two readings (its frames in one, its busy time in the next); no order of the reads
+    /// prevents that, and the module documentation says why it does not matter.
     pub fn take(stats: &Stats, dsp: &DspCounters) -> LoadReading {
         LoadReading {
             busy_ns: dsp.busy_ns(),

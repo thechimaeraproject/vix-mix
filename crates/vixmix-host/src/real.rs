@@ -800,15 +800,29 @@ mod tests {
         let events = host.poll();
         assert_eq!(banner(&events).as_deref(), Some(NULL_CHOSEN));
         assert_eq!(host.setup(), &Setup::default());
+        // The header's load is the load window's, not the last cycle's: the first poll's
+        // reading only begins a window, so nothing shows although a cycle ran.
+        let first = host.stats();
+        assert_eq!((first.dsp_load, first.dsp_peak), (0.0, 0.0), "{first:?}");
         // Each poll pumps one quantum through the engine.
         let _ = host.poll();
         let stats = host.stats();
         assert_eq!(stats.rate, 48_000);
         assert_eq!(stats.quantum, NULL_QUANTUM as u32);
-        // The windowed load and its peak (pinned in `load`): a number the header can show.
-        for value in [stats.dsp_load, stats.dsp_peak] {
-            assert!(value.is_finite() && value >= 0.0, "{stats:?}");
-        }
+        assert_eq!(
+            (stats.dsp_load, stats.dsp_peak),
+            (0.0, 0.0),
+            "no window has run yet: {stats:?}"
+        );
+        // Once a window has run, the next poll shows its average and its worst cycle.
+        std::thread::sleep(crate::load::WINDOW + Duration::from_millis(10));
+        let _ = host.poll();
+        let stats = host.stats();
+        assert!(
+            stats.dsp_load > 0.0 && stats.dsp_load.is_finite(),
+            "{stats:?}"
+        );
+        assert!(stats.dsp_peak >= stats.dsp_load, "{stats:?}");
         assert!(
             host.engine()
                 .stats()
