@@ -3,8 +3,8 @@
 #
 #   build (linux)  the release tarball (scripts/package/linux-tarball.sh, `dev package`), built
 #                  on ubuntu-latest: artifact vix-mix-linux-x86_64
-#   rpm (fedora)   the RPM (scripts/package/rpm.sh, `dev rpm`), built in a fedora:latest
-#                  container: artifact vix-mix-fedora-rpm, for `sudo dnf install ./…rpm`
+#   rpm (fedora)   the RPM (scripts/package/rpm.sh, `dev rpm`), built in a Fedora container:
+#                  artifact vix-mix-fedora-rpm, for `sudo dnf install ./…rpm`
 #
 # Dispatch only, never on push (the kit's ci.dispatchable rule): kit.repo.json's ci.onMerge has
 # `kit merge` dispatch it on master once a PR has merged; its ci.workflows entry has `kit push`
@@ -76,7 +76,11 @@ jobs:
   rpm:
     name: rpm (fedora)
     runs-on: ubuntu-latest
-    container: fedora:latest
+    # The oldest Fedora the RPM must install on: an RPM links the glibc it was built against,
+    # so one built on a newer release refuses to install on an older one, while one built here
+    # installs on this release and every newer one. The user's machine runs this release; move
+    # the pin when it moves (or when this release reaches its end of life).
+    container: fedora:44
     steps:
       # git before the checkout, so it checks out a repository (rpm.sh archives HEAD) rather
       # than downloading the files.
