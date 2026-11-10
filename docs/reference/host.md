@@ -9,8 +9,8 @@ debounced autosave, the instances' lifecycle, shutdown); `FakeHost` serves proto
 example data with simulated meters and no audio, for the window's tests and the look gate.
 Every `Host` method runs on the UI thread; the host reaches the tick only through
 `Engine::prepare`, `reap`, `set_rate` and `set_up_again` and the meters, stats, DSP counters
-and problems it reads. It draws nothing and owns no window: the app hands it raw window handles for
-editors.
+and problems it reads. It draws nothing and owns no window: the app hands it raw window
+handles for editors.
 
 ## What it owns and what the others keep
 
@@ -68,12 +68,13 @@ move, which sets the window's 60 Hz repaint) is `Simulated` or `Running`. `Meter
 dsp_peak, xruns }` with `quantum_ms()`: `dsp_load` is the load over the last quarter second
 (the busy time over the audio it made, every cycle counted), `dsp_peak` the worst single
 cycle's load in about the last second, held, both fractions of the budget and neither clamped,
-so an overload above 1 stays visible (§ Every poll). `AppPresence { app, running }`. `tick_editors` pairs each event with
-its instance, because the window keeps one editor window per instance. `resize_editor` tells
-an open editor its window now has `size` (`EditorSession::resize`: the kit's resize is
-asynchronous, so a plugin knows the size its window took only once told; change request 10):
-an instance with no open editor is ignored, and a size the plugin refuses is logged rather than
-a toast, because a window can report many sizes in a row.
+so an overload above 1 stays visible (§ Every poll). `AppPresence { app, running }`.
+`tick_editors` pairs each event with its instance, because the window keeps one editor window
+per instance. `resize_editor` tells an open editor its window now has `size`
+(`EditorSession::resize`: the kit's resize is asynchronous, so a plugin knows the size its
+window took only once told; change request 10): an instance with no open editor is ignored,
+and a size the plugin refuses is logged rather than a toast, because a window can report many
+sizes in a row.
 
 `next_poll` is how long the window may wait before it polls again although nothing happened on
 its side: `None` when the host waits for nothing. `set_favorite` stars a plugin and keeps it;
@@ -185,12 +186,14 @@ Then the DSP load window (`load.rs`, `LoadWindow`) takes the engine's counters
 with `take_peak`) and the poll's time; it keeps no clock of its own. Once a window of 250 ms
 has run, the load is the busy time it moved over the budget of the frames it moved (frames ÷
 rate), so a plugin that makes cheap and expensive cycles in turn (issue 25: 480-frame blocks
-fed 256 at a time) reads its average, not whichever cycle was last; a cycle still running at
-a reading lands in the next window. The window's worst cycle takes the peak when it is as
-high, or once the peak has been held 1 s, so the peak falls to the newest window's. A window
-in which no frame ran (the engine idle) reads zero and the peak falls after its hold; a new
-rate, or counters that went back, begin the window again with what shows kept until it ends;
-no rate, or no frames, divides by nothing.
+fed 256 at a time) reads its average, not whichever cycle was last; a cycle still running at a
+reading lands in the next window, and one that ends between the reading's two loads may put its
+frames in one window and its busy time in the next (at most a quarter of a point for the
+issue's cycle, taken back by the next window). The window's worst cycle takes the peak when it
+is as high, or once the peak has been held 1 s, so the peak falls to the newest window's. A
+window in which no frame ran (the engine idle) reads zero and the peak falls after its hold; a
+new rate, or counters that went back, begin the window again with what shows kept until it
+ends; no rate, or no frames, divides by nothing.
 Then `Engine::reap` and `Instances::reap`; `Instances::tick` (an editor's edit goes to its
 processor and makes the autosave due; a dirty plugin is `SetupChanged` and due;
 `IoChanged(instance)` calls `Engine::set_up_again(instance)`); the instances kept for an undo
@@ -259,8 +262,9 @@ its fader's linear gain, a muted send reads zero, and each mix reads the loudest
 into it times its own level (Monitor reads the Master sum while previewing). The randomness is a
 seeded xorshift, so a seed gives the same signal every run; `advance(ms)` steps it a 60 Hz
 frame at a time and `poll` advances to the wall clock. DSP load reads 6–9 %, as the
-prototype's, and its peak three points above it, so the header shows its peak tick. It hands out the same `Removed { message, undo }` as `RealHost`, stars plugins in
-its catalog, answers a rescan with `PluginsRescanned`, has no problems, and `next_poll` is
+prototype's, and its peak three points above it, so the header shows its peak tick. It hands
+out the same `Removed { message, undo }` as `RealHost`, stars plugins in its catalog, answers a
+rescan with `PluginsRescanned`, has no problems, and `next_poll` is
 `None` (its meters are live, so the window draws at its frame rate). It never writes a file,
 `open_editor` answers `HostError::Simulated`, and `resize_editor` does nothing.
 
@@ -276,16 +280,17 @@ its catalog, answers a rescan with `PluginsRescanned`, has no problems, and `nex
   restored at the next boot; quitting with a change pending saves it; an unreadable setup is
   kept aside; a removed channel comes back through the undo the host hands out, and a refused
   command changes nothing; a missing plugin is said once and listed as a problem; scan failures
-  make one toast; its stats' load and peak are numbers the header can show. `load`, on the
-  engine's own counters written from made-up cycle times at made-up instants, polled at 60 Hz
-  (no wall clock): nothing shows until a window has run; a 480-frame plugin fed 256-frame
-  blocks, whose last-cycle reading toggles between under 1 % and about 12 %, reads its
-  average within half a point window after window, with the expensive cycle as its peak
-  (`a_480_frame_plugin_fed_256_frame_blocks_reads_its_average_and_its_worst_cycle`); an idle
-  engine reads zero and its peak falls once held; a new rate begins the window again and no
-  window mixes the two rates; counters that do not move, no rate and counters that went back
-  read zero; a late window and a late cycle read above 1. `autosave`: 500 ms of quiet, never
-  longer than 5 s. `apps`: playing first,
+  make one toast; once booted, its DSP load and peak read zero until a load window has run,
+  then the null backend's, the peak at least the load. `load`, on the engine's own counters
+  written from made-up cycle times at made-up instants, polled at 60 Hz (no wall clock):
+  nothing shows until a window has run; an idle engine reads zero and its peak falls once
+  held; a new rate begins the window again and no window mixes the two rates; counters that
+  do not move, no rate and counters that went back read zero; a late window and a late cycle
+  read above 1; and a 480-frame plugin fed 256-frame blocks, whose last cycle toggles between
+  under 1 % and about 12 %, reads its average to within half a point in every window, with
+  the expensive cycle as its peak
+  (`a_480_frame_plugin_fed_256_frame_blocks_reads_its_average_and_its_worst_cycle`).
+  `autosave`: 500 ms of quiet, never longer than 5 s. `apps`: playing first,
   then the setup's, then those seen before, each once, and the seen list bounded. `undo`: a
   removal's undo puts back exactly what it took. `audio::linux` (Linux, no daemon): the graph
   is the setup's channels in order with the Master source; an app goes to its channel's sink,
