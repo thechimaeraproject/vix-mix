@@ -270,7 +270,9 @@ global cost (the graph's quantum is everyone's); the preferences offer 128, 256 
 `node.latency`, changed in place by `set_quantum` while everything plays. A larger quantum
 costs one short gap while each ring grows to one new quantum ahead (the host's test measures it
 at 256 to 512: one gap of 1024 frames in a recording of the Master source). Master out and the Master source add nothing: they play the mix of the cycle they
-run in. The by-hand measurement on real hardware is handoff 06's cookbook, run by handoff 08.
+run in. The by-hand measurement on real hardware is handoff 06's cookbook, run by handoff 08;
+the pass of 2026-11-10 measured none of it, so these stay estimates
+([handoff 09](../handoffs/09-round-1-fixes.md) items 2 and 5).
 
 ## Forbidden on the data thread
 
@@ -324,3 +326,8 @@ On Linux, `cargo test -p vixmix-pipewire` (on Windows the crate compiles to noth
   as ERR on every node of the graph, the test's `pw-play` and `pw-record` included, which the
   backend counts too as far as it sees them (§ The rings). The test prints every node's ERR
   over the window; [handoff 03](../handoffs/03-pipewire-backend.md) records the runs.
+- On real devices, the first pass (2026-11-10, Fedora KDE, the RPM): hours of daily use at a
+  quantum of 256 with the header's xrun count not moving. That is what was seen, not a
+  measurement: the two-minute run with realtime scheduling, the `jack_iodelay` figures and the
+  `pw-top` ERR count are still to take
+  ([handoff 09](../handoffs/09-round-1-fixes.md) items 1, 2 and 5).

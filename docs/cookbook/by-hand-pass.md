@@ -23,13 +23,12 @@ systemctl --user status pipewire wireplumber
 pw-metadata -n default 0 default.audio.sink
 ```
 
-Install what the build and the checks need, and Rust through rustup (the repository's
-`rust-toolchain.toml` picks the version):
+Install Vix Mix by [install-on-fedora.md](install-on-fedora.md) (the RPM in its step 5, or from
+the source in its steps 1 to 4), so the pass proves the install too, and install what the
+checks of this pass need:
 
 ```bash
-sudo dnf install pipewire-devel clang-devel pipewire-utils pipewire-jack-audio-connection-kit \
-  jack-example-tools git gcc
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+sudo dnf install pipewire-utils pipewire-jack-audio-connection-kit jack-example-tools
 ```
 
 The plugins: FabFilter, iZotope and Kilohearts have no Linux builds, so the pass uses native
@@ -40,15 +39,10 @@ included), `/usr/lib/vst3`, `/usr/lib64/vst3` (where Fedora's packages install V
 `/usr/local/lib/vst3`; a plugin anywhere else is a folder to add to the preferences' plugin
 directories, then rescan (step 4).
 
-## 2. Build and start Vix Mix
+## 2. Start Vix Mix
 
-The kit's crates come from its private repository through the git CLI, with this machine's
-credentials (`gh auth login` first if `git ls-remote` on the kit asks for a password).
-
-```bash
-git clone https://github.com/thechimaeraproject/vix-mix && cd vix-mix
-cargo run --release -p vix-mix
-```
+Start it from the KDE launcher ([install-on-fedora.md](install-on-fedora.md) step 6): type
+"Vix Mix" and press Enter.
 
 The window opens titled "Vix Mix". A first start scans every VST3 bundle before the window
 appears, which takes a while with many plugins; later starts reuse `~/.config/vix-mix/plugins.ron`

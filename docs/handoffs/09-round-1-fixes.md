@@ -1,20 +1,38 @@
 # 09 — Round 1 fixes
 
-**Record — not yet built: waits for the first by-hand pass on Fedora KDE on the NV3 (handoff
-08 step 4), which writes its Goal.** Until the pass runs, this handoff holds what the earlier
-lanes left open for it, each numbered under [Open going in](#open-going-in) with
-where it lives and what to check; the pass strikes each one that holds and turns each one that
-does not into a step. **Needs:** 08 (its step 4 is this handoff's first step), 05.
-**Runs alongside:** 07. **Size:** set by the pass.
+**Record — in progress: the first pass ran on 2026-11-10 (handoff 08 step 4) and wrote the
+Goal; its fixes are steps 5 and 6.** The pass was hours of daily use on Inochi (Fedora KDE, the
+RPM built from commit `6c8bb3e`), not the cookbook step by step. This handoff also holds what
+the earlier lanes left open for it, each numbered under [Open going in](#open-going-in) with
+where it lives and what to check: one that held or was fixed is struck through with the date,
+and the rest stay open, each under its issue. **Needs:** 08 (its step 4 is this handoff's first
+step), 05. **Runs alongside:** 07. **Size:** set by the pass.
 
 ## Goal
 
-What the first by-hand pass on the real machine found, fixed. The pass fills this section the
-way Vix's
+What the first by-hand pass on the real machine found, fixed. The section is filled the way
+Vix's
 [handoff 22](https://github.com/thechimaeraproject/Vix/blob/master/docs/handoffs/22-round-1-fixes.md)
-was filled: for each failure, what you did, what you saw and what you expected, in the order of
-[the by-hand pass](../cookbook/by-hand-pass.md); then the steps fix them, each in the crate
-that owns it. Going in, the goal is the fifteen items below.
+was filled: for each failure, what you did, what you saw and what you expected; then the steps
+fix them, each in the crate that owns it. The pass of 2026-11-10 ran as use rather than in the
+order of [the by-hand pass](../cookbook/by-hand-pass.md), so its two findings are in the order
+they were met:
+
+1. **A plugin that aborts while its module loads takes the scan, and Vix Mix, down with it**
+   ([#26](https://github.com/thechimaeraproject/vix-mix/issues/26)). Did: Rescan plugins with
+   Windows plugins bridged by yabridge, one of which (Softube's Saturation Knob) could not reach
+   its licence service and returned no factory. Saw: yabridge's Linux side called
+   `std::terminate` inside the module's entry, the process aborted, and the bundles after it
+   were never reached. Expected: that bundle marked failed, the others scanned, Vix Mix still
+   running. Step 5.
+2. **The DSP readout flickers between about 12 % and 0 %**
+   ([#25](https://github.com/thechimaeraproject/vix-mix/issues/25)). Did: one native plugin on a
+   channel at a quantum of 256. Saw: the header's DSP figure alternating between about 12 % and
+   0 %. Expected: a steady figure that still shows the expensive cycles. Step 6.
+
+What the user saw hold in that pass is struck through below (items 6, 8, 11 and 12). The pass
+measured nothing: the figures of items 1, 2 and 5 are still to take. Going in, the goal was the
+fifteen items below.
 
 ## Read first
 
@@ -44,14 +62,30 @@ here.
 
 1. **Install** by [install-on-fedora.md](../cookbook/install-on-fedora.md) (step 4 or 5) and
    start Vix Mix from the KDE launcher: handoff 08's acceptance is that it installs by the
-   documented path and appears in the launcher with its icon (item 11).
-2. **Run [the by-hand pass](../cookbook/by-hand-pass.md)** ([#19](https://github.com/thechimaeraproject/vix-mix/issues/19) tracks it), steps 1 to 12 in one sitting,
-   checking the items below where they come up. Write every failure into the Goal.
+   documented path and appears in the launcher with its icon (item 11). Done 2026-11-10, from
+   the RPM (step 5).
+2. **Run [the by-hand pass](../cookbook/by-hand-pass.md)** ([#19](https://github.com/thechimaeraproject/vix-mix/issues/19) tracked it), steps 1 to 12 in one sitting,
+   checking the items below where they come up. Write every failure into the Goal. Ran
+   2026-11-10 as hours of daily use rather than in one sitting; #19 is closed.
 3. **Record the figures**: the latency at 128, 256 and 512 and the `pw-top` ERR count at 256 in
    [reference/pipewire.md](../reference/pipewire.md) § Latency (item 2), and flip handoff 08's
-   status line to say its step 4 ran.
+   status line to say its step 4 ran. The status line is flipped; the figures were not taken
+   on 2026-11-10 and stay open (items 1, 2 and 5).
 4. **Write the steps**: one per finding, naming the crate and its reference; an item below that
-   held is struck through with the date, one that did not becomes a step.
+   held is struck through with the date, one that did not becomes a step. Steps 5 and 6 are
+   the two findings.
+5. **Describe a bundle that must be loaded in a child process**
+   ([#26](https://github.com/thechimaeraproject/vix-mix/issues/26)): `vixmix-plugins` with
+   [reference/plugins.md](../reference/plugins.md) § Scanning and the cache, the host's boot
+   ([reference/host.md](../reference/host.md) § Boot) and the app's `--scan-bundle`
+   ([reference/app.md](../reference/app.md)). A crash, a refusal or a wait past the bound
+   marks that one bundle failed, the scan goes on, and the scan cache keeps the failure as it
+   keeps any other. Loading a plugin into a channel stays in process.
+6. **A DSP load that reads steadily**
+   ([#25](https://github.com/thechimaeraproject/vix-mix/issues/25)): `vixmix-engine`
+   ([reference/engine.md](../reference/engine.md) § Meters and stats), `vixmix-host` and the
+   header's display in the app. The figure is the busy time over the budget across a short
+   window, and the most expensive cycle stays visible as a peak.
 
 ## Open going in
 
@@ -76,7 +110,8 @@ here.
    11; [reference/pipewire.md](../reference/pipewire.md) § Latency, beside the estimate (about
    three quanta, 16 ms at 256). Check: the three `jack_iodelay` figures, the date, the interface
    and the kernel, and the ERR count the `vix-mix.*` rows of `pw-top` reached in five minutes at
-   256, with what was happening when one moved.
+   256, with what was happening when one moved. Seen 2026-11-10, not measured: hours at a
+   quantum of 256 with the header's xrun count not moving.
 3. **Vix Mix started again within milliseconds of quitting can leave a playing app routed but
    silent.** ([#13](https://github.com/thechimaeraproject/vix-mix/issues/13)) Seen with
    `pw-play` in the container: the player kept playing through the quit and was moving back to
@@ -107,8 +142,9 @@ here.
    then make the by-hand pass step 10, the `graph` bullet of
    [reference/host.md](../reference/host.md) § Acting on a command, and
    [reference/pipewire.md](../reference/pipewire.md) § Latency and § Verification say so.
-6. **`/usr/lib64/vst3`.** The kit's `default_search_dirs` now lists it, where Fedora's packages
-   install VST3 plugins
+6. ~~**`/usr/lib64/vst3`.**~~ **Held 2026-11-10** (the user's pass: packaged plugins appeared
+   in the browser with no folder added). The kit's `default_search_dirs` now lists it, where
+   Fedora's packages install VST3 plugins
    ([kit issue 201](https://github.com/thechimaeraproject/chimaeraproject-kit/issues/201), taken
    with handoff 07's bump; the workaround lines are gone from the by-hand pass step 1 and
    install-on-fedora.md step 6). Check: `rpm -qla | grep -F .vst3/ | cut -d/ -f1-5 | sort -u`
@@ -121,8 +157,9 @@ here.
    machine's plugins and whether the wait reads as a hang; whether Monitor should start on the
    default output. Both are the user's call; a progress display needs the scan off the window's
    first frame (`vixmix-host` and the app).
-8. **What the window shows for the backend's states.** The banner says the backend's state
-   (PipeWire's refusal, the mixer idle with what would drive it, the daemon gone), the host's
+8. ~~**What the window shows for the backend's states.**~~ **Held 2026-11-10** for the states
+   the user's pass met (each said what to do); the gap already known is item 4. The banner says
+   the backend's state (PipeWire's refusal, the mixer idle with what would drive it, the daemon gone), the host's
    notices and refusals go to the toast line, and an insert playing as a pass-through is marked
    on its slot with the host's why under the pointer (`app/src/ui.rs`, `app/src/toast.rs`,
    `app/src/well.rs`; [reference/app.md](../reference/app.md) § What a frame draws). Check each
@@ -149,7 +186,8 @@ here.
    the app reads the token with winit's `EventLoopExtStartupNotify::read_token_from_env`, makes
    its window `with_activation_token` (`WindowAttributesExtStartupNotify`), calls
    `reset_activation_token_env` so no child process inherits it, and the desktop entry then
-   says `StartupNotify=true`.
+   says `StartupNotify=true`. Seen 2026-11-10: the icon reads in the launcher and the task
+   manager; the launch feedback was not checked.
 10. **Logging out with apps routed.**
     ([#12](https://github.com/thechimaeraproject/vix-mix/issues/12)) Where: `app/src/main.rs`
     (no signal handling) and [reference/host.md](../reference/host.md) § Shutdown. A window
@@ -159,16 +197,18 @@ here.
     default output; then the same after `pkill vix-mix`. If an app is left on a sink that is
     gone, or the setup lost a change older than a second, the app takes `SIGTERM` as a close
     request.
-11. **The install itself.** Where: `packaging/linux/` and
+11. ~~**The install itself.**~~ **Held 2026-11-10 for the RPM**: installed with `dnf` from the
+    build's artifact (install-on-fedora.md step 5), started from the launcher, the icon reading
+    in the launcher and the task manager; the RPM's own build runs `desktop-file-validate` and
+    `appstream-util validate-relax` with Fedora's versions. Not checked, because the pass built
+    nothing on the machine: that step 1's `dnf` list is all a build from source needs (a
+    package the build still asks for is a finding). Where: `packaging/linux/` and
     [install-on-fedora.md](../cookbook/install-on-fedora.md), built and validated only in the
-    Ubuntu container so far (handoff 08's record). Check: step 1's `dnf` list is all the build
-    needs (a package the build still asks for is a finding), `desktop-file-validate` and
-    `appstreamcli validate` pass with Fedora's versions, and the icon reads at the launcher's
-    and the task manager's sizes.
-12. **The by-hand pass starts from the launcher.** Once item 11 holds, the by-hand pass steps 1
-    and 2 point at install-on-fedora.md for the packages and the build, and start Vix Mix from
-    the launcher rather than repeating the `dnf` list and `cargo run --release -p vix-mix`, so
-    every later pass proves the install too.
+    Ubuntu container before (handoff 08's record).
+12. ~~**The by-hand pass starts from the launcher.**~~ **Done 2026-11-10**: with item 11 held,
+    the by-hand pass steps 1 and 2 point at install-on-fedora.md for the install and start Vix
+    Mix from the launcher rather than repeating the `dnf` list and
+    `cargo run --release -p vix-mix`, so every later pass proves the install too.
 13. **A frame for the meters alone.**
     ([#17](https://github.com/thechimaeraproject/vix-mix/issues/17)) Where: `app/src/app.rs`
     and `app/src/ui.rs`; [reference/app.md](../reference/app.md) § Verification (the CPU
