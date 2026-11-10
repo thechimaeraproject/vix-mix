@@ -6,7 +6,7 @@
 //! Every method of [`Host`] runs on the UI thread. The engine's tick runs on the backend's
 //! data thread (or, on the null backend, inside [`Host::poll`]); the host reaches it only
 //! through `Engine::prepare`, `Engine::reap`, `Engine::set_rate`, `Engine::set_up_again` and
-//! the meters, stats and problems it reads.
+//! the meters, stats, DSP counters and problems it reads.
 //!
 //! See `docs/reference/host.md`.
 
@@ -15,6 +15,7 @@ mod audio;
 mod autosave;
 mod fake;
 mod host;
+mod load;
 mod real;
 mod undo;
 

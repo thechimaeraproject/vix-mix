@@ -30,6 +30,10 @@ use crate::undo::removal;
 /// One animation frame of the prototype's `requestAnimationFrame` loop.
 const FRAME_MS: f64 = 1000.0 / 60.0;
 
+/// How far the simulated worst cycle sits above the simulated load: three points, so the
+/// header's DSP bar shows its peak tick just past the fill.
+const PEAK_ABOVE: f32 = 0.03;
+
 /// How a channel's simulated signal behaves: the prototype's `style`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Style {
@@ -176,6 +180,7 @@ impl FakeHost {
                 rate: 48_000,
                 quantum: 256,
                 dsp_load: 0.07,
+                dsp_peak: 0.07 + PEAK_ABOVE,
                 xruns: 0,
             },
         };
@@ -271,6 +276,7 @@ impl FakeHost {
         if now - self.last_dsp_ms > 900.0 {
             self.last_dsp_ms = now;
             self.stats.dsp_load = (6.0 + (self.rng.next() * 3.0).round()) as f32 / 100.0;
+            self.stats.dsp_peak = self.stats.dsp_load + PEAK_ABOVE;
         }
     }
 }
@@ -476,6 +482,20 @@ mod tests {
         host.rescan_plugins();
         assert!(host.poll().contains(&HostEvent::PluginsRescanned));
         assert!(host.problems().is_empty() && host.next_poll().is_none());
+    }
+
+    #[test]
+    fn the_dsp_load_reads_6_to_9_percent_with_its_peak_three_points_above() {
+        let mut host = FakeHost::with_seed(11);
+        for _ in 0..6 {
+            let stats = host.stats();
+            assert!((0.06..=0.09).contains(&stats.dsp_load), "{stats:?}");
+            assert!(
+                (stats.dsp_peak - stats.dsp_load - PEAK_ABOVE).abs() < 1e-6,
+                "{stats:?}"
+            );
+            host.advance(1_000.0);
+        }
     }
 
     #[test]

@@ -499,6 +499,7 @@ mod tests {
                 rate,
                 quantum: 128,
                 dsp_load: 0.0,
+                dsp_peak: 0.0,
                 xruns: 0,
             });
             khz

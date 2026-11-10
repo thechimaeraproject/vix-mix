@@ -26,6 +26,7 @@ use crate::host::{
     AppPresence, BackendState, ChannelLevels, Host, HostError, HostEvent, MeterFrame, StatsFrame,
     Stereo, UNDO_TOAST,
 };
+use crate::load::{LoadReading, LoadWindow};
 use crate::undo::removal;
 
 /// How long a removed insert's instance stays live: the toast, and a margin for the window's
@@ -100,6 +101,8 @@ pub struct RealHost {
     kept: Vec<Kept>,
     autosave: Autosave,
     events: Vec<HostEvent>,
+    /// The header's DSP load and peak, from the engine's counters at each poll.
+    load: LoadWindow,
 }
 
 impl RealHost {
@@ -152,6 +155,7 @@ impl RealHost {
             kept: Vec::new(),
             autosave: Autosave::default(),
             events,
+            load: LoadWindow::default(),
         };
         host.scan(false);
         host.sync_instances();
@@ -549,6 +553,9 @@ impl Host for RealHost {
         let now = Instant::now();
         let heard = self.audio.poll(&self.setup, &self.engine, now);
         self.heard(heard);
+        // After the null backend's pump, so its cycle is in this reading.
+        let reading = LoadReading::take(self.engine.stats(), self.engine.dsp());
+        self.load.feed(now, reading);
         self.engine.reap();
         self.instances.reap();
         for event in self.instances.tick() {
@@ -615,7 +622,8 @@ impl Host for RealHost {
         StatsFrame {
             rate: stats.rate.load(Relaxed),
             quantum: stats.quantum.load(Relaxed),
-            dsp_load: stats.dsp_load_permille.load(Relaxed) as f32 / 1000.0,
+            dsp_load: self.load.load(),
+            dsp_peak: self.load.peak(),
             xruns: stats.xruns.load(Relaxed),
         }
     }
@@ -797,6 +805,10 @@ mod tests {
         let stats = host.stats();
         assert_eq!(stats.rate, 48_000);
         assert_eq!(stats.quantum, NULL_QUANTUM as u32);
+        // The windowed load and its peak (pinned in `load`): a number the header can show.
+        for value in [stats.dsp_load, stats.dsp_peak] {
+            assert!(value.is_finite() && value >= 0.0, "{stats:?}");
+        }
         assert!(
             host.engine()
                 .stats()
