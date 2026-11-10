@@ -77,7 +77,23 @@ is none. To update later: `git pull`, then the same two commands.
 
 ## 5. Or install from the tarball
 
-On a Linux machine with steps 1 to 3 done, in the checkout:
+**Without building it.** Every merge to `master` builds the tarball on GitHub
+(`.github/workflows/linux-build.yml`, which `kit merge` dispatches). Take the newest run's
+artifact, which holds the tarball and its `.sha256`; the repository is private, so sign in
+first (`gh auth login`):
+
+```bash
+gh run download --repo thechimaeraproject/vix-mix --name vix-mix-linux-x86_64 \
+  "$(gh run list --repo thechimaeraproject/vix-mix --workflow linux-build.yml --branch master \
+     --status success --limit 1 --json databaseId --jq '.[0].databaseId')"
+sha256sum -c vix-mix-*-linux-x86_64.tar.gz.sha256
+```
+
+Or open the newest successful "linux-build" run in the repository's Actions tab and download
+`vix-mix-linux-x86_64` there. The binary is built on Ubuntu's newest LTS and links glibc and
+libpipewire dynamically, so it runs on Fedora's current releases. Then install it as below.
+
+**Or build it** on a Linux machine with steps 1 to 3 done, in the checkout:
 
 ```bash
 scripts/package/linux-tarball.sh

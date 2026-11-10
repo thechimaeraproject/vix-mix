@@ -1,0 +1,69 @@
+# The Linux release tarball (scripts/package/linux-tarball.sh, `dev package`), built on master
+# after every merge and kept as the run's artifact: a build of what master holds, to install on
+# a Linux machine without a toolchain (docs/cookbook/install-on-fedora.md step 5).
+#
+# Dispatch only, never on push (the kit's ci.dispatchable rule): kit.repo.json's ci.onMerge has
+# `kit merge` dispatch it on master once a PR has merged, and the Actions tab's "Run workflow"
+# builds any branch by hand. It produces no required check.
+#
+# It builds on ubuntu-latest with what ci.yml's Linux leg installs to build (libpipewire's
+# headers, libclang for bindgen), but runs no daemon and no gate: `kit push` and the PR's checks
+# ran those. The binary links libpipewire-0.3 and glibc dynamically, so it runs on a
+# distribution at least as new as the runner's (Fedora's current releases are).
+name: linux-build
+
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build (linux)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      # No version here: the action reads rust-toolchain.toml, which is the one pin.
+      - name: Install the pinned toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+
+      - name: Install PipeWire's headers and libclang
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpipewire-0.3-dev libclang-dev
+
+      # Its own key, apart from ci.yml's: a release build fills target/ with other things.
+      - name: Cache cargo and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-release-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: cargo-release-${{ runner.os }}-
+
+      # The kit's crates come from its private repository, as in ci.yml: KIT_TOKEN reaches git
+      # for this step alone through GIT_CONFIG_*, never a config file or the log.
+      - name: Build the tarball
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.KIT_TOKEN }}@github.com/thechimaeraproject/.insteadOf
+          GIT_CONFIG_VALUE_0: https://github.com/thechimaeraproject/
+        run: bash scripts/package/linux-tarball.sh
+
+      - name: Keep the tarball as the run's artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vix-mix-linux-x86_64
+          path: |
+            target/package/*.tar.gz
+            target/package/*.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 30

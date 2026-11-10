@@ -22,8 +22,10 @@ condensed into the `kit-work-on-a-change` skill under `.claude/skills/` and `.ag
   (`check`), that it installs the tooling from the root (`kit.npm: ["."]`), its Cargo side
   (`kit.cargo: { manifests: ["Cargo.toml"], lock: "Cargo.lock" }`), that it releases nothing
   (`release.kind: none`, no release gates), the workflow that produces its two required checks
-  (`ci.yml`; `check (linux)` and `check (windows)`), that nothing deploys, and that only a
-  repository admin merges (`protect.merges: admins`).
+  (`ci.yml`; `check (linux)` and `check (windows)`), the workflow `kit merge` dispatches on
+  `master` after every merge (`ci.onMerge: ["linux-build.yml"]`: the Linux release tarball,
+  kept as the run's artifact), that nothing deploys, and that only a repository admin merges
+  (`protect.merges: admins`).
 - **`dev` is the kit's Node runner over a registry of cargo commands.** `dev.run` is
   `{node} scripts/dev.mjs` and `dev.registry` is `scripts/dev/tasks.mjs`: `check` needs `fmt`
   (`cargo fmt --all --check`), `clippy` (`cargo clippy --workspace --all-targets -- -D

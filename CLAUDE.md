@@ -166,6 +166,7 @@ scripts/dev/tasks.mjs      the dev registry; scripts/dev.mjs, dev.bat and dev.sh
 scripts/package/           the Linux release tarball (dev package)
 packaging/linux/           the desktop entry, icon, AppStream metainfo and install.sh
 .github/workflows/ci.yml   check (linux) with a headless PipeWire, check (windows)
+.github/workflows/linux-build.yml   the release tarball as an artifact, on master after every merge (ci.onMerge)
 ```
 
 The dependency direction: the model depends on no workspace crate; the engine on the model; the
