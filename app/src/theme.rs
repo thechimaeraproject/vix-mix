@@ -40,7 +40,9 @@ pub mod colour {
     pub const FAINT: Color32 = Color32::from_rgb(0x62, 0x66, 0x6e);
     /// `--accent`: the fader line, an enabled insert, a pressed toggle.
     pub const ACCENT: Color32 = Color32::from_rgb(0x5a, 0xa8, 0xff);
-    /// `--mute`: a pressed mute button.
+    /// `--mute`: a pressed mute button; also the warning ink (the banner's outline, an insert
+    /// played as a pass-through, the DSP number while a cycle runs over its budget), the red
+    /// the meter gradient ends in.
     pub const MUTE: Color32 = Color32::from_rgb(0xe5, 0x48, 0x4d);
 
     /// `#000`: the gaps between strips, the header's bottom edge.
@@ -51,7 +53,8 @@ pub mod colour {
     pub const ON_MUTE: Color32 = Color32::from_rgb(0xff, 0xff, 0xff);
     /// `#4cc46d`: the live dot on a strip's header, the DSP bar.
     pub const LIVE: Color32 = Color32::from_rgb(0x4c, 0xc4, 0x6d);
-    /// `#eef0f2`: a meter's peak-hold line, drawn at [`PEAK_OPACITY`].
+    /// `#eef0f2`: a meter's peak-hold line and the DSP bar's peak tick, drawn at
+    /// [`PEAK_OPACITY`].
     pub const PEAK: Color32 = Color32::from_rgb(0xee, 0xf0, 0xf2);
     /// The peak-hold line's opacity.
     pub const PEAK_OPACITY: f32 = 0.85;
@@ -215,13 +218,13 @@ pub mod size {
     /// How much further short of its triangle a mix's line stops (`.vf.big.r .ln{right:7px}`
     /// against a channel's 6).
     pub const BIG_LINE_SHORTFALL: f32 = 1.0;
-    /// The peak-hold line's thickness.
+    /// The peak-hold line's thickness, and the DSP bar's peak tick's width.
     pub const PEAK_LINE: f32 = 1.0;
     /// The fader triangle: its depth and its height.
     pub const TRIANGLE: [f32; 2] = [6.0, 8.0];
     /// A scale tick's length.
     pub const SCALE_TICK: f32 = 3.0;
-    /// The peak-hold line shows above this position.
+    /// The peak-hold line shows above this position, and the DSP peak tick above this load.
     pub const PEAK_SHOWN_ABOVE: f32 = 0.02;
 
     /// The mute and ear buttons, and the link button.

@@ -1,8 +1,8 @@
 //! What each frame draws and senses: the 34-point header (the menu button, the title, the
-//! display with the rate, the quantum, its milliseconds and the DSP load), the banner when
-//! the audio needs the user (the host's `BackendState::banner`: no backend, the mixer idle
-//! with what would drive it, the daemon gone), the console under them filling the rest of
-//! the window ([`console::Geometry`]), then the open popover and the toast line over
+//! display with the rate, the quantum, its milliseconds and the DSP load with its peak), the
+//! banner when the audio needs the user (the host's `BackendState::banner`: no backend, the
+//! mixer idle with what would drive it, the daemon gone), the console under them filling the
+//! rest of the window ([`console::Geometry`]), then the open popover and the toast line over
 //! everything.
 //!
 //! [`draw`] reads the host and the window's [`Shell`], and returns what the gestures asked
@@ -280,19 +280,90 @@ pub fn display_cells(stats: StatsFrame) -> [(String, &'static str); 3] {
     ]
 }
 
+/// The DSP cell's reading of the host's stats: the number, the bar's fill, where its peak
+/// tick sits, and whether a cycle ran over its budget.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DspCell {
+    /// The average as a percentage ([`dsp_percent`]), or a dash before the host reports a
+    /// rate.
+    pub text: String,
+    /// The bar's fill, the average, 0 to 1.
+    pub fill: f32,
+    /// The peak tick's position on the bar, 0 to 1: the held peak, pinned at the bar's end
+    /// above the budget. None with no rate, or a peak too small to draw apart from the start.
+    pub peak: Option<f32>,
+    /// The held peak is over the budget: the number takes the mute colour.
+    pub over: bool,
+}
+
+impl DspCell {
+    /// What the cell shows for `stats`: a dash, no fill and no tick until the host reports a
+    /// rate.
+    pub fn of(stats: StatsFrame) -> DspCell {
+        if stats.rate == 0 {
+            return DspCell {
+                text: "\u{2014}".to_string(),
+                fill: 0.0,
+                peak: None,
+                over: false,
+            };
+        }
+        let fill = if stats.dsp_load.is_finite() {
+            stats.dsp_load.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let peak = stats.dsp_peak.is_finite().then_some(stats.dsp_peak);
+        DspCell {
+            text: dsp_percent(stats.dsp_load),
+            fill,
+            peak: peak
+                .filter(|p| *p > size::PEAK_SHOWN_ABOVE)
+                .map(|p| p.min(1.0)),
+            over: peak.is_some_and(|p| p > 1.0),
+        }
+    }
+}
+
+/// The DSP load as the header writes it: a whole percent from 1 % up (above 100 % too),
+/// exactly zero as `0%`, and tenths below 1 % (`0.4%`), so a small load never reads as none.
+pub fn dsp_percent(load: f32) -> String {
+    let percent = (load * 100.0).max(0.0);
+    if percent == 0.0 {
+        return "0%".to_string();
+    }
+    let tenths = (percent * 10.0).round();
+    if tenths < 10.0 {
+        format!("{:.1}%", tenths.max(1.0) / 10.0)
+    } else {
+        format!("{percent:.0}%")
+    }
+}
+
 /// One piece of a display cell.
 enum Item {
     Text(Arc<Galley>),
-    Bar(f32),
+    /// The DSP bar: its fill and its peak tick ([`DspCell`]).
+    Bar {
+        fill: f32,
+        peak: Option<f32>,
+    },
 }
 
 impl Item {
     fn width(&self) -> f32 {
         match self {
             Item::Text(galley) => galley.size().x,
-            Item::Bar(_) => size::DSP_BAR[0],
+            Item::Bar { .. } => size::DSP_BAR[0],
         }
     }
+}
+
+/// The DSP bar's peak tick at `peak` (0 to 1): a hairline across the bar whose left edge sits
+/// at the peak, as a meter's peak-hold line sits on its level, kept inside the bar's end.
+fn peak_tick(bar: Rect, peak: f32) -> Rect {
+    let x = (bar.left() + bar.width() * peak).min(bar.right() - size::PEAK_LINE);
+    Rect::from_x_y_ranges(x..=x + size::PEAK_LINE, bar.y_range())
 }
 
 fn cell_width(items: &[Item]) -> f32 {
@@ -302,7 +373,9 @@ fn cell_width(items: &[Item]) -> f32 {
 }
 
 /// The display, centred on `centre`: rate, quantum and milliseconds, then DSP with its bar
-/// and percentage, in cells split by hairlines on black. Returns its width.
+/// (the average, and a tick at the held peak) and the average's percentage, in the mute
+/// colour while the peak is over the budget, in cells split by hairlines on black. Returns
+/// its width.
 fn display(painter: &Painter, centre: Pos2, stats: StatsFrame) -> f32 {
     let mut cells: Vec<Vec<Item>> = display_cells(stats)
         .into_iter()
@@ -313,16 +386,15 @@ fn display(painter: &Painter, centre: Pos2, stats: StatsFrame) -> f32 {
             ]
         })
         .collect();
-    let load = stats.dsp_load.clamp(0.0, 1.0);
-    let percent = if stats.rate == 0 {
-        "\u{2014}".to_string()
-    } else {
-        format!("{:.0}%", load * 100.0)
-    };
+    let dsp = DspCell::of(stats);
+    let ink = if dsp.over { colour::MUTE } else { colour::TEXT };
     cells.push(vec![
         Item::Text(run(painter, "DSP", false)),
-        Item::Bar(load),
-        Item::Text(run(painter, &percent, true)),
+        Item::Bar {
+            fill: dsp.fill,
+            peak: dsp.peak,
+        },
+        Item::Text(run_in(painter, &dsp.text, true, ink)),
     ]);
     let hairlines = cells.len().saturating_sub(1) as f32;
     let total = cells.iter().map(|c| cell_width(c)).sum::<f32>() + hairlines * size::HAIRLINE;
@@ -339,7 +411,7 @@ fn display(painter: &Painter, centre: Pos2, stats: StatsFrame) -> f32 {
                 Item::Text(galley) => {
                     strip::place(painter, galley, Align2::LEFT_CENTER, pos2(item_x, centre.y));
                 }
-                Item::Bar(fill) => {
+                Item::Bar { fill, peak } => {
                     let [bar_w, bar_h] = size::DSP_BAR;
                     let bar = Rect::from_min_size(
                         pos2(item_x, centre.y - bar_h / 2.0),
@@ -349,6 +421,13 @@ fn display(painter: &Painter, centre: Pos2, stats: StatsFrame) -> f32 {
                     let mut filled = bar;
                     filled.set_width(bar_w * fill);
                     painter.rect_filled(filled, CornerRadius::ZERO, colour::LIVE);
+                    if let Some(peak) = peak {
+                        painter.rect_filled(
+                            peak_tick(bar, peak),
+                            CornerRadius::ZERO,
+                            colour::PEAK.gamma_multiply(colour::PEAK_OPACITY),
+                        );
+                    }
                 }
             }
             item_x += item_width + size::DISPLAY_GAP;
@@ -368,10 +447,16 @@ fn display(painter: &Painter, centre: Pos2, stats: StatsFrame) -> f32 {
 
 /// A display run: a number (mono 500, bright) or a label (mono 400, faint).
 fn run(painter: &Painter, text: &str, number: bool) -> Arc<Galley> {
-    let (font_id, color) = if number {
-        (font::mono_medium(font::DISPLAY), colour::TEXT)
+    let color = if number { colour::TEXT } else { colour::FAINT };
+    run_in(painter, text, number, color)
+}
+
+/// A display run in `color`: the DSP number takes the mute colour over its budget.
+fn run_in(painter: &Painter, text: &str, number: bool, color: Color32) -> Arc<Galley> {
+    let font_id = if number {
+        font::mono_medium(font::DISPLAY)
     } else {
-        (font::mono(font::DISPLAY), colour::FAINT)
+        font::mono(font::DISPLAY)
     };
     let mut job = LayoutJob::single_section(
         text.to_owned(),
@@ -436,7 +521,8 @@ mod tests {
         }
     }
 
-    fn drawn_with(backend: BackendState, host: &FakeHost) -> Vec<Drawn> {
+    /// Every shape a frame of the whole window drew.
+    fn frame(backend: BackendState, host: &FakeHost) -> Vec<Shape> {
         let ctx = egui::Context::default();
         install(&ctx);
         let mut shell = Shell {
@@ -447,7 +533,7 @@ mod tests {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, natural_size(host.setup()))),
             ..Default::default()
         };
-        let mut out = Vec::new();
+        let mut shapes = Vec::new();
         // Two passes: egui lays out panels from the first frame's sizes.
         for _ in 0..2 {
             let mut output = ctx.run_ui(input.clone(), |root| {
@@ -459,12 +545,95 @@ mod tests {
             });
             // A test has no renderer to hand the font atlas to; egui asserts it was handled.
             output.textures_delta.clear();
-            out.clear();
-            for clipped in &output.shapes {
-                collect(&clipped.shape, &mut out);
-            }
+            shapes = output.shapes.into_iter().map(|c| c.shape).collect();
+        }
+        shapes
+    }
+
+    /// Every shape the header display alone drew from `stats`, in a headless frame.
+    fn display_frame(stats: StatsFrame) -> Vec<Shape> {
+        let ctx = egui::Context::default();
+        install(&ctx);
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(600.0, size::HEADER))),
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |root| {
+            display(root.painter(), pos2(300.0, size::HEADER / 2.0), stats);
+        });
+        output.textures_delta.clear();
+        output.shapes.into_iter().map(|c| c.shape).collect()
+    }
+
+    fn drawn_in(shapes: &[Shape]) -> Vec<Drawn> {
+        let mut out = Vec::new();
+        for shape in shapes {
+            collect(shape, &mut out);
         }
         out
+    }
+
+    fn drawn_with(backend: BackendState, host: &FakeHost) -> Vec<Drawn> {
+        drawn_in(&frame(backend, host))
+    }
+
+    /// Every filled rectangle drawn, with its fill.
+    fn rects(shapes: &[Shape]) -> Vec<(Rect, Color32)> {
+        fn walk(shape: &Shape, out: &mut Vec<(Rect, Color32)>) {
+            match shape {
+                Shape::Rect(rect) => out.push((rect.rect, rect.fill)),
+                Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, out)),
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        shapes.iter().for_each(|s| walk(s, &mut out));
+        out
+    }
+
+    /// The header's DSP bar, its fill and its peak ticks: drawn in the header, the bar the
+    /// control face at the bar's size, the fill the live green, a tick the peak-hold colour.
+    fn dsp_bar(shapes: &[Shape]) -> (Rect, Option<Rect>, Vec<Rect>) {
+        let in_header = rects(shapes)
+            .into_iter()
+            .filter(|(rect, _)| rect.bottom() <= size::HEADER);
+        let (mut bars, mut fills, mut ticks) = (Vec::new(), Vec::new(), Vec::new());
+        let tick_ink = colour::PEAK.gamma_multiply(colour::PEAK_OPACITY);
+        for (rect, fill) in in_header {
+            if fill == colour::CTL && rect.size() == vec2(size::DSP_BAR[0], size::DSP_BAR[1]) {
+                bars.push(rect);
+            } else if fill == colour::LIVE {
+                fills.push(rect);
+            } else if fill == tick_ink {
+                ticks.push(rect);
+            }
+        }
+        assert_eq!(bars.len(), 1, "one DSP bar: {bars:?}");
+        assert!(fills.len() <= 1, "{fills:?}");
+        (bars[0], fills.first().copied(), ticks)
+    }
+
+    /// The DSP number as drawn: the last number run in the display.
+    fn dsp_number(shapes: &[Shape]) -> Drawn {
+        drawn_in(shapes)
+            .into_iter()
+            .rfind(|d| d.text.ends_with('%') || d.text == "\u{2014}")
+            .expect("the DSP number")
+    }
+
+    /// Two lengths the same to within float rounding of the positions they come from.
+    fn close(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-3
+    }
+
+    fn stats(dsp_load: f32, dsp_peak: f32) -> StatsFrame {
+        StatsFrame {
+            rate: 48_000,
+            quantum: 256,
+            dsp_load,
+            dsp_peak,
+            xruns: 0,
+        }
     }
 
     fn drawn(backend: BackendState) -> Vec<Drawn> {
@@ -482,14 +651,108 @@ mod tests {
     #[test]
     fn the_header_names_the_app_and_shows_the_display() {
         let host = FakeHost::new();
-        let drawn = drawn_with(BackendState::Simulated, &host);
+        let shapes = frame(BackendState::Simulated, &host);
+        let drawn = drawn_in(&shapes);
         let texts = texts(&drawn);
-        let load = format!("{:.0}%", host.stats().dsp_load * 100.0);
+        let stats = host.stats();
+        let load = dsp_percent(stats.dsp_load);
         for expected in [
             TITLE, "48", "kHz", "256", "samples", "5.3", "ms", "DSP", &load,
         ] {
             assert!(texts.contains(&expected), "no `{expected}` in {texts:?}");
         }
+        assert_eq!(dsp_number(&shapes).colour, colour::TEXT);
+        // The bar fills to the average and ticks at the peak, three points past it.
+        let (bar, fill, ticks) = dsp_bar(&shapes);
+        let fill = fill.expect("the fill");
+        assert_eq!(fill.left(), bar.left());
+        assert!(close(fill.width(), bar.width() * stats.dsp_load));
+        assert_eq!(ticks.len(), 1, "{ticks:?}");
+        let tick = ticks[0];
+        assert!(close(
+            tick.left(),
+            bar.left() + bar.width() * stats.dsp_peak
+        ));
+        assert!(close(tick.width(), size::PEAK_LINE));
+        assert_eq!(tick.y_range(), bar.y_range());
+        assert!(tick.left() > fill.right());
+    }
+
+    #[test]
+    fn the_dsp_number_shows_tenths_below_one_percent_and_zero_only_for_none() {
+        for (load, text) in [
+            (0.0, "0%"),
+            (0.004, "0.4%"),
+            (0.0001, "0.1%"),
+            (0.0096, "1%"),
+            (0.012, "1%"),
+            (0.07, "7%"),
+            (0.124, "12%"),
+            (1.3, "130%"),
+            (-0.5, "0%"),
+            (f32::NAN, "0%"),
+        ] {
+            assert_eq!(dsp_percent(load), text, "{load}");
+        }
+        // As drawn: a small load reads as itself, not as none.
+        let drawn = dsp_number(&display_frame(stats(0.004, 0.01)));
+        assert_eq!((drawn.text.as_str(), drawn.colour), ("0.4%", colour::TEXT));
+        let drawn = dsp_number(&display_frame(stats(0.0, 0.0)));
+        assert_eq!(drawn.text, "0%");
+    }
+
+    #[test]
+    fn the_dsp_peak_is_a_tick_on_the_bar_and_over_the_budget_it_pins_and_turns_the_number_red() {
+        // Within the budget: the fill at the average, the tick at the peak, the number bright.
+        let shapes = display_frame(stats(0.25, 0.5));
+        let (bar, fill, ticks) = dsp_bar(&shapes);
+        assert!(close(fill.unwrap().width(), bar.width() * 0.25));
+        assert_eq!(ticks.len(), 1);
+        assert!(close(ticks[0].left(), bar.left() + bar.width() * 0.5));
+        let number = dsp_number(&shapes);
+        assert_eq!((number.text.as_str(), number.colour), ("25%", colour::TEXT));
+
+        // A cycle over its budget: the tick pinned at the bar's end, the number in the mute
+        // colour, the meters' red, while the average is still under.
+        let shapes = display_frame(stats(0.9, 1.4));
+        let (bar, fill, ticks) = dsp_bar(&shapes);
+        assert!(close(fill.unwrap().width(), bar.width() * 0.9));
+        assert_eq!(ticks.len(), 1);
+        assert!(close(ticks[0].right(), bar.right()));
+        assert!(ticks[0].left() >= bar.left());
+        let number = dsp_number(&shapes);
+        assert_eq!((number.text.as_str(), number.colour), ("90%", colour::MUTE));
+
+        // The average over too: the fill whole, the number past 100.
+        let shapes = display_frame(stats(1.2, 1.5));
+        let (bar, fill, ticks) = dsp_bar(&shapes);
+        assert!(close(fill.unwrap().width(), bar.width()));
+        assert!(close(ticks[0].right(), bar.right()));
+        let number = dsp_number(&shapes);
+        assert_eq!(
+            (number.text.as_str(), number.colour),
+            ("120%", colour::MUTE)
+        );
+
+        // A peak too small to stand apart from the bar's start draws no tick.
+        let (_, _, ticks) = dsp_bar(&display_frame(stats(0.001, 0.01)));
+        assert!(ticks.is_empty(), "{ticks:?}");
+    }
+
+    #[test]
+    fn with_no_rate_the_dsp_cell_is_a_dash_with_no_tick() {
+        let shapes = display_frame(StatsFrame {
+            rate: 0,
+            dsp_load: 0.3,
+            dsp_peak: 0.6,
+            ..StatsFrame::default()
+        });
+        let drawn = drawn_in(&shapes);
+        assert_eq!(count(&drawn, "\u{2014}"), 4, "{:?}", texts(&drawn));
+        let (_, fill, ticks) = dsp_bar(&shapes);
+        assert!(fill.is_none_or(|f| f.width() == 0.0), "{fill:?}");
+        assert!(ticks.is_empty(), "{ticks:?}");
+        assert_eq!(dsp_number(&shapes).colour, colour::TEXT);
     }
 
     #[test]
