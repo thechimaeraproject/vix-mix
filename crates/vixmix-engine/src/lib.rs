@@ -8,7 +8,8 @@
 //! (MON, MST) at their gains into the two mixes; each mix runs its own chain, then its level
 //! or mute; with the ear button on, the Monitor output plays the Master mix. Meters record
 //! post-send and post-mix peaks into a [`MeterBank`]; [`Stats`] count frames and DSP load. Both
-//! are the kit's `chimaeraproject_audio_io`, at this mixer's shape.
+//! are the kit's `chimaeraproject_audio_io`, at this mixer's shape. Beside them
+//! [`DspCounters`] keep the busy time and the worst cycle, for a load averaged over a window.
 //!
 //! **The handoff.** [`Engine::prepare`] builds a graph (allocating as it pleases), swaps it
 //! into an `ArcSwap` and keeps its own clone of the graph it replaced. The tick loads the
@@ -27,6 +28,7 @@
 //! model and the graph are this crate's (the kit's charter: no shared crate owns either). See
 //! `docs/reference/engine.md`.
 
+mod dsp;
 mod engine;
 mod graph;
 mod instance;
@@ -37,6 +39,7 @@ mod tick_only;
 
 pub use chimaeraproject_audio_io::{PeakMeter, Stats, StereoMeter};
 pub use chimaeraproject_audio_processor::EngineConfig;
+pub use dsp::DspCounters;
 pub use engine::{ChannelInput, Engine, MAX_QUANTUM, Tick};
 pub use graph::InsertProblem;
 pub use lender::{LendError, Lender, NoPlugins};

@@ -11,6 +11,7 @@ use chimaeraproject_audio_processor::{
 };
 use vixmix_model::{EngineSnapshot, InstanceId};
 
+use crate::dsp::DspCounters;
 use crate::graph::{self, InsertProblem, Prepared, StripChain};
 use crate::lender::Lender;
 use crate::registry::{Registry, SetUpWith};
@@ -75,6 +76,7 @@ pub struct Engine {
     host: Mutex<HostSide>,
     meters: MeterBank,
     stats: Stats,
+    dsp: DspCounters,
 }
 
 // `Engine` is shared between the host thread and the data thread as `Arc<Engine>`.
@@ -107,6 +109,7 @@ impl Engine {
             }),
             meters: MeterBank::default(),
             stats,
+            dsp: DspCounters::default(),
         }
     }
 
@@ -212,6 +215,12 @@ impl Engine {
     /// The counters the tick keeps.
     pub fn stats(&self) -> &Stats {
         &self.stats
+    }
+
+    /// The busy time and the worst cycle's load the tick keeps beside [`stats`](Engine::stats),
+    /// for a load averaged over a window of the reader's.
+    pub fn dsp(&self) -> &DspCounters {
+        &self.dsp
     }
 
     /// Builds a graph from the host side's snapshot and holdings and swaps it in.
@@ -395,9 +404,11 @@ impl Engine {
             .record(peak(master_l), peak(master_r));
 
         // The frames, the quantum and the load, rounded up so a tick that took any time at all
-        // reads at least 1 permille.
-        self.stats
-            .record_cycle(n, prepared.sample_rate, started.elapsed());
+        // reads at least 1 permille; then the busy time and the worst cycle, from one reading
+        // of the clock.
+        let busy = started.elapsed();
+        self.stats.record_cycle(n, prepared.sample_rate, busy);
+        self.dsp.record(n, prepared.sample_rate, busy);
     }
 }
 
