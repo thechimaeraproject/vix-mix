@@ -127,8 +127,16 @@ here.
    ([reference/host.md](../reference/host.md) § Shutdown; `vixmix-host`, with the backend
    reporting the move), and step 9's sentence should say the mixer, not the player, started
    again.
-4. **Monitor's device gone, with Master on "No device".**
-   ([#14](https://github.com/thechimaeraproject/vix-mix/issues/14)) Where:
+4. ~~**Monitor's device gone, with Master on "No device".**~~ **Fixed 2026-11-10**
+   ([#14](https://github.com/thechimaeraproject/vix-mix/issues/14)): while the Master source
+   has the tick and the device the setup names for Monitor is not among the devices the backend
+   reports, a toast (once for that device) and the idle banner name the device and say the
+   mixer waits for it; the banner while nothing drives the mixer names it too
+   ([reference/host.md](../reference/host.md) § Every poll and the state on PipeWire). Its
+   tests compile only on Linux, so CI's Linux leg proves them. Narrower than the issue asked,
+   on purpose: Monitor's stream refused on a device that is there now says nothing, where it
+   said "is not there" before, which was false and could repeat each second as the backend
+   tried again. Still to do by hand on Fedora: the check below. Was: where,
    `crates/vixmix-host/src/audio.rs`. The toast "Monitor's output device is not there…" is said
    only when Master out takes the tick; with Master on "No device" the tick moves to the Master
    source instead and nothing is said, and the idle banner asks to pick a Monitor device

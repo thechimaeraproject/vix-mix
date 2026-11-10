@@ -57,7 +57,7 @@ itself; an issue closes when its item is struck through in handoff 09.
 | [#11](https://github.com/thechimaeraproject/vix-mix/issues/11) | a plugin editor's window resizes without telling the plugin; the plugin-folder bound (change request 10) | item 14 |
 | [#12](https://github.com/thechimaeraproject/vix-mix/issues/12) | SIGTERM and logout skip the shutdown order | item 10 |
 | [#13](https://github.com/thechimaeraproject/vix-mix/issues/13) | Vix Mix restarted within milliseconds of quitting can leave a playing app routed but silent | item 3 |
-| [#14](https://github.com/thechimaeraproject/vix-mix/issues/14) | no toast when Monitor's device goes while Master has no device | item 4 |
+| [#14](https://github.com/thechimaeraproject/vix-mix/issues/14) | no toast when Monitor's device goes while Master has no device; fixed and closed 2026-11-10 | item 4, struck |
 | [#15](https://github.com/thechimaeraproject/vix-mix/issues/15) | Preferences: the Tab order of the folder field and its Add button | item 15 |
 | [#16](https://github.com/thechimaeraproject/vix-mix/issues/16) | the first start: the plugin scan before the first frame, Monitor's device not picked | item 7 |
 | [#17](https://github.com/thechimaeraproject/vix-mix/issues/17) | a frame for the meters alone, to get under 5 % of one core | item 13 |
