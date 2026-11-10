@@ -387,9 +387,10 @@ appearance that is the frame after the unseen one, whose disabled rows cannot ho
 - **The preferences** (270 wide): the quantum asked of PipeWire as radios (128, 256, 512
   samples; `SetPrefs`), the extra plugin folders each with its bin, a field and Add for
   another (`SetPrefs` with the folder added or removed, the rest kept; a folder takes at most
-  1024 characters), Done. It holds at most 16 folders, the model's bound
-  (`Prefs::MAX_PLUGIN_DIRS`, which `SetPrefs` keeps too): an Add past that sends nothing, keeps
-  the folder in the field, and says on the toast line to remove one first.
+  1024 characters; Tab goes from the field to Add and Shift+Tab back, as they read), Done. It
+  holds at most 16 folders, the model's bound (`Prefs::MAX_PLUGIN_DIRS`, which `SetPrefs` keeps
+  too): an Add past that sends nothing, keeps the folder in the field, and says on the toast
+  line to remove one first.
 
 ## The plugin browser
 
@@ -563,6 +564,8 @@ gesture sent, and what is in view is what the last frame painted whole inside it
   `the_preferences_ask_for_a_quantum_and_take_plugin_folders` (and Rescan plugins asks the
   host, says what the catalog holds, and leaves a warning of the host's on the line),
   `the_preferences_hold_at_most_sixteen_plugin_folders`,
+  `tab_goes_from_the_folder_field_to_its_add_button_as_they_read` (and Shift+Tab back; Enter
+  on Add adds the folder typed),
   `the_window_keeps_room_for_the_header_over_a_narrow_console` (the least size, against
   `Shell::least`),
   `an_editor_the_host_refuses_says_why_on_the_toast_line_and_keeps_no_window` (`FakeHost`'s
