@@ -10,9 +10,10 @@ the window's fixture. The contract is [reference/host.md](../reference/host.md);
 test is [cookbook/by-hand-pass.md](../cookbook/by-hand-pass.md). `dev check` is green on
 Windows, and the Linux gate (fmt, clippy `-D warnings`, `cargo test --workspace` with every
 one of the host's integration tests) is green in the `ubuntu:24.04` container with the headless
-daemon. **The acceptance's first bullet waits for the user's by-hand pass on Fedora** (handoff
-08 runs the cookbook); no agent can hear a mic in headphones, and its flow is proven headlessly
-instead by `tests/headless.rs`. Deviations from the steps below, each with its reason:
+daemon. **The acceptance's first bullet is the user's by-hand pass on Fedora**, which ran on
+2026-11-10 as hours of daily use ([handoff 09](09-round-1-fixes.md) holds what it found); no
+agent can hear a mic in headphones, and its flow is proven headlessly instead by
+`tests/headless.rs`. Deviations from the steps below, each with its reason:
 
 - **Change request 2 is built, in the model** (`RestoreChannel { at, channel }` and
   `RestoreInsert { to, insert }`, refused with `NotRemoved` and `NoPlace`). The toast's undo

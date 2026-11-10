@@ -105,11 +105,11 @@ backend gone, the final save, every instance home and retired on the UI thread);
 polls it when it asks and shows its notes on the toast line. It does not own what a command
 means (01), the tick (02), the streams and routing writes (03), how instances are made (04) or
 how anything is drawn (05). Proven on the null backend with a real plugin on both legs and
-against the headless daemon on Linux; the Fedora pass waits for the user. See
+against the headless daemon on Linux; the Fedora pass ran on 2026-11-10 (handoff 09). See
 `docs/reference/host.md`, `docs/cookbook/by-hand-pass.md` and
 [handoff 06](docs/handoffs/06-host-and-integration.md).
 
-**Packaging is implemented (2026-11-04); the first real test waits for Fedora KDE on the NV3:**
+**Packaging is implemented (2026-11-04); the first real test ran on 2026-11-10:**
 [handoff 08](docs/handoffs/08-packaging-and-first-real-test.md) put the desktop entry, a
 scalable icon in the console's colours and the AppStream metadata, under one id
 (`org.chimaeraproject.vixmix`), in `packaging/linux/` with `install.sh`, and the release tarball
@@ -119,9 +119,11 @@ in the Ubuntu container. The charter's packaging finding recommends native, not 
 the user took it (2026-11-10): an RPM (`packaging/linux/vix-mix.spec`, built from a source
 tarball with every crate vendored by `scripts/package/rpm.sh`, `dev rpm`), which
 `.github/workflows/linux-build.yml` builds in a Fedora container beside the tarball after every
-merge; a COPR once public. It does not own what the by-hand pass will fix: that
-pass (handoff 08 step 4) has not run, and
-[handoff 09](docs/handoffs/09-round-1-fixes.md) holds what it must check. See
+merge; a COPR once public. It does not own what the by-hand pass found: that
+pass (handoff 08 step 4) ran as hours of daily use on Fedora KDE from the RPM, and
+[handoff 09](docs/handoffs/09-round-1-fixes.md) holds its two findings (a plugin that aborts
+while loading, the DSP readout), the items that held, the figures it did not measure and the
+round 1 items still open. See
 `docs/cookbook/install-on-fedora.md` and the two handoffs.
 
 **The kit lifts are implemented (2026-11-07):** the engine's meter bank and counters are the

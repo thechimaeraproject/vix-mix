@@ -1,16 +1,19 @@
 # 08 — Packaging and the first real test
 
-**Record — shipped 2026-11-04 (step 4 waits for Fedora KDE on the NV3).** Vix Mix installs as a
+**Record — shipped 2026-11-04; step 4, the by-hand pass, ran 2026-11-10.** Vix Mix installs as a
 desktop app: `packaging/linux/` holds the desktop entry, a scalable icon in the console's
 colours, the AppStream metadata and `install.sh`; `cargo install --path app --locked` and the
 release tarball (`scripts/package/linux-tarball.sh`, `dev package`) are the two install paths,
 with the Fedora prerequisites, in
 [cookbook/install-on-fedora.md](../cookbook/install-on-fedora.md). The packaging question is
 answered in [the charter](../charter.md) § Open: native, with the evidence and the three
-options. Fedora KDE is not on the NV3 yet, so the by-hand pass (step 4) has not run:
-[handoff 09](09-round-1-fixes.md) is the handoff that pass fills, seeded with the fifteen items
-the earlier lanes left open. Of the acceptance, the charter bullet is met; the
-install on Fedora and the pass wait for the machine. Proven in the `vixmix-linux-dev`
+options. The by-hand pass (step 4) ran on 2026-11-10 as hours of daily use on Inochi (Fedora
+KDE, from the RPM) rather than on the NV3 or step by step:
+[handoff 09](09-round-1-fixes.md) is the handoff that pass fills, with its two findings, the
+items that held and the figures it did not measure, beside the fifteen items the earlier lanes
+left open. Of the acceptance, the charter bullet is met, and the install on Fedora held for the
+RPM, which starts from the launcher with its icon; `cargo install` with `install.sh` has run
+only in the container. Proven in the `vixmix-linux-dev`
 container (Ubuntu, not Fedora): `cargo install --path app --locked --offline` and the tarball
 build, `install.sh` from the checkout and from the unpacked tarball into `~/.local` and
 `/usr/local` and back out (nothing left behind), `Exec` always double-quoted (a prefix with a
