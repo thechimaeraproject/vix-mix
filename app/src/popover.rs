@@ -1078,7 +1078,7 @@ fn prefs_panel(ui: &mut Ui, panel: &mut PrefsPanel, cx: &mut PopCx<'_>) -> Outco
         }
     });
     let field = search_id("folder");
-    let added = folder_field(ui, field, &mut panel.folder);
+    let added = folder_field(ui, field, &mut panel.folder, cx.keyboard);
     if added {
         let folder = panel.folder.trim();
         let path = std::path::PathBuf::from(folder);
@@ -1152,8 +1152,9 @@ fn folder_row(ui: &mut Ui, path: &str, keyboard: bool) -> bool {
 /// The field for another plugin folder and its Add button; returns whether one was added
 /// (Add, or Enter in the field). The field is registered before the button, so Tab goes from
 /// it to Add and Shift+Tab back, in the order they read; the button's place, which the
-/// field's width comes from, is worked out first without registering it.
-fn folder_field(ui: &mut Ui, id: Id, text: &mut String) -> bool {
+/// field's width comes from, is worked out first without registering it. Add reached from the
+/// keyboard shows the focus ring, as Done does.
+fn folder_field(ui: &mut Ui, id: Id, text: &mut String, keyboard: bool) -> bool {
     let [pad_x, pad_y] = pop::NAME_PAD;
     let (rect, _) = ui.allocate_exact_size(
         vec2(ui.available_width(), pop::FIELD_HEIGHT + pad_y),
@@ -1198,6 +1199,9 @@ fn folder_field(ui: &mut Ui, id: Id, text: &mut String) -> bool {
         "Add",
         ButtonKind::Plain,
     );
+    if keyboard && add.has_focus() {
+        widgets::ring(ui.painter(), add.rect, size::FOCUS_OFFSET);
+    }
     add.clicked() || (response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)))
 }
 

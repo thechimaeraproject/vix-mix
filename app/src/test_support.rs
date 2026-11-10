@@ -205,6 +205,8 @@ pub struct Harness {
     /// Every text the last frame painted whole inside what clips it (a scrolled list's view),
     /// and where: what a user sees whole.
     pub whole: Vec<(String, Rect)>,
+    /// Every rect the last frame outlined (a focus ring, a field's edge), and in which colour.
+    pub outlines: Vec<(Rect, Color32)>,
     /// What the last frame's gestures asked.
     pub intents: Vec<Intent>,
 }
@@ -229,6 +231,7 @@ impl Harness {
             time: 1.0,
             texts: Vec::new(),
             whole: Vec::new(),
+            outlines: Vec::new(),
             intents: Vec::new(),
         };
         harness.idle(1);
@@ -295,11 +298,14 @@ impl Harness {
             .dispatch(&mut self.host, &mut self.editors, intents);
     }
 
-    /// Keeps the texts a frame painted, and those it painted whole inside their clip.
+    /// Keeps the texts a frame painted, those it painted whole inside their clip, and the rects
+    /// it outlined.
     fn read(&mut self, shapes: &[egui::epaint::ClippedShape]) {
         self.texts.clear();
         self.whole.clear();
+        self.outlines.clear();
         for clipped in shapes {
+            outline(&clipped.shape, &mut self.outlines);
             let from = self.texts.len();
             collect(&clipped.shape, &mut self.texts);
             self.whole.extend(
@@ -535,6 +541,16 @@ fn collect(shape: &egui::Shape, out: &mut Vec<(String, Rect, Color32)>) {
             ));
         }
         egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, out)),
+        _ => {}
+    }
+}
+
+fn outline(shape: &egui::Shape, out: &mut Vec<(Rect, Color32)>) {
+    match shape {
+        egui::Shape::Rect(rect) if !rect.stroke.is_empty() => {
+            out.push((rect.rect, rect.stroke.color));
+        }
+        egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| outline(s, out)),
         _ => {}
     }
 }
