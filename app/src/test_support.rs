@@ -5,7 +5,7 @@
 //! asserts the [`Command`] that went to the host; and [`FakeWindows`], editor windows with no
 //! event loop, which keep every call the editors made of them.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::num::NonZeroIsize;
 use std::rc::Rc;
 use std::time::Duration;
@@ -35,6 +35,7 @@ use crate::ui;
 pub enum Call {
     Apply(Command),
     OpenEditor(InstanceId),
+    ResizeEditor(InstanceId, EditorSize),
     CloseEditor(InstanceId),
     Favorite(String, bool),
     Rescan,
@@ -156,6 +157,10 @@ impl Host for Recorder {
         let mut events = self.inner.tick_editors();
         events.append(&mut self.editor_events);
         events
+    }
+    fn resize_editor(&mut self, instance: InstanceId, size: EditorSize) {
+        self.calls.push(Call::ResizeEditor(instance, size));
+        self.inner.resize_editor(instance, size);
     }
     fn close_editor(&mut self, instance: InstanceId) {
         self.calls.push(Call::CloseEditor(instance));
@@ -591,6 +596,8 @@ struct FakeWindow {
     n: usize,
     calls: Rc<RefCell<Vec<WindowCall>>>,
     handleless: bool,
+    /// What it has taken: the size it was made at, then each resize, at once.
+    size: Cell<EditorSize>,
 }
 
 impl Opener for FakeWindows {
@@ -612,6 +619,10 @@ impl Opener for FakeWindows {
             n,
             calls: Rc::clone(&self.calls),
             handleless: self.handleless,
+            size: Cell::new(EditorSize {
+                width: size[0],
+                height: size[1],
+            }),
         }))
     }
 }
@@ -628,9 +639,13 @@ impl EditorWindow for FakeWindow {
         Ok(RawWindowHandle::Win32(Win32WindowHandle::new(hwnd)))
     }
     fn resize(&self, size: EditorSize) {
+        self.size.set(size);
         self.calls
             .borrow_mut()
             .push(WindowCall::Resize(self.n, size));
+    }
+    fn size(&self) -> EditorSize {
+        self.size.get()
     }
     fn show(&self) {
         self.calls.borrow_mut().push(WindowCall::Show(self.n));

@@ -459,8 +459,15 @@ slot N".
   "run with the real host to open a plugin's editor", a Wayland handle on Linux) drops the
   window and goes to the toast line. At most 16 are open at once.
 - **Resize**: `Host::tick_editors`, every frame or hidden tick while one is open (at least
-  every 33 ms), names the instance that asked; its window takes the size. (Telling the plugin
-  its new size waits for the host; see below.)
+  every 33 ms), names the instance that asked; its window takes the size. When the window says
+  it has a new size (`WindowEvent::Resized`), its plugin is told through `Host::resize_editor`
+  (the kit's resize is asynchronous: the plugin knows the size its window took only once told;
+  change request 10). Not passed on: a size with no area (Windows reports 0 × 0 for a
+  minimised window), a size the window has left already (winit reports the size a window was
+  made at after it took its plugin's), and the size the plugin has already (the one it opened
+  at, or was last told). So it cannot go round: a `Resized` never resizes a window (only a
+  plugin's request does), and a plugin told the size it asked for that asks for it again
+  leaves the window as it is and is not told again.
 - **Close**: always through `Host::close_editor` before the window goes — the window's close
   button, the insert's removal (the shell closes it before the command), the insert leaving the
   setup any other way, the window closing at exit — and an editor the host closed itself
@@ -468,17 +475,17 @@ slot N".
 - Each opens, resizes and closes with an `info` log line, which a by-hand pass reads.
 - **Made by an `Opener`, driven through `EditorWindow`**: the event loop makes winit windows in
   the app, and `EditorWindow` is what the editors ask of one (its id, its raw handle, a size,
-  show, a title, raise), so the tests open, resize, follow and close editors with no event loop
-  (`test_support::FakeWindows`, against a `Recorder` that opens editors as a real host does).
+  the size it has, show, a title, raise), so the tests open, resize, follow and close editors
+  with no event loop (`test_support::FakeWindows`, against a `Recorder` that opens editors as a
+  real host does and keeps every call).
 
 ## What the window needs from the host
 
-The window codes against the `Host` trait as it is. One thing waits, half of the build map's
-change request 10, agreed by the main session and left to round 1 (handoff 09):
-`resize_editor(instance, size)` on the host (the kit's resize is asynchronous: after the window
-has taken the size a plugin asked for, `EditorSession::resize` must tell the plugin, and today
-nothing does). The other half, the bound on the extra plugin folders, is the model's
-(`Prefs::MAX_PLUGIN_DIRS`), and the preferences read it.
+The window codes against the `Host` trait as it is. What it lacked, the build map's change
+request 10, round 1 built (handoff 09, [#11](https://github.com/thechimaeraproject/vix-mix/issues/11)):
+`Host::resize_editor(instance, size)`, which the editor windows call (§ Editor windows), and
+the bound on the extra plugin folders in the model (`Prefs::MAX_PLUGIN_DIRS`, which `SetPrefs`
+keeps and the preferences read).
 
 ## The capture
 
@@ -620,7 +627,9 @@ gesture sent, and what is in view is what the last frame painted whole inside it
 - `editors.rs`: an editor window is titled plugin, strip and slot; it opens hidden at 640 ×
   480, takes the size its plugin asks for and shows, and opened again is raised; a refusal
   (the host's, no window, no handle, an insert gone) keeps no window and says what to do; at
-  most sixteen open; a resize request goes to the window of the editor that asked; its close
+  most sixteen open; a resize request goes to the window of the editor that asked; the size
+  its window took is told to its plugin once (asked for again, it is not told again), and a
+  size with no area or one the window has left is not told; its close
   button closes the editor through the host first; one the host closed loses its window without
   a second close; renamed with its strip, and closed through the host once its insert leaves
   the setup; at exit each closes through the host in the order it opened.

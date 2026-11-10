@@ -36,6 +36,7 @@ pub trait Host {
     fn devices(&self) -> &[DeviceInfo];
     fn open_editor(&mut self, instance: InstanceId, parent: RawWindowHandle) -> Result<EditorSize, HostError>;
     fn tick_editors(&mut self) -> Vec<(InstanceId, EditorEvent)>;
+    fn resize_editor(&mut self, instance: InstanceId, size: EditorSize);
     fn close_editor(&mut self, instance: InstanceId);
     fn save_now(&mut self);
     fn problems(&self) -> &[InsertProblem];
@@ -65,7 +66,11 @@ move, which sets the window's 60 Hz repaint) is `Simulated` or `Running`. `Meter
 { channels: [ChannelLevels; 8], monitor, master }` holds linear peaks (`Stereo { left, right
 }`) by channel position, copied once per frame; `StatsFrame { rate, quantum, dsp_load, xruns
 }` with `quantum_ms()`. `AppPresence { app, running }`. `tick_editors` pairs each event with
-its instance, because the window keeps one editor window per instance.
+its instance, because the window keeps one editor window per instance. `resize_editor` tells
+an open editor its window now has `size` (`EditorSession::resize`: the kit's resize is
+asynchronous, so a plugin knows the size its window took only once told; change request 10):
+an instance with no open editor is ignored, and a size the plugin refuses is logged rather than
+a toast, because a window can report many sizes in a row.
 
 `next_poll` is how long the window may wait before it polls again although nothing happened on
 its side: `None` when the host waits for nothing. `set_favorite` stars a plugin and keeps it;
@@ -232,7 +237,7 @@ frame at a time and `poll` advances to the wall clock. DSP load reads 6–9 %, a
 prototype's. It hands out the same `Removed { message, undo }` as `RealHost`, stars plugins in
 its catalog, answers a rescan with `PluginsRescanned`, has no problems, and `next_poll` is
 `None` (its meters are live, so the window draws at its frame rate). It never writes a file,
-and `open_editor` answers `HostError::Simulated`.
+`open_editor` answers `HostError::Simulated`, and `resize_editor` does nothing.
 
 ## Verification
 
@@ -240,7 +245,8 @@ and `open_editor` answers `HostError::Simulated`.
 
 - **Unit tests.** `real`: it boots on the null backend and says so first, pumps a quantum a
   poll and writes nothing when nothing changed
-  (`it_boots_on_the_null_backend_and_says_so_first`); `System` on a platform without a backend
+  (`it_boots_on_the_null_backend_and_says_so_first`); a size for an instance with no open
+  editor is ignored; `System` on a platform without a backend
   is the null backend with `NO_BACKEND`; a change is saved once the setup has been quiet and
   restored at the next boot; quitting with a change pending saves it; an unreadable setup is
   kept aside; a removed channel comes back through the undo the host hands out, and a refused
