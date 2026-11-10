@@ -61,7 +61,7 @@ bundles that worked. Which call when, for the host (06) and the menu (05):
 Only audio classes whose sub-categories say `Fx` are kept (`ClassInfo::is_effect`), one entry
 per class id (the first bundle in path order wins), sorted by name. The result is a
 `ScanOutcome { catalog, failures, cache, described, reused }`: each failure is the bundle's
-path and the kit's message, which ends with the fix.
+path and the kit's message, or what its child process did (below), and each ends with the fix.
 
 ### Loading a bundle in a child process
 
