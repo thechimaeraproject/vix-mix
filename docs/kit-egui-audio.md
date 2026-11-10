@@ -18,7 +18,10 @@ crates; it pins egui at the major the workspace already takes.
   its painting (the two bars with their gradient, black above and the peak-hold line, the line
   and its triangle, the muted look), returning the positions a gesture asked for and where the
   bars are. `fader.rs` keeps `Target`, the command each position becomes, the steps and the
-  focus ring, and builds the `MeterFaderStyle` from `theme.rs`.
+  focus ring, and builds the `MeterFaderStyle` from `theme.rs`. Since the window was first
+  driven by hand, `fader.rs` also jumps the fader to a press away from its line, seeding the
+  kit's drag there (the kit's fader only drags); that belongs in the kit's `Gestures` once
+  the kit has it.
 - **`PeakHold`, `Hold` and `meter_position`**: each bar's level and hold line (900 ms, then
   0.006 a frame) and a linear peak read on the fader's taper (`meters.rs`).
 - **The `Taper` trait**: `meters::Prototype` is the model's taper (`vixmix_model::taper`, the

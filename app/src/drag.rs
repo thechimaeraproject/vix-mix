@@ -46,12 +46,13 @@ impl InsertDrag {
 }
 
 /// Where a drop at `pointer` lands: the well under the pointer (its position in `wells`)
-/// and the drop place in its chain.
+/// and the drop place in its chain. Only the part of a strip that shows takes a drop: a
+/// channel scrolled under Monitor is not where Monitor is.
 pub fn target_at(wells: &[WellRects], pointer: Pos2) -> Option<(usize, usize)> {
     let (well, rects) = wells
         .iter()
         .enumerate()
-        .find(|(_, w)| w.strip_rect.contains(pointer))?;
+        .find(|(_, w)| w.strip_rect.intersect(w.clip).contains(pointer))?;
     let index = rects
         .slots
         .iter()
@@ -141,7 +142,11 @@ pub fn resolve(
 /// The drop line before slot `index` of `well` (or before "+ Add plugin"), and the outline
 /// round the list when it is another strip's.
 fn drop_place(painter: &Painter, well: &WellRects, index: usize, from: SlotRef) {
-    let clipped = painter.with_clip_rect(well.list.intersect(painter.clip_rect()));
+    let clipped = painter.with_clip_rect(
+        well.list
+            .intersect(well.clip)
+            .intersect(painter.clip_rect()),
+    );
     let before = well.slots.get(index).copied().unwrap_or(well.add);
     let line = Rect::from_x_y_ranges(
         before.left() + size::DROP_INSET..=before.right() - size::DROP_INSET,
@@ -223,6 +228,7 @@ mod tests {
         WellRects {
             strip,
             strip_rect: Rect::from_min_size(pos2(left, 0.0), vec2(100.0, 450.0)),
+            clip: Rect::EVERYTHING,
             list: Rect::from_min_size(pos2(left + 6.0, top - 2.0), vec2(92.0, 132.0)),
             slots: (0..slots)
                 .map(|i| {
@@ -252,6 +258,12 @@ mod tests {
         // Another strip; the black between strips is none.
         assert_eq!(target_at(&wells, pos2(150.0, 200.0)), Some((1, 1)));
         assert_eq!(target_at(&wells, pos2(105.0, 200.0)), None);
+        // A strip partly out of view takes a drop only where it shows.
+        let mut hidden = well(a, 0.0, 3);
+        hidden.clip = Rect::from_min_max(pos2(60.0, 0.0), pos2(500.0, 450.0));
+        let wells = [hidden];
+        assert_eq!(target_at(&wells, pos2(50.0, 200.0)), None);
+        assert_eq!(target_at(&wells, pos2(70.0, 200.0)), Some((0, 3)));
     }
 
     #[test]

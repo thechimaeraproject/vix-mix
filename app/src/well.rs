@@ -80,6 +80,7 @@ pub fn well(ui: &mut Ui, rect: Rect, strip_rect: Rect, view: &WellView<'_>, cx: 
     let mut rects = WellRects {
         strip: view.strip,
         strip_rect,
+        clip: ui.clip_rect(),
         list,
         slots: Vec::with_capacity(view.chain.len()),
         add: Rect::NOTHING,
@@ -116,9 +117,7 @@ pub fn well(ui: &mut Ui, rect: Rect, strip_rect: Rect, view: &WellView<'_>, cx: 
             })
             .show(&mut child, slots);
     }
-    cx.layout
-        .anchors
-        .push((Anchor::AddPlugin(view.strip), rects.add));
+    cx.anchor(ui, Anchor::AddPlugin(view.strip), rects.add);
     cx.layout.wells.push(rects);
 }
 

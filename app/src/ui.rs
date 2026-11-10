@@ -1,8 +1,9 @@
 //! What each frame draws and senses: the 34-point header (the menu button, the title, the
 //! display with the rate, the quantum, its milliseconds and the DSP load), the banner when
 //! the audio needs the user (the host's `BackendState::banner`: no backend, the mixer idle
-//! with what would drive it, the daemon gone), the console under them, top left, at its
-//! natural size, then the open popover and the toast line over everything.
+//! with what would drive it, the daemon gone), the console under them filling the rest of
+//! the window ([`console::Geometry`]), then the open popover and the toast line over
+//! everything.
 //!
 //! [`draw`] reads the host and the window's [`Shell`], and returns what the gestures asked
 //! ([`Intent`]s); the shell carries them out after the frame, so a frame never changes the
@@ -18,7 +19,7 @@ use egui::{
 use vixmix_host::{Host, StatsFrame};
 use vixmix_model::Setup;
 
-use crate::console::{self, Anchor, ConsoleView, Cx, Layout};
+use crate::console::{self, Anchor, ConsoleView, Cx, Geometry, Layout};
 use crate::icons;
 use crate::popover::{self, Outcome, PopCx, Popover};
 use crate::shell::{Intent, Shell};
@@ -30,9 +31,16 @@ use crate::widgets;
 pub const TITLE: &str = "Vix Mix";
 
 /// The window's content at its natural size: the console's width, the header and the
-/// console's height (no banner).
+/// console's height (no banner). The window opens at it, and the look gate is drawn at it.
 pub fn natural_size(setup: &Setup) -> Vec2 {
-    let console = console::size(setup.channels.len());
+    let console = console::natural_size(setup.channels.len());
+    vec2(console.x, size::HEADER + console.y)
+}
+
+/// The window's content at its least: the header over the console at its least (the first
+/// frame adds the header's own width and the banner, [`Shell::least`]).
+pub fn least_size(setup: &Setup) -> Vec2 {
+    let console = console::least_size(setup.channels.len());
     vec2(console.x, size::HEADER + console.y)
 }
 
@@ -117,7 +125,9 @@ pub fn draw(root: &mut Ui, shell: &mut Shell, host: &dyn Host) -> Vec<Intent> {
     };
     let mut started = false;
     egui::CentralPanel::no_frame().show(root, |ui| {
-        let origin = ui.max_rect().min;
+        let area = ui.max_rect();
+        let channels = host.setup().channels.len();
+        let geometry = Geometry::new(area, channels);
         let view = ConsoleView {
             setup: host.setup(),
             meters: &shell.meters,
@@ -132,14 +142,12 @@ pub fn draw(root: &mut Ui, shell: &mut Shell, host: &dyn Host) -> Vec<Intent> {
             keyboard: shell.keyboard,
             open,
         };
-        let (rect, began) = console::draw(ui, origin, &view, &mut cx);
-        // The window needs the console under the header (and the banner), and the header's
-        // own width, whichever is wider.
-        shell.content = Rect::from_min_max(
-            Pos2::ZERO,
-            pos2(rect.right().max(header_width), rect.bottom()),
-        );
-        started = began;
+        started = console::draw(ui, &geometry, &view, &mut cx);
+        // The window needs the console at its least under the header (and the banner), and
+        // the header's own width, whichever is wider.
+        let least = console::least_size(channels);
+        shell.least = vec2(least.x.max(header_width), area.top() + least.y);
+        shell.console = geometry.rect;
     });
 
     // A drag closes the popover, as does a press outside it or Escape.
@@ -151,8 +159,9 @@ pub fn draw(root: &mut Ui, shell: &mut Shell, host: &dyn Host) -> Vec<Intent> {
     if let Some(popover) = shell.popover.as_mut() {
         let anchor = layout.anchor(popover.anchor());
         let outcome = match anchor {
-            // What it hung from is gone (its channel was removed).
-            None => Outcome::Drop,
+            // What it hung from is gone: its channel was removed (the popover has nothing to
+            // send), or scrolled out of view (a name being typed is kept).
+            None => Outcome::Close,
             Some(anchor) => {
                 let mut pop_cx = PopCx {
                     host,

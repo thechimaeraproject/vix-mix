@@ -27,9 +27,9 @@ back; on `png` for the capture. Its tests also take `vixmix-plugins`, because th
 | `pacing.rs` | when the next frame comes (`Pacer`, `pacing::plan`): the 60 Hz grid, input under the same cap, a refused frame's slot, the hidden window's ticks, the host's own polls between frames |
 | `shell.rs` | the window's state between frames (`Shell`), what it takes from the host's events (`Shell::events`) and what it does with a frame's `Intent`s: commands applied, refusals to the toast line, popovers opened and closed, Undo, stars and a rescan through the host, editors queued and then opened (`open_editors`) |
 | `ui.rs` | what a frame draws and senses: the header and its display, the banner, the console, the open popover, the toast line |
-| `console.rs` | the console row: where each strip goes, the rects a popover hangs from and a drag lands in, the insert drag resolved after the last strip |
-| `strip.rs` | a channel strip and a mix strip: rows, header, the scale's marks and style (drawn by the kit), readouts, mute, link and ear, the add-channel column, the text helpers |
-| `fader.rs` | a fader: which send or level a column is and the command each move sends, the steps, the focus ring, and the kit's meter fader in the theme's sizes and colours |
+| `console.rs` | the console row filling the window (`Geometry`): where each strip goes, the mixes pinned at the right, the channels' sideways scroll and what scrolls it (the wheel, the bar, a channel added, the focus, an insert dragged to an edge), the rects a popover hangs from and a drag lands in (what shows of them), the insert drag resolved after the last strip |
+| `strip.rs` | a channel strip and a mix strip: rows (the well's and the faders' from the strip's height), header, the scale's marks and style (drawn by the kit), readouts, mute, link and ear, the add-channel column, the text helpers |
+| `fader.rs` | a fader: which send or level a column is and the command each move sends, the jump to a press away from its line, the steps, the focus ring, and the kit's meter fader in the theme's sizes and colours |
 | `well.rs` | the FX well: MON and MST, the slots with their square, gear and bin, the mark of a slot playing as a pass-through, the slot keys, "+ Add plugin", the scrolling list |
 | `drag.rs` | an insert dragged within or between strips: where it lands, the drop line and outline, the ghost, the command a drop sends |
 | `popover.rs` | the popovers: the source panel, the output panel, the add-channel menu, the menu and the preferences; where a popover goes |
@@ -63,11 +63,14 @@ and the frame skipped. Its `upload` and `encode` are shared with the capture, so
 drawn exactly as the window draws. Every GPU failure says what to do (update the driver, or
 set `WGPU_BACKEND` to another backend).
 
-**The window's size.** It opens at the console's size (`ui::natural_size`: 900 × 488 for the
-example, 370 × 488 for a first start's one channel). Each frame reports what it needs
-(`Shell::content`): the console under the header and the banner, and the header's own width so
-its display clears the title; the window's least size follows, and a window smaller than that
-grows to it. A channel added widens it; a channel removed lets it shrink.
+**The window's size.** It opens at the console's natural size (`ui::natural_size`: 900 × 488
+for the example, 370 × 488 for a first start's one channel), and the console fills whatever
+size it is given ([What a frame draws](#what-a-frame-draws)). Each frame reports the least it
+can be (`Shell::least`): the console at its least (`console::least_size`: one channel in view
+and both mixes whole, 342 wide, and the faders at their shortest, 364 tall) under the header
+and the banner, and the header's own width so its display clears the title; the window's least
+size follows, and a window smaller than that grows to it. A channel added does not widen the
+window: the channels scroll, and the new one is scrolled into view.
 
 **On Linux** the event loop runs on X11 whenever there is an X display (`DISPLAY`), so under
 KDE's Wayland session the window is an XWayland one, because a VST3 editor embeds only in an
@@ -192,7 +195,10 @@ constants, and nothing else in the app spells a colour or a size:
   each end, the line 2 (3 under the pointer) and its overhang, the triangle 6 × 8, the peak
   line, mute buttons 24 × 20, link 20 × 18, icons 12, 13 and 14, the caret 10); the slot's
   hover controls (16-point buttons, 11-point icons, inset 1 and 2); the drop line (2, inset 2);
-  the focus ring; a drag's 5-point start; how near a fader's line a press grabs it (5).
+  the focus ring; a drag's 5-point start; how near a fader's line a press grabs it (5); how a
+  taller strip shares its height (a third to the well, at most 120 more) and the shortest
+  faders (120, a 360-point strip); the channels' scroll bar (6 under the pointer, 3 otherwise,
+  2 from the bottom); an insert drag's 24-point scrolling edge and its 600 points a second.
 - **`pop`**: the popovers' sizes — the 3-point corner and the `0 12px 32px` shadow, where a
   popover opens (2 below, 4 beside, 8 from the window's edge); the panels (270 wide, the name
   row, the 38-point search row, lists at most 300 tall, 24-point rows, tick box, badge,
@@ -238,10 +244,18 @@ them. `paint_filled` fills a closed run as a fan from its centre (the browser's 
   refusal (`Absent`), the mixer connected but idle with what would drive it (`Idle`), or the
   daemon gone and being reconnected (`Disconnected`). The host's messages go to the toast
   line, and an insert playing as a pass-through is marked on its slot, not in the banner.
-- **The console**, at the top left of what is left, at its natural size (`console::size`:
-  900 × 454 for six channels): black, with each channel strip in setup order, the add-channel
-  column (a plus over "ADD CHANNEL" set vertically, as `writing-mode: vertical-rl` sets it)
-  while fewer than eight channels exist, then Monitor and Master.
+- **The console**, filling what is left (`console::Geometry`): black, with each channel strip
+  in setup order from the left, the add-channel column (a plus over "ADD CHANNEL" set
+  vertically, as `writing-mode: vertical-rl` sets it) while fewer than eight channels exist,
+  then Monitor and Master against the right edge. At its natural size (`console::natural_size`:
+  900 × 454 for six channels) that is the prototype's layout to the point. Wider, the channels
+  stay at the left at their width and black fills the space before the mixes. Narrower than
+  the channels need, they scroll sideways in the room left of Monitor, under a thin floating
+  bar in the strips' bottom padding (`theme::console_scroll`); Monitor and Master never
+  scroll, never shrink and never hide. Every strip takes the height: past the natural 450 the
+  FX well takes a third of the extra (at most six more slots) and the faders the rest; below
+  it the faders give it up, down to 120 (the scale's six marks still apart), and the well keeps
+  its 151 (`strip::Rows::heights`).
 - **The open popover** over the console, and **the toast line** over everything.
 
 A **channel strip**: the header (the mic icon for a hardware input, four squares for an app
@@ -304,8 +318,17 @@ button.
 the plugin's name ("+ Copy" before it in the accent while Ctrl or Alt is held), and the strip
 under the pointer — anywhere on it — shows where the insert would land: a 2-point accent line
 before the first insert whose middle is below the pointer, or before "+ Add plugin", and a
-1-point accent outline round its list when it is another strip's. Escape cancels; a drop
+1-point accent outline round its list when it is another strip's. Only what shows of a strip
+takes a drop: a channel scrolled under Monitor is not where Monitor is. Escape cancels; a drop
 outside every strip does nothing. Starting a drag closes the open popover.
+
+**The channels** scroll sideways (`console::Scroll`, kept in `Gestures`) with the wheel over
+them, plain or with Shift, and with their bar; a press never drags them, so a fader's drag
+stays the fader's. A well that can scroll takes the wheel first, and the channels the rest. A
+channel just added is scrolled whole into view before its panel opens; a Tab that moves the
+focus into a channel not wholly in view scrolls it in (once: the wheel may scroll away from it
+again). An insert dragged within 24 points of either edge of the channels' view scrolls them
+that way, 600 points a second.
 
 **The well** scrolls with the wheel when its inserts are more than it holds (the charter: no
 cap on plugins per strip); a chain that fits is laid out without a scroll area, which would
@@ -316,7 +339,10 @@ gear and bin over its right end.
 
 One at a time, each hanging from what opened it (`popover::place`): below it with the left
 edges lined up (a header, the menu button), or beside it to the right — to the left when the
-right has no room — (the add column, "+ Add plugin"), always 8 points inside the window. A
+right has no room — (the add column, "+ Add plugin"), always 8 points inside the window. It
+hangs from what shows of its anchor, so it follows a channel's header as the channels scroll,
+and closes, sending what it holds (a name being typed), once the header has scrolled wholly
+out of view. A
 press outside a popover and outside what it hangs from closes it, and still lands on what was
 pressed; Escape closes it and gives the focus back to what it hangs from; its own anchor
 toggles it. Popovers show at once (no fade), with the prototype's face, outline, 3-point
@@ -529,7 +555,8 @@ gesture sent, and what is in view is what the last frame painted whole inside it
   `the_preferences_ask_for_a_quantum_and_take_plugin_folders` (and Rescan plugins asks the
   host, says what the catalog holds, and leaves a warning of the host's on the line),
   `the_preferences_hold_at_most_sixteen_plugin_folders`,
-  `the_window_keeps_room_for_the_header_over_a_narrow_console`,
+  `the_window_keeps_room_for_the_header_over_a_narrow_console` (the least size, against
+  `Shell::least`),
   `an_editor_the_host_refuses_says_why_on_the_toast_line_and_keeps_no_window` (`FakeHost`'s
   refusal, word for word),
   `a_panel_opens_with_the_focus_on_its_checked_radio_and_the_arrows_pick` (an input panel and
@@ -542,6 +569,18 @@ gesture sent, and what is in view is what the last frame painted whole inside it
   bins, the last first, each folder shown),
   `an_insert_playing_as_a_pass_through_is_marked_and_says_why`,
   `the_banner_says_when_the_mixer_is_idle_or_the_daemon_is_gone`;
+- the window's size: `a_taller_window_gives_the_well_a_little_more_and_the_faders_the_rest`
+  (and the mute and a fader answer where they now are),
+  `a_shorter_window_keeps_all_six_scale_marks_apart` (at the least height),
+  `a_wide_window_keeps_the_channels_left_and_the_mixes_at_its_right_edge`,
+  `a_narrow_window_scrolls_the_channels_and_keeps_monitor_and_master_whole` (eight channels:
+  the wheel to the end, the last channel and Master answer, Shift with the wheel back, the
+  wheel over Master scrolls nothing),
+  `adding_a_channel_in_a_narrow_window_scrolls_it_into_view_with_its_panel`,
+  `tab_to_a_channel_out_of_view_scrolls_it_in`,
+  `a_popover_follows_its_header_and_closes_sending_its_rename_when_scrolled_out`,
+  `a_drop_over_monitor_lands_there_not_on_the_hidden_channel_under_it`,
+  `an_insert_dragged_to_the_views_edge_scrolls_the_channels`;
 - the clock: `a_host_message_after_a_quiet_spell_shows_for_its_whole_time` (a host's toast
   polled 20 s after the last frame shows, still shows 7 s on, and is gone after its 8 s),
   `a_rescan_that_holds_the_window_still_shows_the_hosts_warning_for_its_whole_time` (a rescan
@@ -557,11 +596,17 @@ gesture sent, and what is in view is what the last frame painted whole inside it
   behind it.
 - `icons.rs`: every icon reads and draws inside its box, read once and kept; the path reader
   follows the SVG grammar.
-- `strip.rs`: a strip's rows are the prototype's heights inside its padding; a fader at unity
+- `strip.rs`: a strip's rows are the prototype's heights inside its padding; a taller strip
+  gives its well a third and its faders the rest, a shorter one shortens its faders to their
+  least and keeps its well; a fader at unity
   sits on the scale's 0, its ends 6 in; the header names the source as the prototype does.
 - `console.rs`: the example console is 900 × 454 and eight channels drop the add column; the
-  strips sit in setup order with the add column before the mixes; the live dot follows hardware
-  or a running app.
+  strips sit in setup order with the add column before the mixes, nothing to scroll at the
+  natural size; a wider console keeps the channels left and the mixes at its right edge; a
+  narrow one scrolls its channels and keeps both mixes whole; its least size is one channel,
+  both mixes and the shortest faders; revealing a channel scrolls it whole into view and no
+  further; the live dot follows hardware or a running app.
+- `drag.rs` (also): a strip partly out of view takes a drop only where it shows.
 - `drag.rs`: a drop lands before the first insert whose middle is below the pointer; dropping
   an insert where it is sends nothing and a copy always lands.
 - `popover.rs`: a popover opens below or beside its anchor and stays on screen; ticking an app

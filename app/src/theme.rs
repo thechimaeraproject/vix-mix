@@ -141,6 +141,28 @@ pub mod size {
     pub const STRIP_HEIGHT: f32 =
         PAD_TOP + ROWS[0] + ROWS[1] + ROWS[2] + ROWS[3] + ROWS[4] + 4.0 * ROW_GAP + PAD_BOTTOM;
 
+    /// A window taller than the console's natural height gives the FX well this share of the
+    /// extra, at most `WELL_GROW_MAX` (six more slots), and the faders the rest.
+    pub const WELL_SHARE: f32 = 1.0 / 3.0;
+    pub const WELL_GROW_MAX: f32 = 6.0 * SLOT;
+    /// A shorter one shortens the faders to this and no further (the well keeps its 151): a
+    /// travel of 108, which keeps the scale's six marks 15 points apart and legible.
+    pub const FADER_MIN: f32 = 120.0;
+    /// The shortest strip: the faders at their least.
+    pub const STRIP_MIN_HEIGHT: f32 = STRIP_HEIGHT - (ROWS[2] - FADER_MIN);
+
+    /// The channels' scroll bar when they are more than the window shows: floating over the
+    /// strips' bottom padding, this thick under the pointer, thinner otherwise, this far
+    /// from the console's bottom. It never covers the buttons.
+    pub const CONSOLE_BAR: f32 = 6.0;
+    pub const CONSOLE_BAR_THIN: f32 = 3.0;
+    pub const CONSOLE_BAR_MARGIN: f32 = 2.0;
+    const _: () = assert!(CONSOLE_BAR + CONSOLE_BAR_MARGIN <= PAD_BOTTOM + CONSOLE_PAD);
+    /// An insert dragged this near the channels' left or right edge scrolls them, this many
+    /// points a second.
+    pub const AUTO_SCROLL_EDGE: f32 = 24.0;
+    pub const AUTO_SCROLL_SPEED: f32 = 600.0;
+
     /// The strip header: side padding, the gap between its items, the icon, the live dot.
     pub const HEAD_PAD_X: f32 = 4.0;
     pub const HEAD_GAP: f32 = 5.0;
@@ -489,6 +511,38 @@ pub fn fonts() -> FontDefinitions {
 
 /// Installs the fonts and the visuals: egui's dark theme on the prototype's colours, its
 /// text styles in Plex.
+/// The channels' scroll area: a floating bar in the control colours, always shown while the
+/// channels are more than the window shows, no fade over the strips, and the plain wheel
+/// scrolling sideways (the only way it scrolls).
+pub fn console_scroll(style: &mut egui::Style) {
+    style.always_scroll_the_only_direction = true;
+    let scroll = &mut style.spacing.scroll;
+    *scroll = egui::style::ScrollStyle::floating();
+    scroll.bar_width = size::CONSOLE_BAR;
+    scroll.floating_width = size::CONSOLE_BAR_THIN;
+    scroll.bar_outer_margin = size::CONSOLE_BAR_MARGIN;
+    scroll.bar_inner_margin = 0.0;
+    scroll.floating_allocated_width = 0.0;
+    scroll.content_margin = egui::Margin::ZERO;
+    scroll.foreground_color = true;
+    scroll.dormant_handle_opacity = 1.0;
+    scroll.active_handle_opacity = 1.0;
+    scroll.interact_handle_opacity = 1.0;
+    scroll.dormant_background_opacity = 0.0;
+    scroll.active_background_opacity = 0.0;
+    scroll.interact_background_opacity = 0.0;
+    scroll.fade.strength = 0.0;
+    let widgets = &mut style.visuals.widgets;
+    for (state, ink) in [
+        (&mut widgets.inactive, colour::CTL_HI),
+        (&mut widgets.hovered, colour::FAINT),
+        (&mut widgets.active, colour::DIM),
+    ] {
+        state.fg_stroke.color = ink;
+        state.corner_radius = egui::CornerRadius::same(size::CORNER);
+    }
+}
+
 pub fn install(ctx: &egui::Context) {
     // One pass a frame: a gesture is sensed once, and its command sent once.
     ctx.options_mut(|o| o.max_passes = std::num::NonZeroUsize::MIN);

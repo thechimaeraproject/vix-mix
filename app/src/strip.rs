@@ -62,9 +62,25 @@ pub struct Rows {
 }
 
 impl Rows {
+    /// The heights of the FX well and the faders in a strip `height` tall: the prototype's
+    /// 151 and 210 at its 450; taller, the well takes [`size::WELL_SHARE`] of the extra (at
+    /// most [`size::WELL_GROW_MAX`]) and the faders the rest; shorter, the faders give it up,
+    /// down to [`size::FADER_MIN`].
+    pub fn heights(height: f32) -> (f32, f32) {
+        let extra = height - size::STRIP_HEIGHT;
+        let well = if extra > 0.0 {
+            (extra * size::WELL_SHARE).floor().min(size::WELL_GROW_MAX)
+        } else {
+            0.0
+        };
+        let faders = (size::ROWS[2] + extra - well).max(size::FADER_MIN);
+        (size::ROWS[1] + well, faders)
+    }
+
     /// The rows inside a strip's `rect`: its padding off, the rows top to bottom at their
-    /// heights with the gap between.
+    /// heights with the gap between; the well's and the faders' from the strip's height.
     pub fn of(rect: Rect) -> Rows {
+        let (well, faders) = Rows::heights(rect.height());
         let left = rect.left() + size::PAD_X;
         let right = rect.right() - size::PAD_X;
         let mut top = rect.top() + size::PAD_TOP;
@@ -75,8 +91,8 @@ impl Rows {
         };
         Rows {
             head: next(size::ROWS[0]),
-            fx: next(size::ROWS[1]),
-            faders: next(size::ROWS[2]),
+            fx: next(well),
+            faders: next(faders),
             readouts: next(size::ROWS[3]),
             buttons: next(size::ROWS[4]),
         }
@@ -169,7 +185,7 @@ pub fn source_text(channel: &Channel, apps: &[AppPresence]) -> String {
     }
 }
 
-/// A channel strip, filling `rect` (104 x 450).
+/// A channel strip, filling `rect` (104 wide; 450 tall at the console's natural size).
 pub fn channel(ui: &mut Ui, rect: Rect, view: &ChannelView<'_>, cx: &mut Cx<'_>) {
     let channel = view.channel;
     let ch = channel.id;
@@ -253,7 +269,7 @@ pub fn channel(ui: &mut Ui, rect: Rect, view: &ChannelView<'_>, cx: &mut Cx<'_>)
     link_button(ui, pos2(middle.center().x, y), ch, channel.link, cx);
 }
 
-/// A mix strip, filling `rect` (112 x 450).
+/// A mix strip, filling `rect` (112 wide; 450 tall at the console's natural size).
 pub fn mix(ui: &mut Ui, rect: Rect, view: &MixView<'_>, cx: &mut Cx<'_>) {
     let mix = view.mix;
     ui.painter()
@@ -368,7 +384,7 @@ fn head(
     tooltip: String,
     cx: &mut Cx<'_>,
 ) {
-    cx.layout.anchors.push((Anchor::Head(strip), row));
+    cx.anchor(ui, Anchor::Head(strip), row);
     let response = widgets::press(ui, row, head_id(strip)).on_hover_text(tooltip);
     if response.clicked() {
         cx.out.push(Intent::Toggle(Anchor::Head(strip)));
@@ -578,7 +594,7 @@ fn ear_button(ui: &Ui, centre: Pos2, pressed: bool, cx: &mut Cx<'_>) {
 /// The add-channel column: a plus over "ADD CHANNEL" set vertically, top to bottom,
 /// centred; under the pointer, the strip's face and bright text. A press opens its menu.
 pub fn add_column(ui: &Ui, rect: Rect, channels: usize, cx: &mut Cx<'_>) {
-    cx.layout.anchors.push((Anchor::AddColumn, rect));
+    cx.anchor(ui, Anchor::AddColumn, rect);
     let response = widgets::press(ui, rect, Id::new("add channel")).on_hover_text(format!(
         "{channels} of {} channels",
         vixmix_model::MAX_CHANNELS
@@ -699,6 +715,44 @@ mod tests {
             "8 at the bottom"
         );
         assert_eq!(rows.head.width(), 92.0, "6 at each side");
+    }
+
+    #[test]
+    fn a_taller_strip_gives_its_well_a_third_and_its_faders_the_rest() {
+        let rows = |height: f32| {
+            let rows = Rows::of(Rect::from_min_size(
+                pos2(0.0, 0.0),
+                vec2(size::STRIP, height),
+            ));
+            [rows.head, rows.fx, rows.faders, rows.readouts, rows.buttons].map(|r| r.height())
+        };
+        assert_eq!(
+            rows(540.0),
+            [22.0, 181.0, 270.0, 12.0, 20.0],
+            "90 more: 30 and 60"
+        );
+        // The well grows six slots at most; the faders take everything past that.
+        assert_eq!(rows(1050.0), [22.0, 271.0, 690.0, 12.0, 20.0]);
+        // A strip that is not a whole number of points tall keeps the well's rows whole.
+        assert_eq!(rows(451.5)[1], 151.0);
+        // The rows still fill it: 8 of padding under the buttons.
+        let strip = Rect::from_min_size(pos2(0.0, 0.0), vec2(size::STRIP, 540.0));
+        assert_eq!(strip.bottom() - Rows::of(strip).buttons.bottom(), 8.0);
+    }
+
+    #[test]
+    fn a_shorter_strip_shortens_its_faders_to_their_least_and_keeps_its_well() {
+        let rows = |height: f32| {
+            let rows = Rows::of(Rect::from_min_size(
+                pos2(0.0, 0.0),
+                vec2(size::STRIP, height),
+            ));
+            (rows.fx.height(), rows.faders.height())
+        };
+        assert_eq!(rows(400.0), (151.0, 160.0));
+        assert_eq!(rows(size::STRIP_MIN_HEIGHT), (151.0, size::FADER_MIN));
+        assert_eq!(size::STRIP_MIN_HEIGHT, 360.0);
+        assert_eq!(rows(200.0), (151.0, size::FADER_MIN), "never shorter");
     }
 
     #[test]

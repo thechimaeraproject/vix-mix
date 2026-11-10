@@ -59,9 +59,12 @@ pub struct Shell {
     pub now: f64,
     /// Editors to open once the frame is done (the window loop has the event loop).
     pub to_open: Vec<InstanceId>,
-    /// What the last frame drew under the header: the console, and the banner over it. The
-    /// window keeps at least this big.
-    pub content: egui::Rect,
+    /// The least the window can be, as the last frame worked it out: the console at its
+    /// least under the header and the banner, and the header's width. The window keeps at
+    /// least this big.
+    pub least: egui::Vec2,
+    /// Where the last frame drew the console.
+    pub console: egui::Rect,
 }
 
 impl Default for Shell {
@@ -75,7 +78,8 @@ impl Default for Shell {
             keyboard: false,
             now: 0.0,
             to_open: Vec::new(),
-            content: egui::Rect::NOTHING,
+            least: egui::Vec2::ZERO,
+            console: egui::Rect::NOTHING,
         }
     }
 }
@@ -158,6 +162,9 @@ impl Shell {
                         .and_then(|a| a.channel)
                         && let Some(channel) = host.setup().channel(ch)
                     {
+                        // Scrolled whole into view before the frame that draws its panel, so
+                        // the panel hangs from a header that shows.
+                        self.gestures.scroll.reveal = Some(ch);
                         self.popover =
                             Some(Popover::Source(SourcePanel::new(ch, &channel.name, true)));
                     }
