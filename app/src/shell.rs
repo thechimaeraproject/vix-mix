@@ -1,8 +1,8 @@
 //! The window's state between frames and what it does with a frame's gestures. A frame
 //! ([`crate::ui::draw`]) reads the host and pushes [`Intent`]s; [`Shell::dispatch`] then
 //! carries them out against the host: commands applied (each refusal a toast, which says
-//! what to do), popovers opened and closed, the toasts a move or an add earns, Undo, a star,
-//! a rescan, editors queued to open, then opened. [`Shell::events`] takes in what the host
+//! what to do; a change that worked says nothing, the console shows it), popovers opened and
+//! closed, Undo, a star, a rescan, editors queued to open, then opened. [`Shell::events`] takes in what the host
 //! reported: its backend's state, its messages, a removal with its Undo, a finished rescan,
 //! an editor it closed. Nothing here owns a window or a device (an editor's window comes
 //! from an [`Opener`]), so the headless tests drive the same `Shell` the window does.
@@ -14,7 +14,7 @@
 //! shows for its whole time from when it came.
 
 use vixmix_host::{BackendState, Host, HostEvent};
-use vixmix_model::{ChannelKind, Command, InstanceId, Setup, Strip};
+use vixmix_model::{ChannelKind, Command, InstanceId, Setup};
 
 use crate::console::{Anchor, Gestures};
 use crate::editors::{EditorWindows, MAX_EDITORS, Opener};
@@ -80,58 +80,6 @@ impl Default for Shell {
     }
 }
 
-/// What a command earns on the toast line when it changes something. A removal's toast,
-/// with its Undo, is the host's ([`HostEvent::Removed`]).
-#[derive(Clone, Debug, PartialEq)]
-enum Note {
-    None,
-    Info(String),
-}
-
-/// The name a strip goes by.
-fn strip_name(setup: &Setup, strip: Strip) -> Option<&str> {
-    match strip {
-        Strip::Channel(ch) => setup.channel(ch).map(|c| c.name.as_str()),
-        Strip::Mix(mix) => Some(mix.name()),
-    }
-}
-
-impl Note {
-    /// The note `cmd` earns, read from the setup before it applies.
-    fn before(cmd: &Command, setup: &Setup) -> Note {
-        match cmd {
-            Command::MoveInsert { from, to, copy } if from.strip != to.strip || *copy => {
-                let name = match from.strip {
-                    Strip::Channel(ch) => setup.channel(ch).map(|c| &c.chain),
-                    Strip::Mix(mix) => Some(&setup.mix(mix).chain),
-                }
-                .and_then(|chain| chain.get(from.index))
-                .map(|i| i.plugin.name.clone());
-                match (name, strip_name(setup, to.strip)) {
-                    (Some(name), Some(to)) => Note::Info(format!(
-                        "{} {name} to {to}",
-                        if *copy { "Copied" } else { "Moved" }
-                    )),
-                    _ => Note::None,
-                }
-            }
-            Command::AddInsert { strip, plugin, .. } => match strip_name(setup, *strip) {
-                Some(to) => Note::Info(format!("Added {} to {to}", plugin.name)),
-                None => Note::None,
-            },
-            Command::SetPreview(on) => Note::Info(
-                if *on {
-                    "Monitor output now plays Master"
-                } else {
-                    "Monitor output back to the Monitor mix"
-                }
-                .to_string(),
-            ),
-            _ => Note::None,
-        }
-    }
-}
-
 /// The instances whose editors must close before `cmd` removes their inserts.
 fn removing(cmd: &Command, setup: &Setup) -> Vec<InstanceId> {
     match cmd {
@@ -147,36 +95,25 @@ fn removing(cmd: &Command, setup: &Setup) -> Vec<InstanceId> {
 impl Shell {
     /// What one poll of the host reported, in order: the backend's state, a message for the
     /// toast line (it says what to do), a removal shown with its Undo for
-    /// [`UNDO_TOAST`](vixmix_host::UNDO_TOAST), a finished rescan (said only when the host
-    /// had nothing to say about it), an editor the host closed itself. The rest (the setup,
+    /// [`UNDO_TOAST`](vixmix_host::UNDO_TOAST), a finished rescan (an open browser lists what
+    /// it found), an editor the host closed itself. The rest (the setup,
     /// the apps, the devices, the inserts playing as pass-throughs) the next frame reads
     /// from the host. `now` is when the poll answered, on the window's clock: each message
     /// shows for its time from then, however long ago the last frame was.
-    pub fn events(
-        &mut self,
-        events: Vec<HostEvent>,
-        now: f64,
-        host: &dyn Host,
-        editors: &mut EditorWindows,
-    ) {
-        let mut told = false;
-        let mut rescanned = false;
+    pub fn events(&mut self, events: Vec<HostEvent>, now: f64, editors: &mut EditorWindows) {
         for event in events {
             match event {
                 HostEvent::Backend(state) => self.backend = state,
                 HostEvent::Toast(message) => {
                     log::warn!("{message}");
                     self.toasts.show(message, None, now, pop::TOAST_HOST_S);
-                    told = true;
                 }
                 HostEvent::Removed { message, undo } => {
                     log::info!("{message}");
                     self.toasts
                         .show(message, Some(undo), now, pop::TOAST_WITH_ACTION_S);
-                    told = true;
                 }
                 HostEvent::PluginsRescanned => {
-                    rescanned = true;
                     // An open browser lists what the rescan found.
                     if let Some(Popover::Browser(browser)) = &mut self.popover {
                         browser.forget();
@@ -188,9 +125,6 @@ impl Shell {
                 | HostEvent::Devices(_)
                 | HostEvent::Problems(_) => {}
             }
-        }
-        if rescanned && !told {
-            self.toasts.info(rescanned_note(host), now);
         }
     }
 
@@ -273,39 +207,23 @@ impl Shell {
     }
 
     /// Applies `cmd`: the editors of the inserts it removes close first; a refusal goes to
-    /// the toast line; a change earns its note.
+    /// the toast line. A change that worked says nothing: the console shows it.
     fn send(
         &mut self,
         host: &mut dyn Host,
         editors: &mut EditorWindows,
         cmd: Command,
     ) -> Option<vixmix_model::Applied> {
-        let note = Note::before(&cmd, host.setup());
         for instance in removing(&cmd, host.setup()) {
             editors.close(host, instance);
         }
         match host.apply(cmd) {
-            Ok(applied) => {
-                if applied.changed()
-                    && let Note::Info(message) = note
-                {
-                    self.toasts.info(message, self.now);
-                }
-                Some(applied)
-            }
+            Ok(applied) => Some(applied),
             Err(refused) => {
                 self.toasts
                     .show(refused.to_string(), None, self.now, pop::TOAST_HOST_S);
                 None
             }
         }
-    }
-}
-
-/// What the toast line says when a rescan finished and the host said nothing of its own.
-fn rescanned_note(host: &dyn Host) -> String {
-    match host.catalog().plugins.len() {
-        1 => "Rescanned the plugin folders: 1 plugin".to_string(),
-        n => format!("Rescanned the plugin folders: {n} plugins"),
     }
 }

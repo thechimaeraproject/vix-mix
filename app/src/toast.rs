@@ -1,8 +1,9 @@
 //! The toast line (`.toast`): one message at a time at the bottom of the window, centred,
-//! fading in and out. A message with an action (Undo) shows 5 s, one without 2.4 s, and a
-//! message from the host (which says what went wrong and what to do) 8 s, each from when it
-//! came (a host's message from the poll that brought it, not the last frame). A new message
-//! takes the old one's place, and the old one's Undo with it.
+//! fading in and out. A message with an action (Undo) shows 5 s, and any other (a refusal or
+//! the host's, which says what went wrong and what to do) 8 s, each from when it came (a
+//! host's message from the poll that brought it, not the last frame). A new message takes
+//! the old one's place, and the old one's Undo with it. A change that worked has no toast:
+//! the console shows it.
 //!
 //! **Undo.** Removing an insert or a channel shows the host's "Removed …" with Undo
 //! ([`HostEvent::Removed`](vixmix_host::HostEvent::Removed)), for the host's
@@ -51,11 +52,6 @@ impl Toasts {
             undo,
             until: now + seconds,
         });
-    }
-
-    /// Shows one of the window's own messages, with no action, for 2.4 s.
-    pub fn info(&mut self, message: impl Into<String>, now: f64) {
-        self.show(message, None, now, pop::TOAST_S);
     }
 
     /// The toast showing at `now`, if any.
@@ -192,7 +188,7 @@ mod tests {
             pop::TOAST_WITH_ACTION_S,
         );
         // A new message takes the old one's place, and its Undo.
-        toasts.info("Added OTT to Game", 21.0);
+        toasts.show("Mic is full", None, 21.0, pop::TOAST_HOST_S);
         assert_eq!(toasts.take_undo(21.5), None);
         toasts.show(
             "Removed Mic",
@@ -202,8 +198,8 @@ mod tests {
         );
         assert_eq!(toasts.take_undo(31.0), Some(undo));
         assert!(toasts.current(31.0).is_none(), "Undo hides it");
-        toasts.info("Moved", 40.0);
-        toasts.expire(40.0 + pop::TOAST_S + 1.0);
+        toasts.show("Mic is full", None, 40.0, pop::TOAST_HOST_S);
+        toasts.expire(40.0 + pop::TOAST_HOST_S + 1.0);
         assert_eq!(toasts, Toasts::default());
     }
 }
