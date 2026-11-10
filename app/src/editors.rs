@@ -528,6 +528,17 @@ mod tests {
             assert!(editors.window_event(&mut host, FakeWindows::id(0), &resized(size)));
         }
         assert!(host.calls.is_empty(), "{:?}", host.calls);
+        // A window that really has no area, as a minimised one has on Windows, where the
+        // window's own size reads 0 × 0 too: only the no-area rule keeps its plugin from
+        // being told.
+        for [width, height] in [[0, 0], [open.width, 0], [0, open.height]] {
+            let none = EditorSize { width, height };
+            host.editor_events = vec![(a, EditorEvent::ResizeRequested(none))];
+            editors.tick(&mut host);
+            let event = resized([width, height]);
+            assert!(editors.window_event(&mut host, FakeWindows::id(0), &event));
+        }
+        assert!(host.calls.is_empty(), "{:?}", host.calls);
     }
 
     #[test]
