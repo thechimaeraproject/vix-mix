@@ -99,7 +99,9 @@ sudo dnf install ./vix-mix-*.rpm
 `dnf` brings what it runs with (PipeWire's libraries, WirePlumber, the icon theme). Its release
 names the commit it was built from (`1.<UTC time>git<short id>`), so a newer build upgrades an
 older one: download it the same way, then `sudo dnf upgrade ./vix-mix-*.rpm`. It is built on
-the Fedora release current when it was built, and installs there and on newer ones.
+the Fedora release `linux-build.yml` pins, the oldest it must install on, and installs there and
+on every newer one; on an older Fedora, `dnf` refuses it for its glibc, and the tarball below
+(built on Ubuntu's newest LTS) or step 4 is the way.
 
 To build it yourself on Fedora, with steps 1 and 3 done, in the checkout:
 
