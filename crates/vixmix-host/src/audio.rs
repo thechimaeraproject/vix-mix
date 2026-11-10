@@ -289,7 +289,7 @@ pub(crate) mod linux {
     /// (`device`, its description) is not there.
     pub(crate) fn stopped_waiting(device: &str) -> String {
         format!(
-            "The mixer is stopped: Monitor's output device \u{201c}{device}\u{201d} is not there and no other output runs; the mixer waits for it: plug it in or pick another output for Monitor"
+            "The mixer is stopped: Monitor's output device \u{201c}{device}\u{201d} is not there and no other output runs; the mixer waits for it, so plug it in or pick another output for Monitor"
         )
     }
 
