@@ -43,7 +43,9 @@ not decide when to save, prepare, route or retire (the host), nor hold anything 
 
 **Plugins are implemented (2026-11-04):** `vixmix-plugins` owns the scan (the SDK's places plus
 the preferences' extras, a per-bundle cache in `plugins.ron` so an unchanged bundle is not
-described again), the catalog's search, favourites and recent, the instances on the UI thread
+described again, and since round 1 a bundle that must be loaded described in a child process,
+`vix-mix --scan-bundle`, so one that aborts or hangs fails alone), the catalog's search,
+favourites and recent, the instances on the UI thread
 (`sync` to a setup's inserts, a missing plugin reported once and passed through, state, `reap`
 in the kit's order), the `Rack` that lends processors to chains, the edit path of change
 request 1 (a bounded ring per instance, merged into each block by the lent handle with nothing

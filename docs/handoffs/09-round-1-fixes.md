@@ -80,7 +80,13 @@ here.
    ([reference/host.md](../reference/host.md) § Boot) and the app's `--scan-bundle`
    ([reference/app.md](../reference/app.md)). A crash, a refusal or a wait past the bound
    marks that one bundle failed, the scan goes on, and the scan cache keeps the failure as it
-   keeps any other. Loading a plugin into a channel stays in process.
+   keeps any other. Loading a plugin into a channel stays in process. Built 2026-11-10:
+   `Catalog::rescan_with` and `vix-mix --scan-bundle` (change request 13); a bundle with a
+   readable `moduleinfo.json` is still described in process, since that runs none of its code.
+   Its tests load a test plugin that aborts and one that never answers through a real child.
+   Still to do by hand on Fedora: Rescan plugins with the plugin that aborted (Saturation Knob
+   through yabridge, taken off yabridge's blacklist): Vix Mix stays up, the toast names the
+   bundle, and the plugins after it are found.
 6. **A DSP load that reads steadily**
    ([#25](https://github.com/thechimaeraproject/vix-mix/issues/25)): `vixmix-engine`
    ([reference/engine.md](../reference/engine.md) § Meters and stats), `vixmix-host` and the
