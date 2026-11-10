@@ -797,6 +797,7 @@ mod tests {
     fn it_boots_on_the_null_backend_and_says_so_first() {
         let dir = scratch("boot");
         let mut host = boot(&dir);
+        let before_first = Instant::now();
         let events = host.poll();
         assert_eq!(banner(&events).as_deref(), Some(NULL_CHOSEN));
         assert_eq!(host.setup(), &Setup::default());
@@ -809,11 +810,15 @@ mod tests {
         let stats = host.stats();
         assert_eq!(stats.rate, 48_000);
         assert_eq!(stats.quantum, NULL_QUANTUM as u32);
-        assert_eq!(
-            (stats.dsp_load, stats.dsp_peak),
-            (0.0, 0.0),
-            "no window has run yet: {stats:?}"
-        );
+        // Only when the two polls were less than a window apart: a slow runner may pause
+        // longer between them, and then the window has rightly ended.
+        if before_first.elapsed() < crate::load::WINDOW {
+            assert_eq!(
+                (stats.dsp_load, stats.dsp_peak),
+                (0.0, 0.0),
+                "no window has run yet: {stats:?}"
+            );
+        }
         // Once a window has run, the next poll shows its average and its worst cycle.
         std::thread::sleep(crate::load::WINDOW + Duration::from_millis(10));
         let _ = host.poll();
