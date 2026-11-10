@@ -1,15 +1,20 @@
-# The Linux release tarball (scripts/package/linux-tarball.sh, `dev package`), built on master
-# after every merge and kept as the run's artifact: a build of what master holds, to install on
-# a Linux machine without a toolchain (docs/cookbook/install-on-fedora.md step 5).
+# Vix Mix's Linux builds, kept as the run's artifacts, to install on a Linux machine without a
+# toolchain (docs/cookbook/install-on-fedora.md step 5):
+#
+#   build (linux)  the release tarball (scripts/package/linux-tarball.sh, `dev package`), built
+#                  on ubuntu-latest: artifact vix-mix-linux-x86_64
+#   rpm (fedora)   the RPM (scripts/package/rpm.sh, `dev rpm`), built in a fedora:latest
+#                  container: artifact vix-mix-fedora-rpm, for `sudo dnf install ./…rpm`
 #
 # Dispatch only, never on push (the kit's ci.dispatchable rule): kit.repo.json's ci.onMerge has
-# `kit merge` dispatch it on master once a PR has merged, and the Actions tab's "Run workflow"
-# builds any branch by hand. It produces no required check.
+# `kit merge` dispatch it on master once a PR has merged; its ci.workflows entry has `kit push`
+# dispatch it on a PR's branch when the PR changes the packaging; the Actions tab's "Run
+# workflow" builds any branch by hand. It produces no required check.
 #
-# It builds on ubuntu-latest with what ci.yml's Linux leg installs to build (libpipewire's
-# headers, libclang for bindgen), but runs no daemon and no gate: `kit push` and the PR's checks
-# ran those. The binary links libpipewire-0.3 and glibc dynamically, so it runs on a
-# distribution at least as new as the runner's (Fedora's current releases are).
+# Each job installs what it needs to build (libpipewire's headers, libclang for bindgen), but
+# runs no daemon and no gate: `kit push` and the PR's checks ran those. Both binaries link
+# libpipewire-0.3 and glibc dynamically, so each runs on a distribution at least as new as the
+# one it was built on.
 name: linux-build
 
 on:
@@ -65,5 +70,52 @@ jobs:
           path: |
             target/package/*.tar.gz
             target/package/*.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  rpm:
+    name: rpm (fedora)
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    steps:
+      # git before the checkout, so it checks out a repository (rpm.sh archives HEAD) rather
+      # than downloading the files.
+      - name: Install what the RPM's build needs
+        run: >-
+          dnf -y install git rpm-build rustup gcc clang-devel pipewire-devel pkgconf-pkg-config
+          desktop-file-utils libappstream-glib tar gzip findutils
+
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      # The container's user does not own the checkout, which git refuses to read without this.
+      - name: Install rustup and trust the checkout
+        run: |
+          rustup-init -y --default-toolchain none --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      # No version here: rust-toolchain.toml is the one pin.
+      - name: Install the pinned toolchain
+        run: rustup toolchain install || rustup show
+
+      # The kit's crates come from its private repository, as in ci.yml: KIT_TOKEN reaches git
+      # for this step alone through GIT_CONFIG_*, never a config file or the log. rpm.sh vendors
+      # them into the source tarball, and rpmbuild builds offline from it.
+      - name: Build the RPM
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.KIT_TOKEN }}@github.com/thechimaeraproject/.insteadOf
+          GIT_CONFIG_VALUE_0: https://github.com/thechimaeraproject/
+        run: bash scripts/package/rpm.sh
+
+      - name: Keep the RPM as the run's artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vix-mix-fedora-rpm
+          path: |
+            target/package/*.rpm
+            target/package/*.rpm.sha256
           if-no-files-found: error
           retention-days: 30

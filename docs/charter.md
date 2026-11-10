@@ -43,6 +43,7 @@ a kit-managed Rust repository is laid out.
 | Windows | Out of scope for v1, but the workspace **builds and tests the headless crates and runs the window with a null backend on Windows**. | Windows is the development machine today, so the window lane can run there now; a cpal/WASAPI backend is a later lane. |
 | Plugin editors on Linux | winit runs on X11 (XWayland under KDE Wayland). | The kit's VST3 host refuses Wayland handles: a VST3 editor embeds only in an X11 window. |
 | Default branch | `master`. | As the kit, Nexus and Vix. |
+| Packaging | **Native: an RPM** (`packaging/linux/vix-mix.spec`, built by `scripts/package/rpm.sh` in a Fedora container by `.github/workflows/linux-build.yml` after every merge), with the tarball and `cargo install` beside it; a COPR once the repository and its licence are public, so `dnf` updates it. | The user's decision (2026-11-10), on handoff 08's finding (under Rejected, Flatpak): a native install sees every plugin the machine has, yabridge works, and nothing needs granting. |
 
 ## Rejected
 
@@ -58,18 +59,14 @@ a kit-managed Rust repository is laid out.
   built, and a per-plugin process with its own audio round trip; it is the v2 plugin-isolation
   lane, named in the [roadmap](roadmap.md).
 - **wiremix as the name.** `github.com/tsowell/wiremix` is a published Rust PipeWire mixer.
-
-## Open
-
-Not blocking; each is decided by the lane named, or later.
-
-- **Plugin isolation** (v2): out-of-process plugins, so a crashing plugin cannot take the mixer
-  down. Needs the kit's `proc` crate.
-- **A Windows backend**: ASIO or WASAPI through the kit's planned `audio-io` crate (`vixmix-cpal`).
-- **Chain import and export.**
-- **More than two mixes** (Wave Link 3 has five).
-- **Packaging: Flatpak or native.** Handoff 08's finding (2026-11-04), for the user to decide:
-  **native**. The evidence:
+- **Flatpak, and AppImage.** Handoff 08's finding (2026-11-04), which the user took
+  (2026-11-10). A Flatpak, even with `--filesystem=host`, sees the home's `~/.vst3` and the
+  LinuxAudio extensions, the host's `/usr/lib64/vst3` only through `/run/host` with library
+  mismatches, no yabridge, and needs a Manager category in the backend and the whole home and
+  every disk granted, with the software centre's risk label that comes with it. An AppImage is
+  unsandboxed but adds no launcher entry without an integration tool, needs FUSE at run time and
+  a build on the oldest glibc it targets, and gives nothing over the tarball for a binary that
+  needs only glibc and libpipewire. The evidence:
   - *The sandbox cannot see the host's plugins where Fedora puts them.* `/usr`, `/lib64` and
     `/etc` are reserved paths no `--filesystem` grant opens
     ([Flatpak's sandbox permissions](https://docs.flatpak.org/en/latest/sandbox-permissions.html));
@@ -99,24 +96,15 @@ Not blocking; each is decided by the lane named, or later.
     `libpipewire-0.3` (`ldd`, in the container), and loads the window system and the GPU driver
     at run time.
 
-  The three options:
-  1. **Native: `cargo install` or the tarball now, then an RPM.** Sees every plugin, yabridge
-     works, nothing to grant. Built: `packaging/linux/`, `scripts/package/linux-tarball.sh` and
-     [Install Vix Mix on Fedora](cookbook/install-on-fedora.md). Next: a spec that builds from
-     a source tarball with the crates vendored (the kit's are private), built with `rpmbuild`
-     while the repository is private and through a COPR once it is public, so `dnf` updates it.
-     Costs: a spec to keep and, for a COPR, a public repository and licence.
-  2. **AppImage.** Unsandboxed, so plugins and yabridge work, one file for any distribution.
-     Costs: no launcher entry without an integration tool, FUSE at run time, a build on the
-     oldest glibc it targets, and nothing over the tarball for a binary that needs only glibc
-     and libpipewire.
-  3. **Flatpak with `--filesystem=host`.** The home's `~/.vst3` and the LinuxAudio extensions;
-     the host's `/usr/lib64/vst3` only through `/run/host` with library mismatches; no
-     yabridge; a Manager category in the backend; the whole home and every disk granted, and
-     the software centre's risk label that comes with it.
+## Open
 
-  **Recommendation:** native. The tarball and `cargo install` for v1; an RPM spec next, with a
-  COPR once the repository and its licence are public; no Flatpak manifest.
+Not blocking; each is decided by the lane named, or later.
+
+- **Plugin isolation** (v2): out-of-process plugins, so a crashing plugin cannot take the mixer
+  down. Needs the kit's `proc` crate.
+- **A Windows backend**: ASIO or WASAPI through the kit's planned `audio-io` crate (`vixmix-cpal`).
+- **Chain import and export.**
+- **More than two mixes** (Wave Link 3 has five).
 - **The licence before any public release** (MIT assumed).
 - **Plugin editors on Wayland**: later, editors on an X11 connection of their own while the
   console runs on Wayland.

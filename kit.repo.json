@@ -36,6 +36,14 @@
     "workflows": [
       {
         "file": "ci.yml"
+      },
+      {
+        "file": "linux-build.yml",
+        "paths": [
+          "packaging/**",
+          "scripts/package/**",
+          ".github/workflows/linux-build.yml"
+        ]
       }
     ],
     "required": [
