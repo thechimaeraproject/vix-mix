@@ -7,6 +7,10 @@
 //!   refusal (no editor, `FakeHost`, a Wayland handle on Linux) drops the window and says why.
 //!   Opening an editor that is open raises its window.
 //! - **Resize**: `Host::tick_editors` names the instance that asked; its window is resized.
+//!   When the window says it has a new size (`Resized`), the plugin is told through
+//!   `Host::resize_editor` (the kit's resize is asynchronous) — never a size with no area (a
+//!   window minimised on Windows), one the window has left already, or the one the plugin has,
+//!   so a plugin told the size it asked for that asks again moves nothing.
 //! - **Close**: always through the host before the window goes — the window's close button,
 //!   the insert's removal (the shell closes it before the command), the insert leaving the
 //!   setup any other way, the window closing — and an editor the host closed itself
@@ -46,6 +50,8 @@ pub trait EditorWindow {
     fn handle(&self) -> Result<RawWindowHandle, String>;
     /// Takes this size, in pixels.
     fn resize(&self, size: EditorSize);
+    /// The size it has now, in pixels.
+    fn size(&self) -> EditorSize;
     /// Shows it.
     fn show(&self);
     /// Titles it.
@@ -87,6 +93,14 @@ impl EditorWindow for Window {
         let _ = self.request_inner_size(winit::dpi::PhysicalSize::new(size.width, size.height));
     }
 
+    fn size(&self) -> EditorSize {
+        let size = self.inner_size();
+        EditorSize {
+            width: size.width,
+            height: size.height,
+        }
+    }
+
     fn show(&self) {
         self.set_visible(true);
     }
@@ -105,6 +119,24 @@ struct Open {
     instance: InstanceId,
     window: Box<dyn EditorWindow>,
     title: String,
+    /// The size the plugin has: the one it opened at, then each its window took and it was
+    /// told.
+    told: EditorSize,
+}
+
+impl Open {
+    /// Whether the plugin is to be told `size`, which the window says it has (`Resized`): not
+    /// a size with no area (Windows reports 0 × 0 for a minimised window), not one the window
+    /// has left already (winit reports the size a window was made at after the window took its
+    /// plugin's), and not the one the plugin has, so a plugin told the size it asked for that
+    /// asks for it again moves nothing.
+    fn tell(&mut self, size: EditorSize) -> bool {
+        if size.width == 0 || size.height == 0 || size != self.window.size() || size == self.told {
+            return false;
+        }
+        self.told = size;
+        true
+    }
 }
 
 /// Every open editor's window.
@@ -191,6 +223,7 @@ impl EditorWindows {
             instance,
             window,
             title,
+            told: size,
         });
         Ok(())
     }
@@ -259,14 +292,32 @@ impl EditorWindows {
     }
 
     /// An event for one of the editor windows; `false` when `id` is none of them. Closing
-    /// the window closes its editor first.
+    /// the window closes its editor first; a new size it took is told to its plugin.
     pub fn window_event(&mut self, host: &mut dyn Host, id: WindowId, event: &WindowEvent) -> bool {
-        let Some(open) = self.windows.iter().find(|w| w.window.id() == id) else {
+        let Some(open) = self.windows.iter_mut().find(|w| w.window.id() == id) else {
             return false;
         };
-        if matches!(event, WindowEvent::CloseRequested | WindowEvent::Destroyed) {
-            let instance = open.instance;
-            self.close(host, instance);
+        match event {
+            WindowEvent::CloseRequested | WindowEvent::Destroyed => {
+                let instance = open.instance;
+                self.close(host, instance);
+            }
+            WindowEvent::Resized(size) => {
+                let size = EditorSize {
+                    width: size.width,
+                    height: size.height,
+                };
+                if open.tell(size) {
+                    log::info!(
+                        "told the editor of {} its window is {} x {}",
+                        open.title,
+                        size.width,
+                        size.height
+                    );
+                    host.resize_editor(open.instance, size);
+                }
+            }
+            _ => {}
         }
         true
     }
@@ -277,6 +328,7 @@ mod tests {
     use super::*;
     use crate::test_support::{Call, FakeWindows, Recorder, WindowCall};
     use vixmix_model::{Command, example};
+    use winit::dpi::PhysicalSize;
 
     #[test]
     fn an_editor_window_is_titled_plugin_strip_and_slot() {
@@ -416,6 +468,66 @@ mod tests {
         host.editor_events = vec![(InstanceId(9_999), EditorEvent::ResizeRequested(size))];
         editors.tick(&mut host);
         assert_eq!(windows.calls().len(), before + 1);
+    }
+
+    #[test]
+    fn the_size_a_window_took_is_told_to_its_plugin_once() {
+        let mut host = Recorder::with_editors();
+        let windows = FakeWindows::default();
+        let mut editors = EditorWindows::default();
+        let [a, b] = [0, 1].map(|i| host.setup().channels[0].chain[i].instance);
+        editors.open(&windows, &mut host, a).unwrap();
+        editors.open(&windows, &mut host, b).unwrap();
+        host.calls.clear();
+        let size = EditorSize {
+            width: 800,
+            height: 300,
+        };
+        let resized = WindowEvent::Resized(PhysicalSize::new(800, 300));
+        // b's plugin asks; its window takes the size, and once it says so the plugin is told.
+        host.editor_events = vec![(b, EditorEvent::ResizeRequested(size))];
+        editors.tick(&mut host);
+        assert!(
+            host.calls.is_empty(),
+            "told when the window has it, not before"
+        );
+        assert!(editors.window_event(&mut host, FakeWindows::id(1), &resized));
+        assert_eq!(host.calls, vec![Call::ResizeEditor(b, size)]);
+        // Told, the plugin asks for the same size again: the window takes it and says so
+        // again, and the plugin is not told twice, so nothing goes round.
+        host.editor_events = vec![(b, EditorEvent::ResizeRequested(size))];
+        editors.tick(&mut host);
+        assert!(editors.window_event(&mut host, FakeWindows::id(1), &resized));
+        assert_eq!(host.calls, vec![Call::ResizeEditor(b, size)]);
+        // A window that is no editor's is not taken, and nothing is told.
+        assert!(!editors.window_event(&mut host, WindowId::from(99), &resized));
+        assert_eq!(host.calls.len(), 1);
+    }
+
+    #[test]
+    fn a_size_with_no_area_or_one_the_window_has_left_is_not_told() {
+        let mut host = Recorder::with_editors();
+        let windows = FakeWindows::default();
+        let mut editors = EditorWindows::default();
+        let a = host.setup().channels[0].chain[0].instance;
+        editors.open(&windows, &mut host, a).unwrap();
+        host.calls.clear();
+        let resized =
+            |[width, height]: [u32; 2]| WindowEvent::Resized(PhysicalSize::new(width, height));
+        let open = Recorder::EDITOR_SIZE;
+        for size in [
+            // Minimised on Windows.
+            [0, 0],
+            [open.width, 0],
+            [0, open.height],
+            // The size it was made at, reported after it took its plugin's.
+            FIRST_SIZE,
+            // Restored: the size its plugin opened at and has.
+            [open.width, open.height],
+        ] {
+            assert!(editors.window_event(&mut host, FakeWindows::id(0), &resized(size)));
+        }
+        assert!(host.calls.is_empty(), "{:?}", host.calls);
     }
 
     #[test]

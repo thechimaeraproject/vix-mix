@@ -374,6 +374,8 @@ impl Host for FakeHost {
         Vec::new()
     }
 
+    fn resize_editor(&mut self, _instance: InstanceId, _size: EditorSize) {}
+
     fn close_editor(&mut self, _instance: InstanceId) {}
 
     fn save_now(&mut self) {}

@@ -636,6 +636,15 @@ impl Host for RealHost {
         out
     }
 
+    fn resize_editor(&mut self, instance: InstanceId, size: EditorSize) {
+        let Some(session) = self.editors.iter_mut().find(|s| s.instance() == instance) else {
+            return;
+        };
+        if let Err(refused) = session.resize(size) {
+            log::warn!("{refused}");
+        }
+    }
+
     fn close_editor(&mut self, instance: InstanceId) {
         if let Some(at) = self.editors.iter().position(|s| s.instance() == instance) {
             let mut session = self.editors.remove(at);
@@ -784,6 +793,20 @@ mod tests {
             !dir.exists(),
             "booting and quitting unchanged writes nothing"
         );
+    }
+
+    #[test]
+    fn a_size_for_an_instance_with_no_open_editor_is_ignored() {
+        let dir = scratch("resize");
+        let mut host = boot(&dir);
+        let _ = host.poll();
+        let size = EditorSize {
+            width: 800,
+            height: 300,
+        };
+        host.resize_editor(InstanceId(1), size);
+        assert_eq!(host.poll(), Vec::new(), "nothing to say, nothing changed");
+        assert_eq!(host.next_poll(), None);
     }
 
     #[cfg(not(target_os = "linux"))]

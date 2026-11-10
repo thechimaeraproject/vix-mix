@@ -41,6 +41,11 @@ pub trait Host {
     ) -> Result<EditorSize, HostError>;
     /// Polls every open editor (and, on Linux, its run loop); what each asked of its window.
     fn tick_editors(&mut self) -> Vec<(InstanceId, EditorEvent)>;
+    /// Tells `instance`'s editor that its window now has `size`: the kit's resize is
+    /// asynchronous, so a plugin knows the size its window took only once told. Ignored when
+    /// the instance has no open editor; a size the plugin refuses is logged, not a toast,
+    /// because a window can report many sizes in a row.
+    fn resize_editor(&mut self, instance: InstanceId, size: EditorSize);
     /// Closes `instance`'s editor; do it before its window goes.
     fn close_editor(&mut self, instance: InstanceId);
     /// Captures every plugin's state and writes the setup now.
