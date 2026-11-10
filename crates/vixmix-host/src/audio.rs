@@ -862,8 +862,15 @@ pub(crate) mod linux {
                 }
             );
             let _ = pw.hear(BackendEvent::TickSource(TickSource::MasterSource));
-            // Plugged back: Monitor plays, and no banner names them.
-            let _ = pw.hear(BackendEvent::DeviceAdded(output(&headphones)));
+            // Plugged back: the banner stops naming them at once, before the tick moves...
+            assert_eq!(
+                pw.hear(BackendEvent::DeviceAdded(output(&headphones))),
+                BackendState::Idle {
+                    reason: only_recorded()
+                },
+                "the headphones are back, so nothing waits for them"
+            );
+            // ...and Monitor plays.
             assert_eq!(
                 pw.hear(BackendEvent::TickSource(TickSource::Monitor)),
                 running
@@ -877,6 +884,16 @@ pub(crate) mod linux {
                 }
             );
             assert_eq!(pw.heard.toasts, [monitor_waits("Headphones")]);
+            // Unplugged while the Master source keeps the tick: the banner names them at once,
+            // though the tick does not move.
+            assert_eq!(
+                pw.hear(BackendEvent::DeviceRemoved("alsa.headphones".into())),
+                BackendState::Idle {
+                    reason: monitor_waits("Headphones")
+                },
+                "the headphones went while the tick stayed on the Master source"
+            );
+            let _ = pw.hear(BackendEvent::DeviceAdded(output(&headphones)));
             let _ = pw.hear(BackendEvent::TickSource(TickSource::Monitor));
             // Unplugged again, then another output picked for Monitor while the tick stays on
             // the Master source: the banner follows the setup.

@@ -158,8 +158,10 @@ not there and no mix plays to a device: the mixer waits for it…", which names 
 the mixer runs only while an app records “Vix Mix Master” until then, and says to plug it in or
 pick another output for Monitor. Monitor's stream refused while the backend reports its device
 says neither: both say the device is not there, and the backend connects that stream again each
-second while the device is there, so the tick can move back and forth each second; devices and
-app streams update `devices()` and `apps()`, and each app that appeared is routed.
+second while the device is there, so the tick can move back and forth each second; nor does that
+device unplugged afterwards while the tick stays where it is (only a tick that moves says the
+toast; an idle banner names the device); devices and app streams update `devices()` and
+`apps()`, and each app that appeared is routed.
 Then `Engine::reap` and `Instances::reap`; `Instances::tick` (an editor's edit goes to its
 processor and makes the autosave due; a dirty plugin is `SetupChanged` and due;
 `IoChanged(instance)` calls `Engine::set_up_again(instance)`); the instances kept for an undo
@@ -256,7 +258,8 @@ and `open_editor` answers `HostError::Simulated`.
   not when Monitor's stream is refused while the backend reports its device
   (`monitor_gone_is_said_once_when_the_device_the_setup_names_is_not_there`); the idle banner
   names Monitor's missing device, stopped or with only the Master source, until Monitor plays,
-  never names one the backend reports, and follows another device picked for Monitor
+  never names one the backend reports, and follows Monitor's device unplugged or plugged back
+  while the tick stays where it is and another device picked for Monitor
   (`the_idle_banner_names_monitors_device_while_the_mixer_waits_for_it`); every app is
   routed the moment it appears, to its channel or home, follows a rename and is forgotten when
   it goes. `fake`: the first poll reports a simulated
