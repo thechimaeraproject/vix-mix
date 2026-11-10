@@ -1241,15 +1241,25 @@ fn tab_goes_from_the_folder_field_to_its_add_button_as_they_read() {
     let _ = h.click(h.text("Preferences"));
     h.idle(2);
     let focused = |h: &Harness| h.ctx.memory(|m| m.focused());
+    // The focus ring round Add: an accent outline about its word.
+    let ringed = |h: &Harness| {
+        let word = h.text_rect("Add");
+        h.outlines
+            .iter()
+            .any(|(rect, ink)| *ink == crate::theme::colour::ACCENT && rect.contains_rect(word))
+    };
     let (field, add) = (popover::search_id("folder"), egui::Id::new("add folder"));
     let _ = h.click(h.text("Another folder to scan"));
     assert_eq!(focused(&h), Some(field));
     let _ = h.type_text("D:/VST3");
+    assert!(!ringed(&h), "Add has no ring while the field has the focus");
     // The field, then Add to its right: Tab goes forward to Add, Shift+Tab back.
     assert!(h.key(Key::Tab, Modifiers::NONE).is_empty());
     assert_eq!(focused(&h), Some(add), "Tab from the field reaches Add");
+    assert!(ringed(&h), "Add reached by Tab shows the focus ring");
     assert!(h.key(Key::Tab, Modifiers::SHIFT).is_empty());
     assert_eq!(focused(&h), Some(field), "Shift+Tab from Add goes back");
+    assert!(!ringed(&h), "the ring goes with the focus");
     // Add reached by Tab adds the folder typed.
     let _ = h.key(Key::Tab, Modifiers::NONE);
     let sent = h.key(Key::Enter, Modifiers::NONE);
