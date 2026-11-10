@@ -36,7 +36,7 @@ Wave 2, in parallel, each in its own worktree ([build map](build-map.md) § Wave
 | [02 — Engine](handoffs/02-engine.md) | chains lent through `Lender`, the dry/processed split, mix chains, the no-alloc proof with chains on | shipped 2026-11-04 |
 | [03 — PipeWire backend](handoffs/03-pipewire-backend.md) | the streams, rings, tick election, registry, routing and reconnect, tested against a headless daemon | shipped 2026-11-04 (see Built) |
 | [04 — Plugins](handoffs/04-plugins.md) | scan and cache, instances, the rack, state, editor sessions, tested with the kit's test plugin | shipped 2026-11-04 (see Built) |
-| [05 — App](handoffs/05-app.md) | the look gate, then the console exactly as prototype v5 against `FakeHost` | shipped 2026-11-04 (see Built); its CPU acceptance met per machine (the main session's ruling); change request 10 (agreed, [#11](https://github.com/thechimaeraproject/vix-mix/issues/11)) and a frame for the meters alone left to round 1 |
+| [05 — App](handoffs/05-app.md) | the look gate, then the console exactly as prototype v5 against `FakeHost` | shipped 2026-11-04 (see Built); its CPU acceptance met per machine (the main session's ruling); change request 10 applied in round 1 (2026-11-10, [#11](https://github.com/thechimaeraproject/vix-mix/issues/11)); a frame for the meters alone left to round 1 |
 
 Then wave 3: [06 — Host and integration](handoffs/06-host-and-integration.md), shipped
 2026-11-04 (see Built; the acceptance's Fedora bullet is the by-hand pass, run 2026-11-10); then
@@ -54,11 +54,11 @@ itself; an issue closes when its item is struck through in handoff 09.
 | [#19](https://github.com/thechimaeraproject/vix-mix/issues/19) | the first real test on Fedora KDE: the by-hand pass, its figures and checks (the umbrella); closed 2026-11-10, the pass ran | items 6, 8, 11 and 12 struck; the figures of items 1, 2 and 5 not measured, open without an issue |
 | [#26](https://github.com/thechimaeraproject/vix-mix/issues/26) | found by the pass: a plugin that aborts while loading takes the scan and Vix Mix down | the Goal's first finding, step 5 |
 | [#25](https://github.com/thechimaeraproject/vix-mix/issues/25) | found by the pass: the DSP readout flickers between about 12 % and 0 % | the Goal's second finding, step 6 |
-| [#11](https://github.com/thechimaeraproject/vix-mix/issues/11) | a plugin editor's window resizes without telling the plugin; the plugin-folder bound (change request 10) | item 14 |
+| [#11](https://github.com/thechimaeraproject/vix-mix/issues/11) | a plugin editor's window resizes without telling the plugin; the plugin-folder bound (change request 10); fixed and closed 2026-11-10 | item 14, struck |
 | [#12](https://github.com/thechimaeraproject/vix-mix/issues/12) | SIGTERM and logout skip the shutdown order | item 10 |
 | [#13](https://github.com/thechimaeraproject/vix-mix/issues/13) | Vix Mix restarted within milliseconds of quitting can leave a playing app routed but silent | item 3 |
 | [#14](https://github.com/thechimaeraproject/vix-mix/issues/14) | no toast when Monitor's device goes while Master has no device; fixed and closed 2026-11-10 | item 4, struck |
-| [#15](https://github.com/thechimaeraproject/vix-mix/issues/15) | Preferences: the Tab order of the folder field and its Add button | item 15 |
+| [#15](https://github.com/thechimaeraproject/vix-mix/issues/15) | Preferences: the Tab order of the folder field and its Add button; fixed and closed 2026-11-10 | item 15, struck |
 | [#16](https://github.com/thechimaeraproject/vix-mix/issues/16) | the first start: the plugin scan before the first frame, Monitor's device not picked | item 7 |
 | [#17](https://github.com/thechimaeraproject/vix-mix/issues/17) | a frame for the meters alone, to get under 5 % of one core | item 13 |
 | [#18](https://github.com/thechimaeraproject/vix-mix/issues/18) | the window's app id on Wayland and the launcher's activation token | item 9 |

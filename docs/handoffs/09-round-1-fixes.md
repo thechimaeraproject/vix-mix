@@ -229,8 +229,16 @@ here.
     change. Check: the per-core figure, measured as the reference measures it, under 5 % in a
     release build on Windows and on Fedora, and `--dump-png` still byte for byte the look
     gate's.
-14. **Change request 10.** ([#11](https://github.com/thechimaeraproject/vix-mix/issues/11))
-    Where: `crates/vixmix-host` (`Host::resize_editor` in both hosts, `FakeHost`'s doing
+14. ~~**Change request 10.**~~ **Fixed 2026-11-10**
+    ([#11](https://github.com/thechimaeraproject/vix-mix/issues/11)): `Host::resize_editor`
+    is on both hosts and the editor windows call it when a window says it took a new size
+    (never a size with no area, one the window has left, or the one its plugin already has, so
+    nothing goes round); the bound of sixteen extra plugin folders is the model's
+    (`Prefs::MAX_PLUGIN_DIRS`), refused by `SetPrefs` and at load with the fix. Tests pin both;
+    the references are [host.md](../reference/host.md), [model.md](../reference/model.md) and
+    [app.md](../reference/app.md). Still to do by hand, on Windows and on Fedora: an editor
+    whose plugin asks for a new size draws at that size with no strip of the old one. Was:
+    where, `crates/vixmix-host` (`Host::resize_editor` in both hosts, `FakeHost`'s doing
     nothing), `crates/vixmix-model` (`Command::SetPrefs`) and `app/src/editors.rs` (the call,
     on the editor window's `Resized`); [build-map.md](../build-map.md) § Change requests, row
     10, agreed 2026-11-04. Build: the host tells an editor's plugin the size its window took
@@ -240,9 +248,11 @@ here.
     size draws at that size with no strip of the old one, on Windows and on Fedora; a
     seventeenth folder, sent by any means, is refused with the fix.
 
-15. **Preferences: the Tab order of the folder field and its Add button.**
-    ([#15](https://github.com/thechimaeraproject/vix-mix/issues/15)) Where:
-    `app/src/popover.rs`, `folder_field` registers the Add button before the folder text field,
+15. ~~**Preferences: the Tab order of the folder field and its Add button.**~~ **Fixed
+    2026-11-10** ([#15](https://github.com/thechimaeraproject/vix-mix/issues/15)): the field is
+    registered before the button, Tab goes from the field to Add and Shift+Tab back, Add shows
+    the focus ring when Tab reaches it, and nothing moved on screen; a test pins the order.
+    Was: where, `app/src/popover.rs`, `folder_field` registers the Add button before the folder text field,
     so Tab from the field goes to Done and Shift+Tab goes back to Add, the reverse of the
     visual order (the field, then Add). Fix: lay the field out before the button, and pin it
     with a test (Tab from the folder field focuses the add-folder button). Polish; it predates
