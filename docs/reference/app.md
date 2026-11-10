@@ -387,8 +387,9 @@ appearance that is the frame after the unseen one, whose disabled rows cannot ho
 - **The preferences** (270 wide): the quantum asked of PipeWire as radios (128, 256, 512
   samples; `SetPrefs`), the extra plugin folders each with its bin, a field and Add for
   another (`SetPrefs` with the folder added or removed, the rest kept; a folder takes at most
-  1024 characters), Done. It holds at most 16 folders (`MAX_PLUGIN_DIRS`): an Add past that
-  sends nothing, keeps the folder in the field, and says on the toast line to remove one first.
+  1024 characters), Done. It holds at most 16 folders, the model's bound
+  (`Prefs::MAX_PLUGIN_DIRS`, which `SetPrefs` keeps too): an Add past that sends nothing, keeps
+  the folder in the field, and says on the toast line to remove one first.
 
 ## The plugin browser
 
@@ -472,12 +473,12 @@ slot N".
 
 ## What the window needs from the host
 
-The window codes against the `Host` trait as it is. Two things wait, the build map's change
-request 10, agreed by the main session and left to round 1 (handoff 09):
+The window codes against the `Host` trait as it is. One thing waits, half of the build map's
+change request 10, agreed by the main session and left to round 1 (handoff 09):
 `resize_editor(instance, size)` on the host (the kit's resize is asynchronous: after the window
 has taken the size a plugin asked for, `EditorSession::resize` must tell the plugin, and today
-nothing does), and a bound on the model's extra plugin folders (`SetPrefs` takes any number;
-the window holds at most 16 and says to remove one first).
+nothing does). The other half, the bound on the extra plugin folders, is the model's
+(`Prefs::MAX_PLUGIN_DIRS`), and the preferences read it.
 
 ## The capture
 

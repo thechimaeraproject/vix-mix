@@ -114,7 +114,8 @@ enum Seed {
     SetMixLevel(bool, f32),
     SetMixMute(bool, bool),
     SetPreview(bool),
-    SetPrefs(u8, bool),
+    /// A quantum, and none, one or one more plugin folder than the preferences hold.
+    SetPrefs(u8, u8),
     /// One of the channels removed so far (or, past them, one that is still there), put back
     /// at a place.
     RestoreChannel(Pick, u8),
@@ -368,10 +369,12 @@ fn command(seed: &Seed, setup: &Setup, removed: &Removed) -> Command {
         Seed::SetPreview(on) => Command::SetPreview(on),
         Seed::SetPrefs(quantum, dirs) => Command::SetPrefs(Prefs {
             quantum: [128, 256, 512, 300][usize::from(quantum % 4)],
-            plugin_dirs: if dirs {
-                vec!["/opt/vst3".into()]
-            } else {
-                Vec::new()
+            plugin_dirs: match dirs % 3 {
+                0 => Vec::new(),
+                1 => vec!["/opt/vst3".into()],
+                _ => (0..=Prefs::MAX_PLUGIN_DIRS)
+                    .map(|i| format!("/opt/vst3/{i}").into())
+                    .collect(),
             },
         }),
         Seed::RestoreChannel(pick, at) => {
@@ -466,7 +469,7 @@ fn seed() -> impl Strategy<Value = Seed> {
         1 => (any::<bool>(), position()).prop_map(|(m, p)| Seed::SetMixLevel(m, p)),
         1 => (any::<bool>(), any::<bool>()).prop_map(|(m, x)| Seed::SetMixMute(m, x)),
         1 => any::<bool>().prop_map(Seed::SetPreview),
-        1 => (any::<u8>(), any::<bool>()).prop_map(|(q, d)| Seed::SetPrefs(q, d)),
+        1 => (any::<u8>(), any::<u8>()).prop_map(|(q, d)| Seed::SetPrefs(q, d)),
         1 => (pick(), any::<u8>()).prop_map(|(c, at)| Seed::RestoreChannel(c, at)),
         1 => (pick(), pick(), any::<u8>()).prop_map(|(i, s, at)| Seed::RestoreInsert(i, s, at)),
     ]

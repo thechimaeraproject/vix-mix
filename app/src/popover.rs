@@ -45,8 +45,6 @@ use crate::widgets::{self, ButtonKind};
 pub const FIELD_LIMIT: usize = 64;
 /// The longest plugin folder the preferences take.
 pub const PATH_LIMIT: usize = 1024;
-/// The most extra plugin folders the preferences hold.
-pub const MAX_PLUGIN_DIRS: usize = 16;
 
 /// The open popover and what it holds between frames.
 #[derive(Clone, Debug, PartialEq)]
@@ -1086,10 +1084,11 @@ fn prefs_panel(ui: &mut Ui, panel: &mut PrefsPanel, cx: &mut PopCx<'_>) -> Outco
         let path = std::path::PathBuf::from(folder);
         if folder.is_empty() || prefs.plugin_dirs.contains(&path) {
             panel.folder.clear();
-        } else if prefs.plugin_dirs.len() >= MAX_PLUGIN_DIRS {
-            // The field keeps what was typed, to add once a folder is removed.
+        } else if prefs.plugin_dirs.len() >= Prefs::MAX_PLUGIN_DIRS {
+            // The model's bound; the field keeps what was typed, to add once a folder is removed.
             cx.out.push(Intent::Notice(format!(
-                "{MAX_PLUGIN_DIRS} plugin folders is the most there can be: remove one, then add {folder}"
+                "{} plugin folders is the most there can be: remove one, then add {folder}",
+                Prefs::MAX_PLUGIN_DIRS
             )));
         } else {
             let mut plugin_dirs = prefs.plugin_dirs.clone();

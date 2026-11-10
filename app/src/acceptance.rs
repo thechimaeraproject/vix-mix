@@ -10,7 +10,7 @@ use vixmix_model::{
 };
 
 use crate::fader::{FINE_DRAG, FINE_KEY_STEP, KEY_STEP, Target};
-use crate::popover::{self, MAX_PLUGIN_DIRS, Popover};
+use crate::popover::{self, Popover};
 use crate::shell::Intent;
 use crate::test_support::{Call, FakeWindows, Harness};
 use crate::theme::{pop, size};
@@ -1053,7 +1053,7 @@ fn a_panel_opens_with_the_focus_on_its_checked_radio_and_the_arrows_pick() {
 #[test]
 fn the_preferences_hold_at_most_sixteen_plugin_folders() {
     let mut h = Harness::new();
-    let full: Vec<std::path::PathBuf> = (0..MAX_PLUGIN_DIRS)
+    let full: Vec<std::path::PathBuf> = (0..vixmix_model::Prefs::MAX_PLUGIN_DIRS)
         .map(|i| std::path::PathBuf::from(format!("D:/VST3/{i}")))
         .collect();
     let prefs = vixmix_model::Prefs {
@@ -1832,7 +1832,7 @@ fn shift_tab_through_sixteen_plugin_folders_shows_each() {
     let mut h = Harness::new();
     let folder = |i: usize| format!("D:/VST3/{i}");
     let prefs = vixmix_model::Prefs {
-        plugin_dirs: (0..MAX_PLUGIN_DIRS)
+        plugin_dirs: (0..vixmix_model::Prefs::MAX_PLUGIN_DIRS)
             .map(|i| std::path::PathBuf::from(folder(i)))
             .collect(),
         ..h.setup().prefs.clone()
@@ -1851,7 +1851,7 @@ fn shift_tab_through_sixteen_plugin_folders_shows_each() {
     let _ = h.click(h.text("Another folder to scan"));
     let focused = |h: &Harness| h.ctx.memory(|m| m.focused());
     let bin = |i: usize| egui::Id::new(("folder", folder(i).as_str()));
-    let last = MAX_PLUGIN_DIRS - 1;
+    let last = vixmix_model::Prefs::MAX_PLUGIN_DIRS - 1;
     assert!(
         !in_view(&h, &folder(last)),
         "the last folder starts out of view"
