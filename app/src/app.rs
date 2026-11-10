@@ -127,7 +127,8 @@ impl ApplicationHandler for App {
             return;
         };
         if id != running.window.id() {
-            // A plugin editor's window: closing it closes its editor through the host first.
+            // A plugin editor's window: closing it closes its editor through the host first;
+            // a new size it took is told to its plugin.
             running
                 .editors
                 .window_event(running.host.as_mut(), id, &event);
