@@ -54,12 +54,123 @@ fn a_fader_drag_moves_the_send_by_the_pointers_travel() {
     };
     assert_eq!((ch, mix), (mic, MixId::Monitor));
     assert!(close(position, expected), "{position} vs {expected}");
-    // A press anywhere on the column moves it from where it is, not to the pointer.
-    let low = h.fader(target).center_bottom() - vec2(0.0, 20.0);
-    let sent = h.drag(low, &[low - vec2(0.0, 10.0)]);
-    assert!(close(send_position(one(&sent)), expected + 10.0 / TRAVEL));
     // Mic is not linked: its Master send stays.
     assert_eq!(h.setup().channels[0].master, before.master);
+}
+
+/// Where a press at `y` on `target`'s column puts the fader: the kit's travel, clamped.
+fn position_at(h: &Harness, target: Target, y: f32) -> f32 {
+    chimaeraproject_egui_audio::position_at(h.fader(target), size::FADER_INSET, y).clamp(0.0, 1.0)
+}
+
+#[test]
+fn a_press_away_from_the_line_jumps_the_fader_there() {
+    let mut h = Harness::new();
+    let mic = h.channel(0);
+    let send = Target::Send {
+        ch: mic,
+        mix: MixId::Monitor,
+    };
+    let master = Target::Level(MixId::Master);
+    for target in [send, master] {
+        // Well below the line, a quick click: the fader goes to the pointer and has the keys.
+        let at = h.fader(target).center_bottom() - vec2(0.0, 30.0);
+        let sent = h.click(at);
+        let expected = position_at(&h, target, at.y);
+        assert_eq!(sent, vec![target.command(expected)], "{target:?}");
+        assert!(h.ctx.memory(|m| m.has_focus(target.id())), "{target:?}");
+        // Above the line, held: it jumps on the press, before the pointer moves.
+        let at = h.fader(target).center_top() + vec2(0.0, 20.0);
+        let mut sent = h.pass(vec![
+            egui::Event::PointerMoved(at),
+            egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            },
+        ]);
+        sent.extend(h.pass(vec![egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        }]));
+        assert_eq!(
+            sent,
+            vec![target.command(position_at(&h, target, at.y))],
+            "{target:?}"
+        );
+    }
+    // Below the travel: the bottom, not past it.
+    let at = h.fader(send).center_bottom() - vec2(0.0, 1.0);
+    assert_eq!(h.click(at), vec![send.command(0.0)]);
+}
+
+#[test]
+fn a_press_on_the_line_grabs_it_where_it_is() {
+    let mut h = Harness::new();
+    let mic = h.channel(0);
+    let target = Target::Send {
+        ch: mic,
+        mix: MixId::Monitor,
+    };
+    let start = h.setup().channels[0].monitor.position;
+    // Within the grab, either side of the line: nothing moves until the pointer does.
+    for off in [-size::FADER_GRAB, size::FADER_GRAB - 1.0] {
+        let at = h.fader_line(target) + vec2(0.0, off);
+        assert!(h.click(at).is_empty(), "{off}");
+    }
+    let at = h.fader_line(target) + vec2(0.0, 3.0);
+    let sent = h.drag(at, &[at - vec2(0.0, 10.0)]);
+    assert!(close(send_position(one(&sent)), start + 10.0 / TRAVEL));
+}
+
+#[test]
+fn a_drag_after_a_jump_goes_on_from_where_it_jumped() {
+    let mut h = Harness::new();
+    let mic = h.channel(0);
+    let target = Target::Send {
+        ch: mic,
+        mix: MixId::Master,
+    };
+    let at = h.fader(target).center_bottom() - vec2(0.0, 60.0);
+    let jumped = position_at(&h, target, at.y);
+    let sent = h.drag(at, &[at - vec2(0.0, 10.0), at - vec2(0.0, 20.0)]);
+    let positions: Vec<f32> = sent.iter().map(send_position).collect();
+    assert_eq!(positions.len(), 3, "{sent:?}");
+    assert!(close(positions[0], jumped));
+    assert!(close(positions[1], jumped + 10.0 / TRAVEL));
+    assert!(close(positions[2], jumped + 20.0 / TRAVEL));
+    // With Shift the jump is still to the pointer; the drag after it a fifth as far.
+    h.wait(1.0);
+    let at = h.fader(target).center_bottom() - vec2(0.0, 100.0);
+    let jumped = position_at(&h, target, at.y);
+    h.modifiers = Modifiers::SHIFT;
+    let sent = h.drag(at, &[at - vec2(0.0, 30.0)]);
+    h.modifiers = Modifiers::NONE;
+    let positions: Vec<f32> = sent.iter().map(send_position).collect();
+    assert_eq!(positions.len(), 2, "{sent:?}");
+    assert!(close(positions[0], jumped));
+    assert!(close(positions[1], jumped + 30.0 / TRAVEL * FINE_DRAG));
+}
+
+#[test]
+fn a_double_click_away_from_the_line_lands_on_unity() {
+    let mut h = Harness::new();
+    let mic = h.channel(0);
+    let target = Target::Send {
+        ch: mic,
+        mix: MixId::Monitor,
+    };
+    let at = h.fader(target).center_bottom() - vec2(0.0, 40.0);
+    let jumped = position_at(&h, target, at.y);
+    let sent = h.double_click(at);
+    assert_eq!(
+        sent,
+        vec![target.command(jumped), target.command(taper::UNITY)]
+    );
+    assert_eq!(h.setup().channels[0].monitor.position, taper::UNITY);
 }
 
 #[test]

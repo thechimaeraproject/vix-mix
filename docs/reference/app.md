@@ -192,7 +192,7 @@ constants, and nothing else in the app spells a colour or a size:
   each end, the line 2 (3 under the pointer) and its overhang, the triangle 6 × 8, the peak
   line, mute buttons 24 × 20, link 20 × 18, icons 12, 13 and 14, the caret 10); the slot's
   hover controls (16-point buttons, 11-point icons, inset 1 and 2); the drop line (2, inset 2);
-  the focus ring; a drag's 5-point start.
+  the focus ring; a drag's 5-point start; how near a fader's line a press grabs it (5).
 - **`pop`**: the popovers' sizes — the 3-point corner and the `0 12px 32px` shadow, where a
   popover opens (2 below, 4 beside, 8 from the window's edge); the panels (270 wide, the name
   row, the 38-point search row, lists at most 300 tall, 24-point rows, tick box, badge,
@@ -284,7 +284,8 @@ button.
 
 | Gesture | Command |
 |---|---|
-| Drag a fader anywhere on its column: the position moves by the pointer's travel over the bars' height, from where it was (a press does not jump it); Shift a fifth as far | `SetSend { ch, mix, position }` each move (a linked channel's other send moves in the model), `SetMixLevel` on a mix |
+| Press a fader's column away from its line (farther than `FADER_GRAB`, 5 points): it jumps to the pointer, and takes the keys | `SetSend { ch, mix, position }` (a linked channel's other send moves in the model), `SetMixLevel` on a mix |
+| Drag a fader: the position moves by the pointer's travel over the bars' height, from where it was (from where the press jumped it, or from the line when the press was on it); Shift a fifth as far | the same, each move |
 | Double-click a fader | the same at `taper::UNITY` |
 | With a fader focused (a press gives it the keys): Up or Right, Down or Left 0.01 (Shift 0.002), Home 0, End 1 | the same, from where the last key left it; the arrows never move the focus |
 | A mute; the link; the ear | `SetMute`, `SetMixMute`; `SetLink`; `SetPreview` |
@@ -480,6 +481,10 @@ gesture sent, and what is in view is what the last frame painted whole inside it
 `Harness::whole`):
 
 - faders: `a_fader_drag_moves_the_send_by_the_pointers_travel`,
+  `a_press_away_from_the_line_jumps_the_fader_there` (a send and a mix, a quick click and a
+  press held; below the travel, the bottom), `a_press_on_the_line_grabs_it_where_it_is`,
+  `a_drag_after_a_jump_goes_on_from_where_it_jumped` (and with Shift),
+  `a_double_click_away_from_the_line_lands_on_unity`,
   `with_shift_a_drag_moves_a_fifth_as_far`,
   `on_a_linked_channel_the_other_send_moves_with_it`,
   `a_double_click_puts_a_fader_back_at_unity` (a send and a mix),

@@ -183,6 +183,9 @@ pub mod size {
     /// The bars stop this far short of the fader's top and bottom; positions 0 and 1 sit
     /// there.
     pub const FADER_INSET: f32 = 6.0;
+    /// How near the fader line a press grabs it where it is; farther, the fader jumps to the
+    /// pointer. Half the triangle's height and a point, so a press on the triangle grabs.
+    pub const FADER_GRAB: f32 = TRIANGLE[1] / 2.0 + 1.0;
     /// The fader line's thickness.
     pub const FADER_LINE: f32 = 2.0;
     /// How far the fader line reaches past its column's far side (`.vf.l .ln{right:-1px}`).
