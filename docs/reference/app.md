@@ -15,7 +15,8 @@ It depends on `vixmix-host` and `vixmix-model`; on the kit's `chimaeraproject-eg
 the meter fader, its scale, peak hold and the taper trait the meters read through
 ([kit-egui-audio.md](../kit-egui-audio.md)); on the kit's `chimaeraproject-vst3-host` only to
 name the `EditorEvent` and `EditorSize` that `Host::tick_editors` and `Host::open_editor` hand
-back; on `png` for the capture. Its tests also take `vixmix-plugins`, because their
+back; on `png` for the capture; on Unix, on `signal-hook` for the signals that ask it to
+close. Its tests also take `vixmix-plugins`, because their
 `Recorder` implements `Host`, whose `catalog` names `Catalog`, and to read the scan's
 `ANSWER_MARK` and `SCAN_TIMEOUT`.
 
@@ -37,6 +38,7 @@ back; on `png` for the capture. Its tests also take `vixmix-plugins`, because th
 | `browser.rs` | the plugin browser: the search, the nav and its counts, the list grouped A to Z, stars, the footer; the list and the nav kept between frames, and only the rows in view drawn |
 | `toast.rs` | the toast line, and the Undo command a toast carries |
 | `editors.rs` | the plugin editor windows, made by an `Opener` and driven through `EditorWindow` (winit's in the app, a fake in the tests): open, resize, close through the host, titles |
+| `signals.rs` | Unix only: `SIGTERM`, `SIGINT` and `SIGHUP` taken as a request to close, and a second one ending a close that hangs |
 | `widgets.rs` | what every surface shares: hover, the focus ring, the text button, tick box and radio, headings, the text field, a popover's frame |
 | `meters.rs` | the model's taper as the kit's `Taper`, a linear peak read on it, the console's bars (the kit's `PeakHold`) by channel and mix, the hold's timings |
 | `icons.rs` | prototype v5's SVG icons, read once and followed with egui's painter, stroked or filled |
@@ -54,7 +56,8 @@ back; on `png` for the capture. Its tests also take `vixmix-plugins`, because th
 dark, at the console's natural size), the surface and the egui context. On `RedrawRequested`
 it draws a frame, or, while the window is hidden, serves the host without one; the pacer's
 timer wakes either ([Pacing](#pacing)). Events for an editor's window go to its editor
-([Editor windows](#editor-windows)). On `CloseRequested` it exits; on `exiting` every editor closes
+([Editor windows](#editor-windows)). On `CloseRequested` it exits, and so it does when a
+signal asks (below); on `exiting` every editor closes
 through the host (`Running::close_editors`, one call a shutdown order can place), then the
 host goes (its instances after their editors), then the window.
 `gpu.rs` is the surface (a non-sRGB format, as egui-wgpu prefers; mailbox present where the
@@ -79,6 +82,20 @@ X11 window and the kit refuses Wayland handles. With no X display it runs on Way
 that editors cannot open. winit makes one event loop a process, so the choice is made before
 trying. The later option, a separate X11 connection for editors only so the console can run
 on Wayland, is the charter's open point.
+
+**A signal that asks to close** (Unix; `signals.rs`; issue
+[#12](https://github.com/thechimaeraproject/vix-mix/issues/12)). `SIGTERM` (a `pkill vix-mix`,
+a logout, systemd stopping the session), `SIGINT` (Ctrl+C in the terminal that started it) and
+`SIGHUP` (that terminal closed) each end a process where it stands, which skipped the host's
+shutdown: the apps it routed stayed on sinks that were gone, and a change younger than the
+autosave was lost. `main` takes the three before the loop runs. A thread of their own
+(`vix-mix-signals`) sends the loop its one event of ours, `CloseAsked`, with the signal's
+name; the window logs who asked and exits as it does on `CloseRequested`, so `exiting` runs
+the same order and the process ends with 0. A signal that arrives while the host boots is
+served once it has. A second signal, while the close has not ended the process, does what the
+signal always did, so a close that hangs can still be stopped without `kill -9`. `SIGKILL`
+cannot be taken and still leaves everything where it stood. If the signals cannot be taken, a
+warning says so and what to do instead (close the window).
 
 ## A frame
 
@@ -695,6 +712,10 @@ gesture sent, and what is in view is what the last frame painted whole inside it
   faint; MON and MST light when the chain feeds that mix; previewing Master tags Monitor.
 - `capture.rs`: read-back rows lose their padding; the PNG holds the pixels as drawn; an
   unwritable path says what to check.
+- `signals.rs` (Unix), in a process of its own because signals are the whole process's (the
+  test program run again as its child): for each of `SIGTERM`, `SIGINT` and `SIGHUP`, a
+  process that took the signals and never closes says which one asked and lives on, and a
+  second one ends it as that signal does.
 
 **By hand** (a GPU and a desktop, so not in CI):
 
@@ -725,6 +746,10 @@ gesture sent, and what is in view is what the last frame painted whole inside it
 - Minimised and restored (`ShowWindowAsync` from PowerShell, with the window's handle taken
   before it was minimised): no frame while minimised, drawing again at once when restored.
 - `cargo run -p vix-mix -- --quit-after-frames 3` runs on the real host and exits 0.
+- A signal, on Fedora KDE with `--fake` (2026-11-11): `kill -TERM` on the window running on
+  X11 and `kill -INT` on it running on Wayland each logged "SIGTERM (SIGINT) asked Vix Mix to
+  close" and ended the process with 0. Not run: a signal with the real host and apps routed
+  (handoff 09 item 10).
 - The capture command above writes the 1800 × 976 PNG, byte for byte the look gate's (again
   on the branch rebased onto lane 06's host, and at master before the DSP peak tick on
   2026-11-10, on the RTX 3090 under Vulkan; the reference was then retaken, § The capture).
