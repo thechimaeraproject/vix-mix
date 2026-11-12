@@ -188,8 +188,22 @@ here.
    with only the Master source (an app recording it starts the mixer), running, the daemon gone
    (`systemctl --user restart pipewire pipewire-pulse wireplumber`), Monitor's device gone, a
    plugin missing (a bundle renamed), a scan failure.
-9. **The window's entry in the task manager, and the launch feedback.**
-   ([#18](https://github.com/thechimaeraproject/vix-mix/issues/18)) Where:
+9. ~~**The window's entry in the task manager, and the launch feedback.**~~ **Fixed
+   2026-11-11** ([#18](https://github.com/thechimaeraproject/vix-mix/issues/18)): the app
+   names its windows, the editors' too (the app id `org.chimaeraproject.vixmix` on Wayland,
+   the class `vix-mix` on X11), reads the launcher's activation token before the host boots,
+   makes its window with it and takes it out of the environment so no child of the plugin
+   scan inherits it, and the desktop entry says `StartupNotify=true`; a test holds the entry
+   and the names together ([reference/app.md](../reference/app.md) § The shell). Found on the
+   way, on Plasma's Wayland session: the launcher hands an app only `XDG_ACTIVATION_TOKEN`,
+   which the XWayland window cannot use, and KWin ends the feedback itself when a window of
+   the launched entry is activated; it files ours under the entry through `StartupWMClass`
+   (read from KWin for the running window). So on that session the fix shows nothing new: it
+   is for an X11 session, where the token is the window's to use, and for a session with no X
+   display, where the window had no app id. Seen by hand with `--fake`: the class and the
+   token on the X11 window, the app id on the Wayland one. Still to do by hand on Fedora:
+   after a start from the launcher, the bouncing cursor and the task manager's launch entry go
+   when the window appears. Was: where,
    `packaging/linux/org.chimaeraproject.vixmix.desktop` and `app/` (the window, lane 05). winit
    gives an X11 window the class `vix-mix`, the binary's name, which the desktop entry's
    `StartupWMClass` matches; on Wayland it sets no app id unless the app names one, so Plasma
@@ -208,8 +222,16 @@ here.
    `reset_activation_token_env` so no child process inherits it, and the desktop entry then
    says `StartupNotify=true`. Seen 2026-11-10: the icon reads in the launcher and the task
    manager; the launch feedback was not checked.
-10. **Logging out with apps routed.**
-    ([#12](https://github.com/thechimaeraproject/vix-mix/issues/12)) Where: `app/src/main.rs`
+10. ~~**Logging out with apps routed.**~~ **Fixed 2026-11-11**
+    ([#12](https://github.com/thechimaeraproject/vix-mix/issues/12)): `SIGTERM`, `SIGINT` and
+    `SIGHUP` ask the window to close, which runs the shutdown order as its close button does
+    and ends the process with 0; a second one, while that close has not ended it, does what
+    the signal always did, so a close that hangs can still be stopped
+    ([reference/app.md](../reference/app.md) § The shell; `app/src/signals.rs`, tested for
+    each signal in a process of its own). Seen by hand with `--fake`, on X11 and on Wayland:
+    the log says who asked and the exit code is 0. Still to do by hand on Fedora, with the
+    real host: `pkill vix-mix` with Spotify in Music leaves Spotify on the default output and
+    the setup as it was, and so does logging out and in again. Was: where, `app/src/main.rs`
     (no signal handling) and [reference/host.md](../reference/host.md) § Shutdown. A window
     asked to close (Plasma's logout should ask) runs the shutdown order; a `SIGTERM` (`pkill
     vix-mix`) ends the process without it, as `pkill -9` does in the by-hand pass step 9.
