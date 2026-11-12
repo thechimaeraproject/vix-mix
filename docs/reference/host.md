@@ -242,7 +242,9 @@ request 8), so no tick runs again; the final save, if anything changed, while ev
 still live to give its state; an empty graph is prepared, so every lent instance comes home on
 this thread; then every instance is retired and reaped here, processor before controller (the
 kit's [vst3-host.md](https://github.com/thechimaeraproject/chimaeraproject-kit/blob/master/handbook/reference/vst3-host.md)
-§ Lending). The app drops the host before its window.
+§ Lending). The app drops the host before its window, and does so when its window is closed
+and when `SIGTERM`, `SIGINT` or `SIGHUP` asks ([app.md](app.md) § The shell); a process ended
+any other way (`SIGKILL`, a crash) runs none of this.
 
 For tests, `config_dir()`, `backend()`, `engine()`, `is_live(instance)` and
 `null_input(index)` (the null backend's input for a channel, which every later poll plays)

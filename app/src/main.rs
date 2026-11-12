@@ -9,7 +9,8 @@
 //! [`theme`]'s colours, sizes and fonts, with the prototype's [`icons`], the shared
 //! [`widgets`] and the [`meters`]' levels and peak-hold lines; [`shell`] the window's state
 //! between frames and what it does with a frame's gestures; [`editors`] the plugin editor
-//! windows; [`capture`] the look gate's offscreen frame.
+//! windows; `signals` (Unix) the signals that ask the window to close; [`capture`] the look
+//! gate's offscreen frame.
 //!
 //! The command line is for checks, not for users: `--fake` runs against `FakeHost` (prototype
 //! v5's example data and simulated meters) instead of the real host,
@@ -36,6 +37,8 @@ mod meters;
 mod pacing;
 mod popover;
 mod shell;
+#[cfg(unix)]
+mod signals;
 mod strip;
 #[cfg(test)]
 mod test_support;
@@ -50,6 +53,8 @@ use std::path::PathBuf;
 use vixmix_host::{Describe, ScanCommand};
 use winit::error::EventLoopError;
 use winit::event_loop::EventLoop;
+
+use crate::app::CloseAsked;
 
 const USAGE: &str = "\
 usage: vix-mix [--fake] [--quit-after-frames <n>] | --dump-png <file> | --scan-bundle <bundle>
@@ -189,6 +194,8 @@ fn main() {
     };
     // Idle means idle: the loop sleeps until the window, a meter or egui's timer wakes it.
     event_loop.set_control_flow(winit::event_loop::ControlFlow::Wait);
+    #[cfg(unix)]
+    close_on_signals(&event_loop);
     let mut app = app::App::new(startup);
     if let Err(e) = event_loop.run_app(&mut app) {
         eprintln!("vix-mix: the event loop failed: {e}");
@@ -203,19 +210,36 @@ fn main() {
 /// The event loop. On Linux it runs on X11 (XWayland under a Wayland desktop) whenever there
 /// is an X display, because a VST3 editor embeds only in an X11 window and the kit refuses
 /// Wayland handles; with no X display it runs where it can and says that editors cannot
-/// open. (winit makes one event loop a process, so the choice is made before trying.)
-fn event_loop() -> Result<EventLoop<()>, EventLoopError> {
+/// open. (winit makes one event loop a process, so the choice is made before trying.) Its one
+/// event of our own is [`CloseAsked`].
+fn event_loop() -> Result<EventLoop<CloseAsked>, EventLoopError> {
     #[cfg(target_os = "linux")]
     {
         use winit::platform::x11::EventLoopBuilderExtX11;
         if std::env::var_os("DISPLAY").is_some() {
-            return EventLoop::builder().with_x11().build();
+            return EventLoop::with_user_event().with_x11().build();
         }
         log::warn!(
             "no X display (DISPLAY is unset): the window runs on Wayland, where plugin editors cannot open; run a session with XWayland for them"
         );
     }
-    EventLoop::new()
+    EventLoop::with_user_event().build()
+}
+
+/// From here on `SIGTERM`, `SIGINT` and `SIGHUP` ask the window to close, so the host's
+/// shutdown order runs as it does for the close button ([`signals`]).
+#[cfg(unix)]
+fn close_on_signals(event_loop: &EventLoop<CloseAsked>) {
+    let window = event_loop.create_proxy();
+    let taken = signals::ask_to_close(move |signal| {
+        // Fails only once the loop has ended: then the window is closing already.
+        let _ = window.send_event(signal);
+    });
+    if let Err(error) = taken {
+        log::warn!(
+            "SIGTERM, SIGINT and SIGHUP could not be taken ({error}): one of them ends Vix Mix where it stands, with the apps it routed left on its sinks and the last change unsaved; close the window instead"
+        );
+    }
 }
 
 #[cfg(test)]

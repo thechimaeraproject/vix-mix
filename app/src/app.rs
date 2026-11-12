@@ -17,6 +17,10 @@
 //! serves the host and the editors without a frame. With no backend, no editor, nothing to
 //! animate and nothing the host waits for, it is idle.
 //!
+//! **Closing.** The window's close button and a signal that asks ([`CloseAsked`]) both end the
+//! event loop; `exiting` then closes every editor through the host, drops the host (its
+//! shutdown order) and then the window.
+//!
 //! **Viewport facts.** egui's facts about the window (where it is, its monitor, whether it is
 //! minimised) are asked of the desktop when a window event may have changed them and at most
 //! every [`VIEWPORT_CHECK`] otherwise, not every frame: on X11 each is a round trip.
@@ -36,6 +40,10 @@ use crate::gpu::Gpu;
 use crate::pacing::{Next, Pacer, VIEWPORT_CHECK, Wake, Wants};
 use crate::shell::Shell;
 use crate::ui;
+
+/// The event loop's one event of our own: something outside the window asked it to close. It
+/// names who asked: a signal (`crate::signals`, on Unix).
+pub type CloseAsked = &'static str;
 
 /// The winit application.
 pub struct App {
@@ -87,7 +95,7 @@ struct Running {
     min_size: egui::Vec2,
 }
 
-impl ApplicationHandler for App {
+impl ApplicationHandler<CloseAsked> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.running.is_some() {
             return;
@@ -102,6 +110,12 @@ impl ApplicationHandler for App {
                 event_loop.exit();
             }
         }
+    }
+
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, by: CloseAsked) {
+        // As the close button: the loop ends, and `exiting` closes in order.
+        log::info!("{by} asked Vix Mix to close: closing as the window's close button does");
+        event_loop.exit();
     }
 
     fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) {

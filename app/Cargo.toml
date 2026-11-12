@@ -32,6 +32,11 @@ chimaeraproject-vst3-host.workspace = true
 # and colours stay in theme.rs.
 chimaeraproject-egui-audio.workspace = true
 
+# The signals that ask the window to close (SIGTERM, SIGINT, SIGHUP), so a `pkill` or a logout
+# runs the shutdown order as closing the window does. Unix only: Windows asks through the window.
+[target.'cfg(unix)'.dependencies]
+signal-hook = "0.4"
+
 [dev-dependencies]
 # The tests' `Recorder` wraps `FakeHost` and implements `Host`, whose `catalog` names the
 # plugins crate's `Catalog`. Tests only: the window itself depends on the host and the model.
