@@ -150,9 +150,13 @@ loaded in a child process (26). A second batch (2026-11-11) fixed two more: a si
 the window to close runs the shutdown order (12), and the window's names and the launcher's
 activation token (18). Issue 13 was measured the same day and needs no change: a mixer
 started again the instant it quit takes a playing app back on the PipeWire Fedora ships, and
-where it breaks (Ubuntu 24.04's, which CI runs) the break is that PipeWire's. Still open in
-round 1: issues 16 and 17, the measured figures of handoff 09 items 1, 2 and 5, and the
-by-hand check on Fedora that each fix left in its item.
+where it breaks (Ubuntu 24.04's, which CI runs) the break is that PipeWire's. Three findings
+were read from that machine's journal and core dumps the same day and have no step yet: a
+bridged plugin that throws on the audio thread aborts the mixer (the kit's issue 219), nothing
+stops a second Vix Mix (34), and autostart after a quick logout and login can leave no mixer
+running (35). Still open in round 1: issues 16, 17, 34 and 35, the kit's issue 219, the
+measured figures of handoff 09 items 1, 2 and 5, and the by-hand check on Fedora that each fix
+left in its item.
 
 ## Git workflow (read first)
 

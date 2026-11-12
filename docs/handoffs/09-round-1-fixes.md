@@ -30,6 +30,32 @@ they were met:
    channel at a quantum of 256. Saw: the header's DSP figure alternating between about 12 % and
    0 %. Expected: a steady figure that still shows the expensive cycles. Step 6.
 
+Three more were read on 2026-11-11 from the journal and the core dumps of the same days' use on
+Inochi. None has a step yet:
+
+3. **A bridged plugin that throws on the audio thread aborts Vix Mix**
+   ([chimaeraproject-kit#219](https://github.com/thechimaeraproject/chimaeraproject-kit/issues/219)).
+   Did: hours of use with a Windows plugin bridged by yabridge on a channel. Saw: Vix Mix gone,
+   twice on 2026-11-10 (03:30 and 21:40), the journal's last words "panic in a function that
+   cannot unwind"; the core dump of the second holds the `std::system_error` ("read: Connection
+   reset by peer") the bridge threw out of `process` when its Wine host went, which unwound
+   into PipeWire's `process` callback. Expected: the plugin fails as a plugin and the mixer
+   plays on. The kit's `vst3-host` calls a plugin with no guard, so the fix is the kit's and a
+   `kit bump` here, as item 6's was; plugins out of process are the full answer
+   ([roadmap](../roadmap.md) § Named but not built).
+4. **Nothing stops a second Vix Mix**
+   ([#34](https://github.com/thechimaeraproject/vix-mix/issues/34)). Did: Vix Mix in Plasma's
+   Autostart, and started again from the launcher. Saw: two mixers for two hours on
+   2026-11-10, with one setup, the same node names and the same apps between them; closing the
+   first took the Wine host of the second's bridged plugin with it, which set off finding 3
+   that evening, and the next two starts aborted while loading that plugin. Expected: one
+   mixer, and a second start brings the first window forward.
+5. **Autostart can leave no mixer running**
+   ([#35](https://github.com/thechimaeraproject/vix-mix/issues/35)). Did: logged out and in
+   again within a few seconds (2026-11-11, 21:16). Saw: the autostart units started before the
+   compositor, Vix Mix found no display and exited 1, and nothing started it again until it
+   was started by hand. Expected: logged in, Vix Mix runs.
+
 What the user saw hold in that pass is struck through below (items 6, 8, 11 and 12). The pass
 measured nothing: the figures of items 1, 2 and 5 are still to take. Going in, the goal was the
 fifteen items below.

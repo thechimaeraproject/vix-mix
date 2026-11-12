@@ -62,6 +62,9 @@ itself; an issue closes when its item is struck through in handoff 09.
 | [#16](https://github.com/thechimaeraproject/vix-mix/issues/16) | the first start: the plugin scan before the first frame, Monitor's device not picked | item 7 |
 | [#17](https://github.com/thechimaeraproject/vix-mix/issues/17) | a frame for the meters alone, to get under 5 % of one core | item 13 |
 | [#18](https://github.com/thechimaeraproject/vix-mix/issues/18) | the window's app id on Wayland and the launcher's activation token; fixed and closed 2026-11-11 | item 9, struck |
+| [#34](https://github.com/thechimaeraproject/vix-mix/issues/34) | found in daily use: nothing stops a second Vix Mix, and closing one of two aborted the other | the Goal's fourth finding, no step yet |
+| [#35](https://github.com/thechimaeraproject/vix-mix/issues/35) | found in daily use: autostart after a quick logout and login starts before the session has a display, and no mixer runs | the Goal's fifth finding, no step yet |
+| [kit #219](https://github.com/thechimaeraproject/chimaeraproject-kit/issues/219) | found in daily use: a plugin that throws out of `process` aborts the mixer; the kit's `vst3-host` to fix, a `kit bump` here | the Goal's third finding |
 
 ## Named but not built
 
