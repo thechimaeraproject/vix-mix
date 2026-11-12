@@ -125,9 +125,11 @@ faders, mutes and devices, Spotify back in Music, and the plugin sounding as it 
 showing the settings you made. Then change a setting and close the window at once, without
 waiting: the quit's own save keeps it, and the next start sounds so. Kill it instead
 (`pkill -9 vix-mix`) a second or more after a change and start it again: the change is there.
-If Spotify is silent after a start, write down how soon after the quit you started it: in the
-headless rig a player restarted into its channel within milliseconds of the quit broke, and one
-a second later did not.
+If Spotify is silent after a start, write down how soon after the quit you started it and
+which PipeWire the machine runs (`pipewire --version`): in the headless rig, on PipeWire as
+Ubuntu 24.04 ships it, a player routed back within 20 ms of the quit broke and one from 50 ms
+on did not, and on PipeWire as Fedora 44 ships it none broke at any gap
+([handoff 09](../handoffs/09-round-1-fixes.md) item 3).
 
 ## 10. No xruns at 256
 

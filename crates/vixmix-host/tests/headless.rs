@@ -8,7 +8,8 @@
 //! host quits, clearing its routing; and a relaunch gives back the same setup with the
 //! plugin's new state, sounding so, and the app in its channel. A second test changes the
 //! quantum while the app plays and Master is recorded, as the preferences do: the app stays
-//! in its channel and the recording goes on.
+//! in its channel and the recording goes on. A third, on request, starts the mixer again the
+//! instant it quit, over and over, which only a current PipeWire takes (issue 13).
 //!
 //! Without the script's marker the test says how to start the daemon and passes without
 //! touching anything (a desktop session must never get its routings), except under `CI`,
@@ -73,6 +74,11 @@ impl Proc {
             .spawn()
             .unwrap_or_else(|e| panic!("{program} did not start ({e}): {HOW}"));
         Proc(child)
+    }
+
+    /// Whether it still runs.
+    fn alive(&mut self) -> bool {
+        matches!(self.0.try_wait(), Ok(None))
     }
 
     /// Asks it to stop as Ctrl-C would (so pw-record finishes its file) and waits.
@@ -490,9 +496,11 @@ fn an_app_plays_through_its_channel_to_monitor_and_master_and_comes_back_after_a
         run("pw-metadata", &["-n", "default"])
     );
     // The player goes back to the default device and plays there while the mixer is closed,
-    // as Spotify would on the headphones. (Relaunched within milliseconds, while the graph
-    // was still moving to the player's own quantum, `pw-play` in the container was seen to
-    // break: its node erred every cycle and went away. A person relaunches seconds later.)
+    // as Spotify would on the headphones. The wait after it is for PipeWire as Ubuntu 24.04
+    // ships it, which CI runs: there a mixer that routes the player back within 20 ms of the
+    // quit leaves it linked, erring every cycle and silent, and one from 50 ms on does not. A
+    // person relaunches later than that, and a current PipeWire takes any gap: the on-request
+    // test below.
     assert!(
         eventually(Duration::from_secs(3), || linked(PLAYER, NULL_SINK)),
         "the player did not go back to the default device:\n{}",
@@ -507,6 +515,47 @@ fn an_app_plays_through_its_channel_to_monitor_and_master_and_comes_back_after_a
     let insert = host.setup().inserts().next().unwrap();
     assert_eq!(insert.state, Some(common::gain_state(MOVED)));
     heard_in_music(&mut host, PLAYER, &sink, at, moved);
+}
+
+/// A mixer started again the instant the last one quit (issue 13). On request, because it
+/// holds only on a current PipeWire. Measured on 2026-11-11 in two containers: with PipeWire
+/// and WirePlumber as Fedora 44 ships them, 200 rounds with 0 to 40 ms between the quit and
+/// the boot each had the player back in Music and heard; as Ubuntu 24.04 ships them, which CI
+/// runs, a boot within 20 ms of the quit left the player linked into Music, erring every
+/// cycle and silent, and one from 50 ms on did not. Waiting at the quit until the player had
+/// left Music's sink did not help there (it leaves within a millisecond), so nothing waits
+/// for it, and the test above waits a second before it boots again.
+#[test]
+#[ignore = "holds only on a current PipeWire, not on Ubuntu 24.04's, which CI runs (issue 13): on request"]
+fn a_mixer_started_again_at_once_takes_the_playing_app_back_into_its_channel() {
+    let Some(_daemon) = headless() else {
+        return;
+    };
+    const APP: &str = "vixmix-host-again";
+    const PLAYER: &str = "vixmix-host-again-music";
+    let plugins = common::plugin_dir("again");
+    let config = common::config_dir("again");
+    let dir = common::scratch("again");
+    let (setup, music, _) = music(&config, &plugins, PLAYER);
+    let at = setup.channels.iter().position(|c| c.id == music).unwrap();
+    let sink = channel_node_name(APP, music, "Music");
+
+    let mut host = boot_running(&config, &plugins, APP);
+    let mut player = play(&dir, PLAYER);
+    heard_in_music(&mut host, PLAYER, &sink, at, HEARD);
+
+    // Quit and boot with nothing in between, sooner than a person or a script could: the
+    // player plays on through each, and each new mixer takes it back into Music.
+    for round in 1..=20 {
+        drop(host);
+        host = boot_running(&config, &plugins, APP);
+        heard_in_music(&mut host, PLAYER, &sink, at, HEARD);
+        assert!(
+            player.alive(),
+            "round {round}: the player stopped:\n{}",
+            run("pw-top", &["-b", "-n", "2"])
+        );
+    }
 }
 
 #[test]
