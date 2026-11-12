@@ -124,8 +124,28 @@ here.
    and the kernel, and the ERR count the `vix-mix.*` rows of `pw-top` reached in five minutes at
    256, with what was happening when one moved. Seen 2026-11-10, not measured: hours at a
    quantum of 256 with the header's xrun count not moving.
-3. **Vix Mix started again within milliseconds of quitting can leave a playing app routed but
-   silent.** ([#13](https://github.com/thechimaeraproject/vix-mix/issues/13)) Seen with
+3. ~~**Vix Mix started again within milliseconds of quitting can leave a playing app routed but
+   silent.**~~ **Held 2026-11-11 on a current PipeWire; the older one's own where it breaks,
+   and not worked around** ([#13](https://github.com/thechimaeraproject/vix-mix/issues/13)).
+   Measured in two containers with
+   `a_mixer_started_again_at_once_takes_the_playing_app_back_into_its_channel`
+   (`crates/vixmix-host/tests/headless.rs`, on request;
+   [reference/host.md](../reference/host.md) § Verification), which quits the host and boots
+   it again with nothing in between while `pw-play` plays. With PipeWire and WirePlumber as
+   Fedora 44 ships them, which Inochi runs: 200 rounds with 0 to 40 ms between the quit and
+   the boot, and the player was back in Music and heard every time. As Ubuntu 24.04 ships
+   them, which CI runs: a boot 0 or 20 ms after the quit left the player linked into Music,
+   erring every cycle and silent, on the first round of every run, and a boot from 50 ms on
+   did not (six rounds each at 50, 100, 200, 400 and 800 ms). The fix this item proposed was built and did not
+   help there: with the backend waiting at the quit until the player had left Music's sink,
+   the player left within a millisecond of its routing being cleared and was on the default
+   device three milliseconds later, and it still broke when the new mixer routed it back 21 ms
+   after that. So nothing waits for it. What breaks is that PipeWire, when a stream is moved
+   again while the graph is still changing under it, and a mixer does not start within 50 ms
+   of the last one's quit unless a test boots it in the same process. The test that runs in
+   CI keeps its wait before it boots again. Still to do by hand on Fedora, as a last look
+   with a real app: quit Vix Mix and start it again as fast as you can while Spotify plays,
+   several times; Spotify plays on in Music. Was: seen with
    `pw-play` in the container: the player kept playing through the quit and was moving back to
    the default device when a mixer booted again at once routed it into its channel, while the
    graph was still moving to the player's own quantum; the player's node then erred every cycle

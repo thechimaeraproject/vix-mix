@@ -56,7 +56,7 @@ itself; an issue closes when its item is struck through in handoff 09.
 | [#25](https://github.com/thechimaeraproject/vix-mix/issues/25) | found by the pass: the DSP readout flickers between about 12 % and 0 %; fixed and closed 2026-11-10 | the Goal's second finding, step 6, built |
 | [#11](https://github.com/thechimaeraproject/vix-mix/issues/11) | a plugin editor's window resizes without telling the plugin; the plugin-folder bound (change request 10); fixed and closed 2026-11-10 | item 14, struck |
 | [#12](https://github.com/thechimaeraproject/vix-mix/issues/12) | SIGTERM and logout skip the shutdown order; fixed and closed 2026-11-11 | item 10, struck |
-| [#13](https://github.com/thechimaeraproject/vix-mix/issues/13) | Vix Mix restarted within milliseconds of quitting can leave a playing app routed but silent | item 3 |
+| [#13](https://github.com/thechimaeraproject/vix-mix/issues/13) | Vix Mix restarted within milliseconds of quitting can leave a playing app routed but silent; measured 2026-11-11: it holds on a current PipeWire and is the older one's own on Ubuntu 24.04, not worked around | item 3, struck |
 | [#14](https://github.com/thechimaeraproject/vix-mix/issues/14) | no toast when Monitor's device goes while Master has no device; fixed and closed 2026-11-10 | item 4, struck |
 | [#15](https://github.com/thechimaeraproject/vix-mix/issues/15) | Preferences: the Tab order of the folder field and its Add button; fixed and closed 2026-11-10 | item 15, struck |
 | [#16](https://github.com/thechimaeraproject/vix-mix/issues/16) | the first start: the plugin scan before the first frame, Monitor's device not picked | item 7 |

@@ -148,8 +148,11 @@ device named when only the Master source can tick (14), the Preferences Tab orde
 load read over a window with its peak (25), and the scan describing a bundle that must be
 loaded in a child process (26). A second batch (2026-11-11) fixed two more: a signal that asks
 the window to close runs the shutdown order (12), and the window's names and the launcher's
-activation token (18). Still open in round 1: issues 13, 16 and 17, the measured figures of
-handoff 09 items 1, 2 and 5, and the by-hand check on Fedora that each fix left in its item.
+activation token (18). Issue 13 was measured the same day and needs no change: a mixer
+started again the instant it quit takes a playing app back on the PipeWire Fedora ships, and
+where it breaks (Ubuntu 24.04's, which CI runs) the break is that PipeWire's. Still open in
+round 1: issues 16 and 17, the measured figures of handoff 09 items 1, 2 and 5, and the
+by-hand check on Fedora that each fix left in its item.
 
 ## Git workflow (read first)
 
