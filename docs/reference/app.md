@@ -38,6 +38,7 @@ close. Its tests also take `vixmix-plugins`, because their
 | `browser.rs` | the plugin browser: the search, the nav and its counts, the list grouped A to Z, stars, the footer; the list and the nav kept between frames, and only the rows in view drawn |
 | `toast.rs` | the toast line, and the Undo command a toast carries |
 | `editors.rs` | the plugin editor windows, made by an `Opener` and driven through `EditorWindow` (winit's in the app, a fake in the tests): open, resize, close through the host, titles |
+| `desktop.rs` | what the desktop knows a window by: the Wayland app id and the X11 class that tie it to the desktop entry, and the launcher's activation token, read once and taken out of the environment |
 | `signals.rs` | Unix only: `SIGTERM`, `SIGINT` and `SIGHUP` taken as a request to close, and a second one ending a close that hangs |
 | `widgets.rs` | what every surface shares: hover, the focus ring, the text button, tick box and radio, headings, the text field, a popover's frame |
 | `meters.rs` | the model's taper as the kit's `Taper`, a linear peak read on it, the console's bars (the kit's `PeakHold`) by channel and mix, the hold's timings |
@@ -96,6 +97,23 @@ served once it has. A second signal, while the close has not ended the process, 
 signal always did, so a close that hangs can still be stopped without `kill -9`. `SIGKILL`
 cannot be taken and still leaves everything where it stood. If the signals cannot be taken, a
 warning says so and what to do instead (close the window).
+
+**What the desktop knows a window by** (Linux; `desktop.rs`; issue
+[#18](https://github.com/thechimaeraproject/vix-mix/issues/18)). The console's window and
+every editor's are named for the desktop entry
+(`packaging/linux/org.chimaeraproject.vixmix.desktop`), so the task manager files them under
+it with its icon: on Wayland their app id is the entry's file name,
+`org.chimaeraproject.vixmix`; on X11 their class is `vix-mix`, the entry's `StartupWMClass`
+(left alone, winit sets no app id and takes the class from the program's file name). The
+launcher's activation token is read at `resumed`, before the host boots, because its plugin
+scan starts child processes: `DESKTOP_STARTUP_ID` when the loop runs on X11,
+`XDG_ACTIVATION_TOKEN` on Wayland, and both are then removed from the environment so no child
+takes the token for its own. The console's window is made with it, which ends the launch
+feedback and gives the window the focus; that is what the entry's `StartupNotify=true`
+promises. Plasma's Wayland session hands an app only `XDG_ACTIVATION_TOKEN` (read from a
+running Vix Mix on 2026-11-11), which an XWayland window cannot use: there KWin ends the
+feedback itself when a window of the launched entry is activated, and it finds ours through
+`StartupWMClass`.
 
 ## A frame
 
@@ -489,7 +507,7 @@ with its toast; the host keeps the removed instances a little longer than the to
 
 `editors.rs`, Vix's `open_editor` and `EditorWindow` as the model: one winit window per open
 editor, which the plugin draws into itself (egui never does), titled "<plugin> · <strip> ·
-slot N".
+slot N" and named for the desktop as the console's window is ([The shell](#the-shell)).
 
 - **Open** (the gear, a double-click, Enter): a window is made hidden and fixed-size, its raw
   handle goes to `Host::open_editor`, and the window takes the size the plugin asks for and
@@ -716,6 +734,8 @@ gesture sent, and what is in view is what the last frame painted whole inside it
   test program run again as its child): for each of `SIGTERM`, `SIGINT` and `SIGHUP`, a
   process that took the signals and never closes says which one asked and lives on, and a
   second one ends it as that signal does.
+- `desktop.rs`: the desktop entry is found under the Wayland app id, its `StartupWMClass` is
+  the X11 class, its icon is the app id, and it says `StartupNotify=true`.
 
 **By hand** (a GPU and a desktop, so not in CI):
 
@@ -750,6 +770,11 @@ gesture sent, and what is in view is what the last frame painted whole inside it
   X11 and `kill -INT` on it running on Wayland each logged "SIGTERM (SIGINT) asked Vix Mix to
   close" and ended the process with 0. Not run: a signal with the real host and apps routed
   (handoff 09 item 10).
+- The window's names, the same day and machine with `--fake`: on X11 `xprop` read the
+  window's `WM_CLASS` as `"vix-mix", "vix-mix"` and, started with `DESKTOP_STARTUP_ID` set,
+  its `_NET_STARTUP_ID` as that token; with no X display KWin read the window's app id as
+  `org.chimaeraproject.vixmix` and its desktop entry as the same. Not run: the launch
+  feedback itself (handoff 09 item 9).
 - The capture command above writes the 1800 × 976 PNG, byte for byte the look gate's (again
   on the branch rebased onto lane 06's host, and at master before the DSP peak tick on
   2026-11-10, on the RTX 3090 under Vulkan; the reference was then retaken, § The capture).

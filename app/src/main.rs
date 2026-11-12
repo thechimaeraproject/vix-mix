@@ -9,8 +9,9 @@
 //! [`theme`]'s colours, sizes and fonts, with the prototype's [`icons`], the shared
 //! [`widgets`] and the [`meters`]' levels and peak-hold lines; [`shell`] the window's state
 //! between frames and what it does with a frame's gestures; [`editors`] the plugin editor
-//! windows; `signals` (Unix) the signals that ask the window to close; [`capture`] the look
-//! gate's offscreen frame.
+//! windows; [`desktop`] what the desktop knows a window by (its name, the launcher's
+//! activation token); `signals` (Unix) the signals that ask the window to close;
+//! [`capture`] the look gate's offscreen frame.
 //!
 //! The command line is for checks, not for users: `--fake` runs against `FakeHost` (prototype
 //! v5's example data and simulated meters) instead of the real host,
@@ -28,6 +29,7 @@ mod app;
 mod browser;
 mod capture;
 mod console;
+mod desktop;
 mod drag;
 mod editors;
 mod fader;

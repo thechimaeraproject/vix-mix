@@ -1,12 +1,14 @@
 # Vix Mix's desktop entry. Its file name is the AppStream id and the icon's name, so the
 # launcher, the software centre and the icon theme agree on one id. install.sh writes Exec and
 # TryExec as the absolute path of the vix-mix it installed or found, so the launcher starts it
-# whatever the session's PATH is; StartupWMClass is the X11 class winit gives the window (the
-# binary's name), which ties the running window to this entry in the task manager.
-# StartupNotify is left out on purpose: true would promise that the app ends the launch
-# feedback with the activation token (DESKTOP_STARTUP_ID, XDG_ACTIVATION_TOKEN), which it does
-# not read yet, and false would turn the feedback off even where StartupWMClass ends it. Left
-# out, the desktop decides; handoff 09 item 9 checks what Plasma does and names the fix.
+# whatever the session's PATH is. The app names its windows to match (app/src/desktop.rs, where
+# a test holds the two together): a Wayland window's app id is this file's name, and an X11
+# window's class is StartupWMClass, which ties the running window to this entry in the task
+# manager. StartupNotify=true says the app ends the launch feedback itself: its window is made
+# with the activation token the launcher hands it (DESKTOP_STARTUP_ID on X11,
+# XDG_ACTIVATION_TOKEN on Wayland). An XWayland window under a Wayland session is handed only
+# the Wayland token, which it cannot use; there the desktop ends the feedback when the window
+# of this class appears.
 [Desktop Entry]
 Type=Application
 Name=Vix Mix
@@ -19,4 +21,5 @@ Terminal=false
 Categories=AudioVideo;Audio;Mixer;
 Keywords=mixer;PipeWire;VST3;microphone;streaming;virtual microphone;Wave Link;
 StartupWMClass=vix-mix
+StartupNotify=true
 SingleMainWindow=true
