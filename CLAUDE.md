@@ -77,8 +77,10 @@ lifecycle are asserted headless against `FakeHost`; rebased onto lane 06's host,
 host's restore command, stars and Rescan plugins go to the host, a pass-through insert is
 marked on its slot, and the host is polled when it asks between frames. It owns no setup,
 audio or plugin (the host does); round 1 added telling an editor the size its window took and
-the model's bound on plugin folders (change request 10, applied 2026-11-10), and a frame for
-the meters alone is still left to it (handoff 09). Its CPU acceptance is met, read per machine as the main session ruled (0.16 to
+the model's bound on plugin folders (change request 10, applied 2026-11-10), closing in order
+when `SIGTERM`, `SIGINT` or `SIGHUP` asks, and its windows named for the desktop entry and
+made with the launcher's activation token (2026-11-11); a frame for the meters alone is still
+left to it (handoff 09). Its CPU acceptance is met, read per machine as the main session ruled (0.16 to
 0.46 %; of one core, 3.8 to 6.3 % in a release build). See
 [docs/reference/app.md](docs/reference/app.md) and
 [handoff 05](docs/handoffs/05-app.md).
@@ -144,9 +146,10 @@ See `docs/kit-audio-io.md`, `docs/kit-egui-audio.md` and
 told the size its window took and the plugin-folder bound in the model (11), Monitor's missing
 device named when only the Master source can tick (14), the Preferences Tab order (15), a DSP
 load read over a window with its peak (25), and the scan describing a bundle that must be
-loaded in a child process (26). Still open in round 1: issues 12, 13, 16, 17 and 18, the
-measured figures of handoff 09 items 1, 2 and 5, and the by-hand check on Fedora that each fix
-left in its item.
+loaded in a child process (26). A second batch (2026-11-11) fixed two more: a signal that asks
+the window to close runs the shutdown order (12), and the window's names and the launcher's
+activation token (18). Still open in round 1: issues 13, 16 and 17, the measured figures of
+handoff 09 items 1, 2 and 5, and the by-hand check on Fedora that each fix left in its item.
 
 ## Git workflow (read first)
 
