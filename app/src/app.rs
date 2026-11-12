@@ -35,6 +35,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::{Window, WindowId};
 
 use crate::Startup;
+use crate::desktop;
 use crate::editors::EditorWindows;
 use crate::gpu::Gpu;
 use crate::pacing::{Next, Pacer, VIEWPORT_CHECK, Wake, Wants};
@@ -189,6 +190,9 @@ impl ApplicationHandler<CloseAsked> for App {
 
 impl Running {
     fn new(event_loop: &ActiveEventLoop, startup: &Startup) -> Result<Running, String> {
+        // Before the host boots: its plugin scan starts child processes, which would inherit
+        // the launcher's token.
+        let launch = desktop::take_activation_token(event_loop);
         let host: Box<dyn Host> = if startup.fake {
             Box::new(FakeHost::new())
         } else {
@@ -212,6 +216,8 @@ impl Running {
             .with_theme(Some(winit::window::Theme::Dark))
             .with_inner_size(winit::dpi::LogicalSize::new(natural.x, natural.y))
             .with_min_inner_size(winit::dpi::LogicalSize::new(least.x, least.y));
+        // Named for the task manager, and made with the launcher's token: the launch is over.
+        let attributes = desktop::launched(desktop::named(attributes, event_loop), launch);
         let window = Arc::new(
             event_loop
                 .create_window(attributes)

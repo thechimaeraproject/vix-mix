@@ -73,6 +73,8 @@ impl Opener for ActiveEventLoop {
             .with_resizable(false)
             .with_visible(false)
             .with_inner_size(winit::dpi::PhysicalSize::new(size[0], size[1]));
+        // Named as the console's window is, so the task manager files it under Vix Mix.
+        let attributes = crate::desktop::named(attributes, self);
         let window = self.create_window(attributes).map_err(|e| e.to_string())?;
         Ok(Box::new(window))
     }
