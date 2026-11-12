@@ -345,7 +345,16 @@ rescan with `PluginsRescanned`, has no problems, and `next_poll` is
   `pw-record` of the Master source both hear it at the plugin's level; the plugin is moved
   while it plays (`set_param`) and Music follows; quitting at once clears the player's routing,
   it goes back to the default, and the quit's save takes the plugin's new state; the relaunch
-  gives the same setup with that state and the player back in Music, sounding as moved.
+  gives the same setup with that state and the player back in Music, sounding as moved. It
+  waits a second before that relaunch, for CI's PipeWire (the next test).
+  `a_mixer_started_again_at_once_takes_the_playing_app_back_into_its_channel`, on request
+  (`cargo test -p vixmix-host --test headless -- --ignored a_mixer_started_again`) because it
+  holds only on a current PipeWire — twenty times over, the host quits and boots again with
+  nothing in between while the player plays, and each new host has the player back in Music
+  and heard. It passes on PipeWire as Fedora 44 ships it and fails on PipeWire as Ubuntu 24.04
+  ships it, which CI runs, where a stream routed back within 20 ms of the quit is left linked
+  and silent ([handoff 09](../handoffs/09-round-1-fixes.md) item 3 has the measurements, and
+  why the quit does not wait for the apps it sent home).
   `a_new_quantum_keeps_the_app_in_its_channel_and_the_master_source_recording` — with the
   player in Music, a link made by hand into Music's sink and `pw-record` on the Master source,
   `SetPrefs` asks for 512: the host runs at 512, every node of ours keeps its `object.serial`
