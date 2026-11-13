@@ -150,9 +150,11 @@ loaded in a child process (26). A second batch (2026-11-11) fixed two more: a si
 the window to close runs the shutdown order (12), and the window's names and the launcher's
 activation token (18). Issue 13 was measured the same day and needs no change: a mixer
 started again the instant it quit takes a playing app back on the PipeWire Fedora ships, and
-where it breaks (Ubuntu 24.04's, which CI runs) the break is that PipeWire's. Still open in
-round 1: issues 16 and 17, the measured figures of handoff 09 items 1, 2 and 5, and the
-by-hand check on Fedora that each fix left in its item.
+where it breaks (Ubuntu 24.04's, which CI runs) the break is that PipeWire's. A third batch
+(2026-11-13) fixed what daily use found after the pass: the window's device asks wgpu for
+small memory blocks, so it holds 4 MiB of an NVIDIA card's 256 MiB CPU-visible window (BAR1)
+where it held 64 (37). Still open in round 1: issues 16 and 17, the measured figures of
+handoff 09 items 1, 2 and 5, and the by-hand check on Fedora that each fix left in its item.
 
 ## Git workflow (read first)
 

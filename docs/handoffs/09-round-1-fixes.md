@@ -1,7 +1,7 @@
 # 09 — Round 1 fixes
 
 **Record — in progress: the first pass ran on 2026-11-10 (handoff 08 step 4) and wrote the
-Goal; its fixes are steps 5 and 6.** The pass was hours of daily use on Inochi (Fedora KDE, the
+Goal; its fixes are steps 5 and 6, and step 7 fixes what daily use found on 2026-11-13.** The pass was hours of daily use on Inochi (Fedora KDE, the
 RPM built from commit `6c8bb3e`), not the cookbook step by step. This handoff also holds what
 the earlier lanes left open for it, each numbered under [Open going in](#open-going-in) with
 where it lives and what to check: one that held or was fixed is struck through with the date,
@@ -29,6 +29,17 @@ they were met:
    ([#25](https://github.com/thechimaeraproject/vix-mix/issues/25)). Did: one native plugin on a
    channel at a quantum of 256. Saw: the header's DSP figure alternating between about 12 % and
    0 %. Expected: a steady figure that still shows the expensive cycles. Step 6.
+
+Daily use after the pass found a third, on 2026-11-13:
+
+3. **The window holds 64 MiB of an NVIDIA card's 256 MiB CPU-visible window (BAR1)**
+   ([#37](https://github.com/thechimaeraproject/vix-mix/issues/37)). Did: left Vix Mix running, as it always is because all audio goes through it, on
+   an RTX 3090 without Resizable BAR, through a VR session. Saw: the window filled, the driver
+   refused the next mappings (`NVRM: dmaAllocMapping_GM107: can't alloc VA space for mapping`),
+   KWin's among them, and the desktop froze until a power-off. Vix Mix did not fill it alone (a
+   Chromium-based app's burst went over the top), but it was the largest steady holder: one
+   64 MiB mapping kept for its whole run, of about 97 MiB used on the idle desktop. Expected: a
+   window that draws a few thousand vertices a frame to hold a few megabytes. Step 7.
 
 What the user saw hold in that pass is struck through below (items 6, 8, 11 and 12). The pass
 measured nothing: the figures of items 1, 2 and 5 are still to take. Going in, the goal was the
@@ -73,7 +84,7 @@ here.
    on 2026-11-10 and stay open (items 1, 2 and 5).
 4. **Write the steps**: one per finding, naming the crate and its reference; an item below that
    held is struck through with the date, one that did not becomes a step. Steps 5 and 6 are
-   the two findings.
+   the pass's two findings; step 7 is the one daily use found after it.
 5. **Describe a bundle that must be loaded in a child process**
    ([#26](https://github.com/thechimaeraproject/vix-mix/issues/26)): `vixmix-plugins` with
    [reference/plugins.md](../reference/plugins.md) § Scanning and the cache, the host's boot
@@ -98,6 +109,19 @@ here.
    over its budget. The look gate's reference capture was retaken for the tick
    ([reference/app.md](../reference/app.md) § The capture). Still to do by hand on Fedora: the
    plugin that showed it, at a quantum of 256, reads a steady figure.
+7. **A device that asks for small memory blocks**
+   ([#37](https://github.com/thechimaeraproject/vix-mix/issues/37)): the window in `app/` ([reference/app.md](../reference/app.md) § The shell). wgpu
+   takes GPU memory in blocks, and its default hint reserves a 64 MiB one for memory the CPU
+   writes, which on an NVIDIA card without Resizable BAR comes out of BAR1 and stays mapped
+   while the mixer runs. Built 2026-11-13: `gpu::device_descriptor` asks for
+   `MemoryHints::MemoryUsage` (4 MiB and 8 MiB blocks), the window and the capture both make
+   their device from it, and a test reads what the allocator reserved after one upload the
+   size of a frame's (12 MiB on the RTX 3090, 192 MiB with the default hint). Measured that
+   day on Inochi with `--fake`: the largest `/dev/nvidia0` mapping 64 MiB on the installed
+   build and 4 MiB on the fix, video memory 221 MiB and 41 MiB, and the look gate's capture
+   byte for byte the reference. Still to do by hand on Fedora: with the fixed RPM installed
+   and running as the mixer, the issue's two commands show a 4 MiB mapping and BAR1 about
+   60 MiB lower on the idle desktop.
 
 ## Open going in
 
