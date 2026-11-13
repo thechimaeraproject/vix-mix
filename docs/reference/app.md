@@ -44,7 +44,7 @@ close. Its tests also take `vixmix-plugins`, because their
 | `meters.rs` | the model's taper as the kit's `Taper`, a linear peak read on it, the console's bars (the kit's `PeakHold`) by channel and mix, the hold's timings |
 | `icons.rs` | prototype v5's SVG icons, read once and followed with egui's painter, stroked or filled |
 | `theme.rs` | the look as constants: colours, gradient, sizes (`size`, `pop`), fonts and their sizes |
-| `gpu.rs` | the surface, and the one paint path: `upload` (egui's textures) and `encode` (egui's frame into a target) |
+| `gpu.rs` | the surface, the device the window and the capture both ask for (`device_descriptor`), and the one paint path: `upload` (egui's textures) and `encode` (egui's frame into a target) |
 | `capture.rs` | `--dump-png`: one frame offscreen, read back, written as a PNG |
 | `test_support.rs` | tests only: the headless `Harness`, the `Recorder` host (which can open editors and answer `tick_editors`), and `FakeWindows`, editor windows with no event loop |
 | `acceptance.rs` | tests only: every gesture the handoff lists, with the command it sends |
@@ -67,6 +67,19 @@ for tens of milliseconds behind Windows' compositor) and the egui renderer, clea
 and the frame skipped. Its `upload` and `encode` are shared with the capture, so the PNG is
 drawn exactly as the window draws. Every GPU failure says what to do (update the driver, or
 set `WGPU_BACKEND` to another backend).
+
+The device asks wgpu for small memory blocks (`device_descriptor`, `MemoryHints::MemoryUsage`;
+the capture's device is the same). wgpu takes GPU memory from the driver in blocks and hands
+out pieces of them, and its default hint is sized for games: a 64 MiB block for memory the
+CPU writes and a 128 MiB one for memory only the card touches. On an NVIDIA card without
+Resizable BAR the first comes out of a 256 MiB window every program on the desktop shares
+(BAR1) and stays mapped for as long as the mixer runs; when that window is full the driver
+refuses the next mapping, the compositor's included
+([#37](https://github.com/thechimaeraproject/vix-mix/issues/37)). With the hint the blocks
+are 4 MiB and 8 MiB, the allocator adding more only when one fills, and a frame of the
+console is a few hundred kilobytes. Measured on the RTX 3090 under Vulkan on 2026-11-13 with
+`--fake`: the window's largest `/dev/nvidia0` mapping 64 MiB before and 4 MiB after, its
+video memory 221 MiB before and 41 MiB after.
 
 **The window's size.** It opens at the console's natural size (`ui::natural_size`: 900 × 488
 for the example, 370 × 488 for a first start's one channel), and the console fills whatever
@@ -730,6 +743,10 @@ gesture sent, and what is in view is what the last frame painted whole inside it
   faint; MON and MST light when the chain feeds that mix; previewing Master tags Monitor.
 - `capture.rs`: read-back rows lose their padding; the PNG holds the pixels as drawn; an
   unwritable path says what to check.
+- `gpu.rs`: a device from `device_descriptor`, after one upload the size of a frame's, has
+  reserved megabytes of the card (12 MiB on the RTX 3090; under 32 MiB is the bound) where
+  wgpu's default reserves 192 MiB; the test runs where there is a GPU adapter whose backend
+  reports what its allocator reserved, and says so where it skips (CI's Linux leg has no GPU).
 - `signals.rs` (Unix), in a process of its own because signals are the whole process's (the
   test program run again as its child): for each of `SIGTERM`, `SIGINT` and `SIGHUP`, a
   process that took the signals and never closes says which one asked and lives on, and a
