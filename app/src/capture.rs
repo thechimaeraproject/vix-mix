@@ -102,11 +102,9 @@ fn render(
     .map_err(|e| {
         format!("no GPU adapter to draw the frame on ({e}); run it where a GPU driver is installed, or set WGPU_BACKEND to one this machine has")
     })?;
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("vix-mix capture"),
-        ..Default::default()
-    }))
-    .map_err(|e| format!("the adapter refused a device ({e}); {}", gpu::DRIVER_FIX))?;
+    let (device, queue) =
+        pollster::block_on(adapter.request_device(&gpu::device_descriptor("vix-mix capture")))
+            .map_err(|e| format!("the adapter refused a device ({e}); {}", gpu::DRIVER_FIX))?;
     let info = adapter.get_info();
     log::info!("capture adapter: {} ({:?})", info.name, info.backend);
 

@@ -1,7 +1,8 @@
 //! The window's surface and the egui renderer: the only wgpu the app owns. Vix's
 //! `app/src/gpu.rs` without the preview textures. [`upload`] and [`encode`] are the one paint
 //! path: the window draws through them into its surface, and `--dump-png`
-//! ([`crate::capture`]) into a texture it reads back.
+//! ([`crate::capture`]) into a texture it reads back. Both make their device from
+//! [`device_descriptor`], which asks for small memory blocks.
 //!
 //! **Colour.** The surface is a non-sRGB format, which egui-wgpu prefers: it writes
 //! gamma-encoded values straight into the framebuffer, so the clear colour is the theme's
@@ -42,11 +43,9 @@ impl Gpu {
             ..Default::default()
         }))
         .map_err(|e| format!("no GPU adapter can present to the window ({e}); {DRIVER_FIX}"))?;
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("vix-mix"),
-            ..Default::default()
-        }))
-        .map_err(|e| format!("the adapter refused a device ({e}); {DRIVER_FIX}"))?;
+        let (device, queue) =
+            pollster::block_on(adapter.request_device(&device_descriptor("vix-mix")))
+                .map_err(|e| format!("the adapter refused a device ({e}); {DRIVER_FIX}"))?;
 
         let caps = surface.get_capabilities(&adapter);
         let format = egui_wgpu::preferred_framebuffer_format(&caps.formats)
@@ -178,6 +177,25 @@ impl Gpu {
     }
 }
 
+/// The device the window and the capture both ask for: wgpu's defaults, with small memory
+/// blocks.
+///
+/// wgpu takes GPU memory from the driver in blocks and hands out pieces of them. Its default
+/// hint is sized for games: a 64 MiB block for memory the CPU writes and a 128 MiB one for
+/// memory only the card touches. On an NVIDIA card without Resizable BAR the first of those
+/// comes out of a 256 MiB window that every program on the desktop shares (BAR1), and it stays
+/// mapped for as long as the device lives, which for a mixer is the whole session. When that
+/// window is full the driver refuses the next mapping, the compositor's included. A frame of
+/// this console is a few hundred kilobytes, so the device asks for the small blocks instead:
+/// 4 MiB and 8 MiB, the allocator adding more only when one fills.
+pub fn device_descriptor(label: &'static str) -> wgpu::DeviceDescriptor<'static> {
+    wgpu::DeviceDescriptor {
+        label: Some(label),
+        memory_hints: wgpu::MemoryHints::MemoryUsage,
+        ..Default::default()
+    }
+}
+
 /// `colour` (sRGB bytes) as the clear colour of a non-sRGB target: the bytes as written.
 pub fn clear_colour(colour: egui::Color32) -> wgpu::Color {
     let [r, g, b, _] = colour.to_array();
@@ -240,4 +258,66 @@ pub fn encode(
     let mut pass = pass.forget_lifetime();
     egui.render(&mut pass, paint_jobs, screen);
     user_buffers
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MIB: u64 = 1024 * 1024;
+
+    /// Under the smallest block wgpu's default hint takes (64 MiB, for memory the CPU
+    /// writes), and over what the small blocks come to here (4 MiB and 8 MiB).
+    const RESERVED_AT_MOST: u64 = 32 * MIB;
+
+    #[test]
+    fn a_frames_upload_reserves_megabytes_of_the_card_not_a_games_blocks() {
+        let instance =
+            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        let Ok(adapter) =
+            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+        else {
+            eprintln!("skipped: no GPU adapter on this machine, so there is no device to measure");
+            return;
+        };
+        let info = adapter.get_info();
+        let (device, queue) =
+            pollster::block_on(adapter.request_device(&device_descriptor("vix-mix test")))
+                .expect("the adapter gives a device");
+
+        // What a frame of egui does: bytes the CPU wrote, copied into a buffer on the card.
+        let bytes = vec![0u8; 64 * 1024];
+        let vertices = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("vix-mix test vertices"),
+            size: bytes.len() as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&vertices, 0, &bytes);
+        queue.submit([]);
+
+        let Some(report) = device.generate_allocator_report() else {
+            eprintln!(
+                "skipped: {} ({:?}) does not report what its allocator reserved",
+                info.name, info.backend
+            );
+            return;
+        };
+        eprintln!(
+            "{} ({:?}) reserved {} KiB in {} blocks",
+            info.name,
+            info.backend,
+            report.total_reserved_bytes / 1024,
+            report.blocks.len()
+        );
+        assert!(
+            report.total_reserved_bytes <= RESERVED_AT_MOST,
+            "one 64 KiB upload reserved {} MiB of the card on {} ({:?}); `device_descriptor` \
+             asks for small blocks with `MemoryHints::MemoryUsage`, and without that hint the \
+             first block alone is 64 MiB",
+            report.total_reserved_bytes / MIB,
+            info.name,
+            info.backend
+        );
+    }
 }
