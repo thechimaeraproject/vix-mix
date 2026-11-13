@@ -44,7 +44,8 @@ Then wave 3: [06 — Host and integration](handoffs/06-host-and-integration.md),
 [08 — Packaging and the first real test](handoffs/08-packaging-and-first-real-test.md), shipped
 2026-11-04 (see Built); its step 4, the by-hand pass, ran on 2026-11-10 as hours of daily use
 on Fedora KDE and fills [09 — Round 1 fixes](handoffs/09-round-1-fixes.md), which holds its two
-findings beside the fifteen items the earlier lanes left open for it.
+findings beside the fifteen items the earlier lanes left open for it, and a third finding
+that daily use made after the pass.
 
 Round 1 is tracked as issues on the repository, one per item that is a fix and one for the pass
 itself; an issue closes when its item is struck through in handoff 09.
@@ -54,6 +55,7 @@ itself; an issue closes when its item is struck through in handoff 09.
 | [#19](https://github.com/thechimaeraproject/vix-mix/issues/19) | the first real test on Fedora KDE: the by-hand pass, its figures and checks (the umbrella); closed 2026-11-10, the pass ran | items 6, 8, 11 and 12 struck; the figures of items 1, 2 and 5 not measured, open without an issue |
 | [#26](https://github.com/thechimaeraproject/vix-mix/issues/26) | found by the pass: a plugin that aborts while loading takes the scan and Vix Mix down; fixed and closed 2026-11-10 | the Goal's first finding, step 5, built |
 | [#25](https://github.com/thechimaeraproject/vix-mix/issues/25) | found by the pass: the DSP readout flickers between about 12 % and 0 %; fixed and closed 2026-11-10 | the Goal's second finding, step 6, built |
+| [#37](https://github.com/thechimaeraproject/vix-mix/issues/37) | found in daily use after the pass: the window holds 64 MiB of an NVIDIA card's 256 MiB CPU-visible window (BAR1), where 4 MiB does; fixed 2026-11-13 | the Goal's third finding, step 7, built |
 | [#11](https://github.com/thechimaeraproject/vix-mix/issues/11) | a plugin editor's window resizes without telling the plugin; the plugin-folder bound (change request 10); fixed and closed 2026-11-10 | item 14, struck |
 | [#12](https://github.com/thechimaeraproject/vix-mix/issues/12) | SIGTERM and logout skip the shutdown order; fixed and closed 2026-11-11 | item 10, struck |
 | [#13](https://github.com/thechimaeraproject/vix-mix/issues/13) | Vix Mix restarted within milliseconds of quitting can leave a playing app routed but silent; measured 2026-11-11: it holds on a current PipeWire and is the older one's own on Ubuntu 24.04, not worked around | item 3, struck |
