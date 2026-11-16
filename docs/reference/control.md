@@ -15,6 +15,7 @@ host, no window and no audio.
 | the request line and its verbs; the addresses and what each reads; the value's text; the protocol's number | the model: what a command means and when it is refused ([model.md](model.md) § Commands); a refusal is passed on word for word |
 | which commands a request can send, and that it sends no other | the host: applying a command, the save, the engine, the backend ([host.md](host.md)) |
 | the table of every address with its value, and the changes between two tables | the window: every gesture, the toasts and undo, and everything that adds, removes, moves or renames ([app.md](app.md)) |
+| the clients, what each follows, the bounded queues between their threads and the mixer's thread, and that nothing waits on a client | whoever owns the mixer: when the requests are served and when the followers are told |
 
 ## A request
 
@@ -164,6 +165,53 @@ meaning; a new address or a new verb keeps it. `OK` (`ok`) ends an answer that w
 out, `ERROR` (`error: `) begins the line that ends one that was not, and `EVENT` (`event `)
 begins a line that tells a follower of a change.
 
+## The service
+
+`service(wake) -> (Service, Connector)` makes the two sides of the conversation.
+
+**The `Connector`** brings clients in; it is `Send`, `Sync` and cheap to clone, for the
+threads of a transport or for a test. `open()` gives a `Client { requests, answers }`, or
+`Err(Full)` when `MAX_CLIENTS` (8) are connected, in which case the service never hears of
+it and `Full::line()` is the one line to send before closing. `Requests::send(line)` queues
+one request line and blocks while `INBOX` (256) requests wait, which slows only that client's
+own thread; it answers `false` once the service is gone. A line over `MAX_LINE` (4096) bytes
+is not queued: the client is told and dropped. Dropping `Requests` tells the service the
+client went. `answers` is a `Receiver<String>` of messages, each whole lines ending in a
+line end; it ends when the service dropped the client or is gone, which is when to close the
+connection.
+
+**The `Service`** belongs to the thread that owns the mixer and is driven by two calls:
+
+- **`serve(budget, &mut dyn Target) -> Served`** carries out what waits, at most `budget`
+  of it (`SERVE_BUDGET`, 64, is the usual one). A client that came is greeted with
+  `greeting()`. Each request line is answered with one message: its `address value` lines
+  and then exactly one `ok` or `error: …`; a blank line is not answered. `Target` is the
+  mixer as a request needs it, `setup()` and `apply(Command)`; the commands of a write are
+  applied in order and stop at the first the model refuses, whose words are the error. A
+  write answers with what it changed as it reads now, so a linked fader's other send comes
+  with the one that was set, and a write to what already is answers `ok` alone.
+  `Served { requests, changed }` says how many lines were answered and whether any command
+  changed the setup.
+- **`publish(&Setup)`** tells the followers what changed since they were last told: for each
+  client, the changes at or under what it follows, as `event address value` lines in one
+  message. Something that went is told as `event address gone` to whoever follows it, a
+  place above it, or an address under it. With no follower it does nothing
+  (`followed()`). The first follower starts from the setup as it stands when it asks; a
+  later one does not disturb what the earlier ones are still owed.
+
+A client that asks is always answered before it is told: its answer is sent in `serve`, and
+the event for its own change only at the next `publish`.
+
+`watch` answers with the values there now and then `ok`. A client follows at most
+`MAX_WATCHES` (32) addresses, and one more is refused with the way out: follow a place above
+them. An address followed twice is followed once. `unwatch` always answers `ok`.
+
+**Nothing waits on a client.** Each has an outbox of `OUTBOX` (64) messages, an answer or
+one change's events being one message whatever its length. When a client's outbox is full
+the service drops that client, logs why, and serves the others. **One wake however many
+requests**: the connector calls `wake` only when it queues something while no wake was
+owed, and a `serve` that stops at its budget asks for one more.
+
 ## Verification
 
 `cargo test -p vixmix-control`, on every platform:
@@ -181,6 +229,22 @@ begins a line that tells a follower of a change.
   property over 256 runs of up to 23 lines, well formed or not, written by id, by name and
   by slot: every command sent is one of the eight, and the changes each run of commands
   made are never a `Gone` and never to a read-only address.
+- **`service`**, against the model alone as the target: a client is greeted and each of
+  eleven requests, good and bad, ends in exactly one `ok` or `error:` with no event inside;
+  a read prints the values and a write what it changed, a linked fader's two sends among
+  them, and a write to what already is says `ok` alone; a request applies its commands and
+  says whether the setup changed; a refused request changes nothing and ends with what to
+  send instead, the model's refusal word for word; a follower hears a change another client
+  made and one made past every client, only under what it follows, nothing when nothing
+  changed and nothing once it unfollowed; a follower that makes a change is answered first
+  and told after; a second follower does not take a change owed to the first; a channel
+  removed is `gone` to who follows it, a place above it or a value under it, and its values
+  come back when it is restored; a client that does not read is dropped at its sixty-fifth
+  unread message and the others are served; a ninth connection is refused until one closes;
+  a flood of requests wakes once and a drain stops at its budget and asks for one more
+  wake; a line past the limit is refused and its connection closed, one of exactly the
+  limit is a request; the thirty-third address followed is refused with the way out; a
+  client that went is forgotten, and a service that went stops its clients.
 - **`request`**: a line read into its verb, address and value, an address alone and an
   address with a value read as OSC writes them, a blank line no request; every line that is
   no request says what one is; each switch and fader sends the command its control sends; a
