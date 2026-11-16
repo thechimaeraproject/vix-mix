@@ -28,3 +28,5 @@ doc it names.
   entry and metainfo, an install path, Flatpak investigated, the first real test on Fedora.
 - [09-round-1-fixes.md](09-round-1-fixes.md) — what the first by-hand pass on Fedora finds,
   fixed; seeded with the items the earlier lanes left open for it.
+- [10-control-socket.md](10-control-socket.md) — `vixmix-control`: other programs read, change
+  and follow the console through a Unix socket that speaks address lines; `vix-mix ctl`.

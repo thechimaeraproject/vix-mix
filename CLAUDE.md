@@ -13,7 +13,7 @@ through winit for the window, and the chimaeraproject kit's Rust crates
 [Vix](https://github.com/thechimaeraproject/Vix). The kit's shared crates own no thread model,
 no window toolkit and no audio graph; those three are this repository's.
 
-**The plan of record is [docs/build-map.md](docs/build-map.md)**: nine lanes, each with a
+**The plan of record is [docs/build-map.md](docs/build-map.md)**: every lane, each with a
 self-contained handoff in [docs/handoffs/](docs/handoffs/README.md), the conflict rules, and the
 change requests to the shared contracts. **Read [docs/charter.md](docs/charter.md) before making
 a design decision here** — the settled decisions with their reasons, what was rejected, what is
