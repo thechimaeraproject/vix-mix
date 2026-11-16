@@ -16,6 +16,7 @@ host, no window and no audio.
 | which commands a request can send, and that it sends no other | the host: applying a command, the save, the engine, the backend ([host.md](host.md)) |
 | the table of every address with its value, and the changes between two tables | the window: every gesture, the toasts and undo, and everything that adds, removes, moves or renames ([app.md](app.md)) |
 | the clients, what each follows, the bounded queues between their threads and the mixer's thread, and that nothing waits on a client | whoever owns the mixer: when the requests are served and when the followers are told |
+| on Unix, the socket: where it is, the lock that gives it to one mixer, its threads; and the client at its other end | the app: which profile's socket to open, what to say when it cannot be, and the `ctl` command ([app.md](app.md)) |
 
 ## A request
 
@@ -212,6 +213,71 @@ the service drops that client, logs why, and serves the others. **One wake howev
 requests**: the connector calls `wake` only when it queues something while no wake was
 owed, and a `serve` that stops at its budget asks for one more.
 
+## The socket
+
+Unix only (`cfg(unix)`); on any other platform the crate has the protocol and the service
+and no transport.
+
+**Where.** `socket_path(explicit, runtime_dir, profile)` is the path of the mixer that runs
+under a configuration profile ([model.md](model.md) § Persistence):
+
+| | Path |
+|---|---|
+| `VIXMIX_CONTROL_SOCKET` (`SOCKET_ENV`) is set | that path, as it is |
+| the profile `default`: the installed mixer | `$XDG_RUNTIME_DIR/vix-mix/control.sock` |
+| any other profile (`dev` for a debug build) | `$XDG_RUNTIME_DIR/vix-mix/control-<profile>.sock`, the name made one word by `slug` |
+
+A blank variable is an unset one. With neither set it is refused, saying to start Vix Mix
+from a desktop session or to set the variable. `socket_path_from_env(profile)` reads this
+process's environment; the mixer and its `ctl` command both call it, so they agree.
+
+**Who.** `Listener::open(path, connector)` listens and brings every connection to the
+connector's service. One mixer holds a socket: `open` takes a lock (`File::try_lock`) on
+the file beside it with the extension `lock`, and keeps it while it listens; the kernel lets
+it go when the process ends, however it ends. A second mixer is refused with
+`ListenError::Held`, which says that this one runs without the socket and to close one of
+the two, and nothing of the first is touched. Only the holder of the lock removes what is at
+the path, so a socket file a dead mixer left is replaced. A path too long to be a socket's
+is `ListenError::TooLong`, found before anything is made; anything else that fails is
+`ListenError::Io` with what was being done.
+
+**Whose.** The directory is made, with every directory above it that is missing, as the
+user's alone (0700); one that is already there is left as it is. The socket is made 0600.
+Any program of the same user may connect and nobody else's; nothing listens on the network.
+
+**Threads.** One accepts (`vix-mix-control`). Each connection has one that reads its lines
+into the service (`vix-mix-control-in`) and one that writes what the service sends
+(`vix-mix-control-out`); none of them touches the mixer. A line is read without its line end
+(`\n` or `\r\n`), bytes that are not UTF-8 replaced; one longer than `MAX_LINE` is cut just
+past the limit and never read whole, which is enough for the service to refuse it. A ninth
+connection is sent `Full::line()` and closed.
+
+**How a connection ends.** When the client closes its sending side, the service answers
+everything it was sent and lets the client go, the writer writes what was queued and closes
+the connection: a client that sends its requests and then says it is done reads every answer
+and then the end. When the service drops a client, the same. When a write has not gone
+through in `WRITE_TIMEOUT` (2 s), the connection is closed. When the `Listener` is dropped,
+it stops accepting, closes every connection and removes the socket file; the lock goes with
+it.
+
+## The client
+
+`Session::connect(path, patience)` connects and reads the greeting; `patience` is how long
+to wait for each line, `None` for as long as it takes. It fails as `ClientError::NoMixer`
+when nothing answers at the path (start Vix Mix), `Refused` with the mixer's own words when
+the connection was answered with a refusal (the ninth), `NotAMixer` when what answers does
+not greet as a mixer, `Silent` when a line did not come within the patience (a plugin scan
+holds the mixer's window), and `Closed` when the mixer closed before it answered.
+`protocol()` is the number the mixer said, to compare with `PROTOCOL`.
+
+`ask(line) -> Answer { lines, events, error }` sends one request and reads to the line that
+ends its answer: `lines` are the answer's, `error` the message of an `error:` line, and
+`events` any event that arrived on the way, without its prefix, so a follower's news is not
+lost to a request on the same connection. `send(line)` and `line()` are the two halves for
+a caller that reads as it goes (`line()` is `None` at the end of the connection);
+`finish()` closes the sending side, after which reading gives every answer and then the
+end. `sender()` is the sending side for a second thread.
+
 ## Verification
 
 `cargo test -p vixmix-control`, on every platform:
@@ -229,6 +295,30 @@ owed, and a `serve` that stops at its budget asks for one more.
   property over 256 runs of up to 23 lines, well formed or not, written by id, by name and
   by slot: every command sent is one of the eight, and the changes each run of commands
   made are never a `Gone` and never to a read-only address.
+- **`tests/socket.rs`**, on Unix, over a real socket in a short path under the system's
+  temporary directory (a socket's path holds about a hundred bytes, which Cargo's own
+  temporary directory exceeds), with the model served on a thread as the app serves its
+  host; it needs no display and no PipeWire, and removes what it made.
+  `a_request_over_the_socket_is_answered_and_a_follower_is_told_what_another_changed`: the
+  greeting's number, a read, a follower told of another connection's toggle, a refusal as
+  the answer's error, and an event that came before an answer kept in `events`.
+  `a_second_mixer_leaves_a_running_mixers_socket_alone_and_a_dead_mixers_file_is_replaced`:
+  `Held` with its words while the first still answers, the file gone with the first
+  listener, and a socket file with no lock held replaced.
+  `the_directory_it_makes_and_the_socket_are_the_users_alone`: 0700 and 0600.
+  `a_path_too_long_for_a_socket_is_refused_before_anything_is_made`.
+  `a_ninth_connection_is_told_why_and_one_that_leaves_makes_room`.
+  `nothing_at_the_path_is_no_mixer_and_says_to_start_it`.
+  `a_client_that_says_it_is_done_is_answered_first_and_then_closed`: three requests and the
+  end of the sending side before anything is read give three answers and then the end.
+  `a_line_past_the_limit_is_refused_and_its_connection_closed`, the mixer serving on.
+  `a_listener_that_goes_closes_its_connections`.
+  A write that times out on a client that reads nothing is not tested over the socket; the
+  drop of a client that does not read is, in `service`.
+- **`socket`**: the path under the runtime directory for the default profile, a debug build
+  and a profile of two words, the variable winning, a blank variable unset, and no runtime
+  directory refused with both ways on; a line read without either line end, a stream that
+  ends mid-line, and a megabyte without a line end cut just past the limit.
 - **`service`**, against the model alone as the target: a client is greeted and each of
   eleven requests, good and bad, ends in exactly one `ok` or `error:` with no event inside;
   a read prints the values and a write what it changed, a linked fader's two sends among
