@@ -11,7 +11,9 @@ one `Host` (`RealHost`, or `FakeHost` with `--fake`) and owns nothing the host c
 setup, no audio, no plugin. Every gesture becomes a `Command` the host applies; the window
 draws the setup the host holds, every frame.
 
-It depends on `vixmix-host` and `vixmix-model`; on the kit's `chimaeraproject-egui-audio` for
+It depends on `vixmix-host` and `vixmix-model`; on `vixmix-control` for the control from
+outside ([control.md](control.md); [The control socket](#the-control-socket)); on the kit's
+`chimaeraproject-egui-audio` for
 the meter fader, its scale, peak hold and the taper trait the meters read through
 ([kit-egui-audio.md](../kit-egui-audio.md)); on the kit's `chimaeraproject-vst3-host` only to
 name the `EditorEvent` and `EditorSize` that `Host::tick_editors` and `Host::open_editor` hand
@@ -25,8 +27,9 @@ close. Its tests also take `vixmix-plugins`, because their
 | File | What it is |
 |---|---|
 | `main.rs` | the command line, the event loop (X11 on Linux), or the capture, or the plugin scan's child (`--scan-bundle`); how the real host scans (`plugin_scan`) |
-| `app.rs` | the winit `ApplicationHandler`: the host and its polls, the window, the editor windows, one frame (or, hidden, one tick without a frame) at a time, what the window's events say of whether it can be seen, egui's viewport facts, the window's least size |
-| `pacing.rs` | when the next frame comes (`Pacer`, `pacing::plan`): the 60 Hz grid, input under the same cap, a refused frame's slot, the hidden window's ticks, the host's own polls between frames |
+| `app.rs` | the winit `ApplicationHandler`: the host and its polls, the window, the editor windows, one frame (or, hidden, one tick without a frame) at a time, the loop's own events (`Asked`: close, or a control request waiting), what the window's events say of whether it can be seen, egui's viewport facts, the window's least size |
+| `pacing.rs` | when the next frame comes (`Pacer`, `pacing::plan`): the 60 Hz grid, input under the same cap, a refused frame's slot, the hidden window's ticks, the host's own polls between frames, the poll after a change from outside (`serve_soon`) |
+| `control.rs` | the control socket in the window (`Control`): which profile's socket is opened, the requests served against the host, the window's one poll of the host (`control::poll`), which tells the socket's followers |
 | `shell.rs` | the window's state between frames (`Shell`), what it takes from the host's events (`Shell::events`) and what it does with a frame's `Intent`s: commands applied, refusals to the toast line, popovers opened and closed, Undo, stars and a rescan through the host, editors queued and then opened (`open_editors`) |
 | `ui.rs` | what a frame draws and senses: the header and its display, the banner, the console, the open popover, the toast line |
 | `console.rs` | the console row filling the window (`Geometry`): where each strip goes, the mixes pinned at the right, the channels' sideways scroll and what scrolls it (the wheel, the bar, a channel added, the focus, an insert dragged to an edge), the rects a popover hangs from and a drag lands in (what shows of them), the insert drag resolved after the last strip |
@@ -60,7 +63,10 @@ timer wakes either ([Pacing](#pacing)). Events for an editor's window go to its 
 ([Editor windows](#editor-windows)). On `CloseRequested` it exits, and so it does when a
 signal asks (below); on `exiting` every editor closes
 through the host (`Running::close_editors`, one call a shutdown order can place), then the
-host goes (its instances after their editors), then the window.
+control socket closes, so no request is taken for a host that is going, then the
+host goes (its instances after their editors), then the window. The loop has two events of
+its own, `Asked::Close` (a signal, below) and `Asked::Control` (a request waiting on the
+control socket, [The control socket](#the-control-socket)).
 `gpu.rs` is the surface (a non-sRGB format, as egui-wgpu prefers; mailbox present where the
 surface offers it, FIFO otherwise, because the window paces itself and FIFO's acquire stalled
 for tens of milliseconds behind Windows' compositor) and the egui renderer, cleared to the window colour (`#131416`); a lost or outdated surface is reconfigured
@@ -103,7 +109,7 @@ a logout, systemd stopping the session), `SIGINT` (Ctrl+C in the terminal that s
 `SIGHUP` (that terminal closed) each end a process where it stands, which skipped the host's
 shutdown: the apps it routed stayed on sinks that were gone, and a change younger than the
 autosave was lost. `main` takes the three before the loop runs. A thread of their own
-(`vix-mix-signals`) sends the loop its one event of ours, `CloseAsked`, with the signal's
+(`vix-mix-signals`) sends the loop `Asked::Close` with the signal's
 name; the window logs who asked and exits as it does on `CloseRequested`, so `exiting` runs
 the same order and the process ends with 0. A signal that arrives while the host boots is
 served once it has. A second signal, while the close has not ended the process, does what the
@@ -131,8 +137,9 @@ feedback itself when a window of the launched entry is activated, and it finds o
 ## A frame
 
 `Running::frame`, while the window can be seen ([Pacing](#pacing)), in order: the host's
-events (`Shell::events`: the backend's state, a toast, a removal with its Undo, a finished
-rescan, an editor the host closed); the host's
+events (polled through `control::poll`, which tells the control socket's followers when the
+setup changed; then `Shell::events`: the backend's state, a toast, a removal with its Undo, a
+finished rescan, an editor the host closed); the host's
 meters into the window's `Meters`; the open editors served (`EditorWindows::tick`); then egui
 runs `ui::draw`, which reads the host and the shell and returns the frame's `Intent`s;
 `Shell::dispatch` carries them out against the host; the editors it queued open in windows of
@@ -212,7 +219,47 @@ without one (the hidden window's tick, or the host's own poll).
   (so a host that asks at once cannot spin the loop), with no frame unless it brought news,
   and then a frame as soon as the 60 Hz cap allows. A poll never puts off a frame that is due.
   `FakeHost` asks for none: its meters are live, so its frames poll it.
+- **A change from outside** (a control request that changed the setup,
+  [The control socket](#the-control-socket)): seen, it asks for a frame as input does, under
+  the same cap. Hidden, `Pacer::serve_soon` has the host served without a frame as soon as
+  the cap allows, a serve already due sooner keeping its time; the hidden window is
+  otherwise waiting for nothing, and the host's poll is what tells the socket's followers
+  and makes the save due.
 - With no backend, no editor, nothing to animate and nothing the host waits for, it is idle.
+
+## The control socket
+
+`control.rs` is the control from outside as the window runs it; the protocol, the clients
+and the socket itself are `vixmix-control`'s ([control.md](control.md)).
+
+**Opened** in `resumed`, once the host has booted, by `Control::open(profile, wake)`: the
+socket of this run's profile (`control::profile_name`: the configuration profile's name, so
+the installed mixer and a debug build each have their own, and `fake` for `--fake`, whose
+example console never takes the socket of a mixer that plays). `wake` sends the loop
+`Asked::Control` from the socket's threads, once however many requests wait. When the socket
+cannot be opened the window runs the same without it, and the reason goes to the log and to
+the toast line, because it says what to do: another Vix Mix holds it (close one of the two),
+or the session has no runtime directory. On a platform without Unix sockets there is none
+and nothing is said.
+
+**Served** on `Asked::Control`, with no frame: `Control::serve` answers the requests that
+wait, at most 64 a wake, against the host. A request is applied with `Host::apply` and
+nothing else. It shows no toast: a refusal is the client's to read, on the line that ends its
+answer. It has no undo, as a fader moved in the window has none, and it can remove nothing
+([control.md](control.md) § What a write sends), so no editor closes for it.
+
+**A change** (`Served::changed`) asks for a frame, which draws it and polls the host; while
+the window is hidden it asks for a poll alone ([Pacing](#pacing)). A request that only reads
+or follows asks for nothing.
+
+**Told.** `control::poll(host, control)` is the one place the window polls its host: every
+frame, every tick between frames and every hidden tick goes through it. When the poll
+reports `HostEvent::SetupChanged` it has the service publish, so a follower hears a change
+whoever made it: another controller, or a gesture in the window. A client is answered when
+its request is served and told at the poll after, so its answer comes first.
+
+**Closed** on `exiting`, after the editors and before the host: the socket file is removed
+and every connection ends.
 
 ## The command line
 
@@ -727,7 +774,20 @@ gesture sent, and what is in view is what the last frame painted whole inside it
   and egui or an act wakes it no faster than 60 Hz; input draws as soon as the cap allows;
   an idle window serves the host when it asks and draws only for news, a host that asks at
   once waiting an interval; a poll never puts off a frame, and news waits for the cap (and
-  draws nothing hidden); a hidden window serves the host when it asks sooner than its tick.
+  draws nothing hidden); a hidden window serves the host when it asks sooner than its tick;
+  a change from outside serves a hidden, idle window at once and then when the host asks
+  (its save), a second change no sooner than the cap, and one asked for twice keeps its time.
+- `control.rs`, on the `Harness`, whose own poll is `control::poll` and whose control has no
+  socket, with clients brought in as the socket's threads bring them:
+  `a_request_for_a_mute_sends_the_command_the_mute_button_sends` (the button's `SetMute`,
+  then the same switch from outside, and a plugin's bypass and a mix's level by the names on
+  the console, each the one command the host is sent);
+  `a_change_from_outside_shows_in_the_window_at_its_next_frame` (Monitor's readout reads
+  −12.0 after a request set it, the request saying a frame is wanted, a read saying none);
+  `a_refused_request_is_the_clients_to_read_and_shows_no_toast` (an address that names
+  nothing never reaches the host, the model's own refusal comes back word for word, and the
+  toast line stays empty); `a_click_in_the_window_reaches_a_client_that_follows_it` (and one
+  on another channel does not); `fake_runs_under_a_name_of_its_own`.
 - `meters.rs`: a level reads on the fader's taper; a peak holds 900 ms then falls 0.006 a
   frame to the level; the console's meters follow the host's frame by position.
 - `ui.rs`, headless frames of `ui::draw` that press nothing and ask nothing: the header names

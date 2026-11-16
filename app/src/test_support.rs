@@ -22,7 +22,10 @@ use vixmix_plugins::Catalog;
 use winit::raw_window_handle::{RawWindowHandle, Win32WindowHandle};
 use winit::window::WindowId;
 
+use vixmix_control::{Connector, Served};
+
 use crate::console::Geometry;
+use crate::control::{self, Control};
 use crate::editors::{EditorWindow, EditorWindows, Opener};
 use crate::fader::Target;
 use crate::shell::{Intent, Shell};
@@ -192,6 +195,10 @@ pub struct Harness {
     pub host: Recorder,
     pub shell: Shell,
     pub editors: EditorWindows,
+    /// The control from outside, with no socket: `connector` brings its clients in as the
+    /// socket's threads would, and [`Harness::heard`] serves them as the window does.
+    pub control: Control,
+    pub connector: Connector,
     /// The modifier keys held during the next frames.
     pub modifiers: Modifiers,
     /// The modifiers egui was last told of.
@@ -217,6 +224,7 @@ impl Harness {
     pub fn new() -> Harness {
         let ctx = egui::Context::default();
         ui::install(&ctx);
+        let (control, connector) = Control::in_memory();
         let mut harness = Harness {
             ctx,
             host: Recorder::new(),
@@ -225,6 +233,8 @@ impl Harness {
                 ..Shell::default()
             },
             editors: EditorWindows::default(),
+            control,
+            connector,
             modifiers: Modifiers::NONE,
             sent_modifiers: Modifiers::NONE,
             screen: Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 700.0)),
@@ -318,10 +328,17 @@ impl Harness {
     }
 
     /// What the window does before each frame: takes in what the host reported, stamped with
-    /// the window's clock.
+    /// the window's clock, the control's followers told on the way (`control::poll`, the
+    /// window's own poll).
     fn serve(&mut self) {
-        let events = self.host.poll();
+        let events = control::poll(&mut self.host, &mut self.control);
         self.shell.events(events, self.time, &mut self.editors);
+    }
+
+    /// What the window does when the event loop says a control request waits: the requests
+    /// served against the host.
+    pub fn heard(&mut self) -> Served {
+        self.control.serve(&mut self.host)
     }
 
     /// One frame per entry, the commands of all of them in order.

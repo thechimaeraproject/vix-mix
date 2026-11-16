@@ -17,9 +17,16 @@
 //! serves the host and the editors without a frame. With no backend, no editor, nothing to
 //! animate and nothing the host waits for, it is idle.
 //!
-//! **Closing.** The window's close button and a signal that asks ([`CloseAsked`]) both end the
-//! event loop; `exiting` then closes every editor through the host, drops the host (its
-//! shutdown order) and then the window.
+//! **From outside.** The control socket ([`crate::control`]) wakes the loop with
+//! [`Asked::Control`] when a request waits; the requests are served against the host there
+//! and then, with no frame. One that changed the setup asks for a frame, or, while the
+//! window is hidden, for a poll of the host ([`Pacer::serve_soon`]): the poll is what tells
+//! the socket's followers and makes the save due. Every poll goes through
+//! [`control::poll`], so a change made in the window is told to them too.
+//!
+//! **Closing.** The window's close button and a signal that asks ([`Asked::Close`]) both end
+//! the event loop; `exiting` then closes every editor through the host, closes the control
+//! socket, drops the host (its shutdown order) and then the window.
 //!
 //! **Viewport facts.** egui's facts about the window (where it is, its monitor, whether it is
 //! minimised) are asked of the desktop when a window event may have changed them and at most
@@ -31,32 +38,44 @@ use std::time::Instant;
 use vixmix_host::{AudioBackend, BootOptions, FakeHost, Host, RealHost};
 use winit::application::ApplicationHandler;
 use winit::event::{StartCause, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
 use winit::window::{Window, WindowId};
 
 use crate::Startup;
+use crate::control::{self, Control};
 use crate::desktop;
 use crate::editors::EditorWindows;
 use crate::gpu::Gpu;
 use crate::pacing::{Next, Pacer, VIEWPORT_CHECK, Wake, Wants};
 use crate::shell::Shell;
+use crate::theme::pop;
 use crate::ui;
 
-/// The event loop's one event of our own: something outside the window asked it to close. It
-/// names who asked: a signal (`crate::signals`, on Unix).
-pub type CloseAsked = &'static str;
+/// The event loop's own events: what something outside the window asks of it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Asked {
+    /// Close, as the close button does. It names who asked: a signal (`crate::signals`, on
+    /// Unix).
+    Close(&'static str),
+    /// A control request waits to be served ([`crate::control`]). Sent once however many
+    /// wait.
+    Control,
+}
 
 /// The winit application.
 pub struct App {
     startup: Startup,
+    /// How the control socket's threads wake the loop.
+    proxy: EventLoopProxy<Asked>,
     running: Option<Running>,
     failure: Option<String>,
 }
 
 impl App {
-    pub fn new(startup: Startup) -> App {
+    pub fn new(startup: Startup, proxy: EventLoopProxy<Asked>) -> App {
         App {
             startup,
+            proxy,
             running: None,
             failure: None,
         }
@@ -75,6 +94,8 @@ struct Running {
     egui_ctx: egui::Context,
     egui_state: egui_winit::State,
     host: Box<dyn Host>,
+    /// The control socket and its clients; served against `host`, closed before it goes.
+    control: Control,
     /// The window's state between frames: meters, gestures, the popover, the toasts.
     shell: Shell,
     /// The plugin editors' windows.
@@ -96,12 +117,12 @@ struct Running {
     min_size: egui::Vec2,
 }
 
-impl ApplicationHandler<CloseAsked> for App {
+impl ApplicationHandler<Asked> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.running.is_some() {
             return;
         }
-        match Running::new(event_loop, &self.startup) {
+        match Running::new(event_loop, &self.startup, &self.proxy) {
             Ok(running) => {
                 running.window.request_redraw();
                 self.running = Some(running);
@@ -113,10 +134,21 @@ impl ApplicationHandler<CloseAsked> for App {
         }
     }
 
-    fn user_event(&mut self, event_loop: &ActiveEventLoop, by: CloseAsked) {
-        // As the close button: the loop ends, and `exiting` closes in order.
-        log::info!("{by} asked Vix Mix to close: closing as the window's close button does");
-        event_loop.exit();
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, asked: Asked) {
+        match asked {
+            Asked::Close(by) => {
+                // As the close button: the loop ends, and `exiting` closes in order.
+                log::info!(
+                    "{by} asked Vix Mix to close: closing as the window's close button does"
+                );
+                event_loop.exit();
+            }
+            Asked::Control => {
+                if let Some(running) = &mut self.running {
+                    running.heard(event_loop);
+                }
+            }
+        }
     }
 
     fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) {
@@ -177,11 +209,18 @@ impl ApplicationHandler<CloseAsked> for App {
     }
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
-        // Every editor closes through the host before its window; then the host goes (its
+        // Every editor closes through the host before its window; the control socket
+        // closes, so no request is taken for a host that is going; then the host goes (its
         // instances after their editors), then the window.
         if let Some(mut running) = self.running.take() {
             running.close_editors();
-            let Running { host, window, .. } = running;
+            let Running {
+                host,
+                window,
+                control,
+                ..
+            } = running;
+            drop(control);
             drop(host);
             drop(window);
         }
@@ -189,7 +228,11 @@ impl ApplicationHandler<CloseAsked> for App {
 }
 
 impl Running {
-    fn new(event_loop: &ActiveEventLoop, startup: &Startup) -> Result<Running, String> {
+    fn new(
+        event_loop: &ActiveEventLoop,
+        startup: &Startup,
+        proxy: &EventLoopProxy<Asked>,
+    ) -> Result<Running, String> {
         // Before the host boots: its plugin scan starts child processes, which would inherit
         // the launcher's token.
         let launch = desktop::take_activation_token(event_loop);
@@ -207,6 +250,21 @@ impl Running {
                 .map_err(|e| e.to_string())?,
             )
         };
+        // The control socket, once there is a host to serve its requests against. Its
+        // threads wake the loop with our own event; a loop that has ended needs no wake.
+        let wake = {
+            let proxy = proxy.clone();
+            move || {
+                let _ = proxy.send_event(Asked::Control);
+            }
+        };
+        let (control, no_socket) = Control::open(&control::profile_name(startup.fake), wake);
+        let mut shell = Shell::default();
+        if let Some(problem) = no_socket {
+            // It says what to do; the window runs the same without the socket.
+            log::warn!("{problem}");
+            shell.toasts.show(problem, None, 0.0, pop::TOAST_HOST_S);
+        }
         // The console's own size, as the prototype's window is; the first frame grows it to
         // fit a banner.
         let natural = ui::natural_size(host.setup());
@@ -241,7 +299,8 @@ impl Running {
             egui_ctx,
             egui_state,
             host,
-            shell: Shell::default(),
+            control,
+            shell,
             editors: EditorWindows::default(),
             opened: Instant::now(),
             first_frame: true,
@@ -319,12 +378,28 @@ impl Running {
     /// The host's events taken in, stamped with when they came, and the open editors served;
     /// whether the host had news.
     fn serve_host(&mut self) -> bool {
-        let events = self.host.poll();
+        let events = control::poll(self.host.as_mut(), &mut self.control);
         let news = !events.is_empty();
         let now = self.clock();
         self.shell.events(events, now, &mut self.editors);
         self.editors.tick(self.host.as_mut());
         news
+    }
+
+    /// The control requests that wait, served against the host, with no frame. One that
+    /// changed the setup shows on a frame, or, while the window is hidden, is polled out of
+    /// the host as soon as the 60 Hz cap allows: the poll tells the socket's followers and
+    /// makes the save due, and a hidden window with nothing else to do would never make it.
+    fn heard(&mut self, event_loop: &ActiveEventLoop) {
+        let served = self.control.serve(self.host.as_mut());
+        if !served.changed {
+            return;
+        }
+        if self.pacer.seen.hidden() {
+            schedule(event_loop, self.pacer.serve_soon(Instant::now()));
+        } else {
+            self.wake(event_loop);
+        }
     }
 
     /// The hidden window's tick: the host and the editors served, nothing drawn. A window back

@@ -198,7 +198,7 @@ packaging/linux/           the desktop entry, icon, AppStream metainfo, install.
 
 The dependency direction: the model depends on no workspace crate; the engine on the model; the
 plugins crate and the PipeWire crate on the model and the engine; the host on all four; the
-control crate on the model only; the app on the host and the model.
+control crate on the model only; the app on the host, the model and the control crate.
 
 ## Rules every crate obeys
 
