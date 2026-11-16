@@ -13,6 +13,8 @@ completes it when it ships ([build map](../build-map.md)).
 
 - [app.md](app.md) — the `vix-mix` window: the winit and egui-wgpu shell, the pacing rule,
   the command line, what each frame draws.
+- [control.md](control.md) — the control from outside: the request line, the addresses and
+  their values, what a write sends, the changes between two setups.
 - [engine.md](engine.md) — the realtime graph: the prepared graph and its acknowledged handoff,
   the tick, meters, stats, the null backend.
 - [host.md](host.md) — the orchestrator: the `Host` trait, `RealHost`, `FakeHost`.

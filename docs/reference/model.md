@@ -42,6 +42,13 @@ and the host name it. `Prefs { quantum, plugin_dirs }`: 128, 256 or 512 frames a
 first start: one hardware channel named Mic with no device yet, everything at unity, no
 plugins.
 
+`slug(name)` is a name as one plain word: lower-case ASCII letters and digits, every other
+run of characters one `-`, none at the ends, and `channel` when nothing is left
+(`Voice chat` is `voice-chat`). The backend ends a channel's node name with it
+([pipewire.md](pipewire.md)) and the control socket compares a channel or a plugin written
+by name with it ([control.md](control.md) § Addresses); it is here because the first builds
+on Linux only and the second on every platform (change request 14).
+
 `ChannelId(u32)` and `InstanceId(u32)` are `Copy` with public fields; `MixId` is `Monitor` or
 `Master`. **`Send` shadows the standard `Send` marker trait** where it is imported by name:
 write `vixmix_model::Send` (or import it under another name) in any module with thread bounds.
@@ -260,5 +267,7 @@ nine inserts. `FakeHost` serves it; nothing in a real run reads it.
   can break, named with its fix; RFC 4648's vectors, refusals and a round-trip property; unity
   exactly 1.0, the example in order with every part the engine runs; the example is the
   prototype's console; app matching.
+- **`slug`** — a name becomes lower-case words joined by one dash, two names that differ only
+  in case and punctuation are the same word, and a name with no letter or digit is `channel`.
 
 `kit-check-docs` holds this page's `Owns:` line against the crate.

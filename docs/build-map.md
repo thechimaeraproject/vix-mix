@@ -119,10 +119,12 @@ the direction are fixed; exact shapes are each lane's to refine through a change
 | `BackendConfig`, `BackendEvent`, `BackendGraph`, `Backend` (`connect`, `apply`, `route`, `disconnect`) | 03 | 06 | [pipewire.md](reference/pipewire.md) |
 | `Catalog`, `PluginKind`, `Rack` (implements `Lender`), `Instances`, `EditorSession` | 04 | 05, 06 | [plugins.md](reference/plugins.md) |
 | `Host`, `HostEvent`, `BackendState`, `MeterFrame`, `StatsFrame`, `RealHost`, `FakeHost` | 06 | 05 | [host.md](reference/host.md) |
+| The control protocol: the request line and its verbs, the addresses over a `Setup` (`resolve`, `leaves`, `Kind`), `plan` and the eight commands it sends, `diff`, `PROTOCOL` | 10 | the app, and every program outside that speaks it | [control.md](reference/control.md) |
 
 The dependency direction: `vixmix-model` depends on no other workspace crate; `vixmix-engine`
 on the model; `vixmix-plugins` on the model and the engine (for `Lender`); `vixmix-pipewire` on
-the model and the engine; `vixmix-host` on all four; `app/` on the host and the model only.
+the model and the engine; `vixmix-host` on all four; `vixmix-control` on the model only (change
+request 14); `app/` on the host and the model only.
 
 ## Change requests
 

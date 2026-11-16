@@ -79,3 +79,4 @@ vixmix-engine = { path = "crates/vixmix-engine" }
 vixmix-plugins = { path = "crates/vixmix-plugins" }
 vixmix-pipewire = { path = "crates/vixmix-pipewire" }
 vixmix-host = { path = "crates/vixmix-host" }
+vixmix-control = { path = "crates/vixmix-control" }

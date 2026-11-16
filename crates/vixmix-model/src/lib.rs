@@ -23,6 +23,7 @@ mod ids;
 mod migrate;
 pub mod persist;
 mod setup;
+mod slug;
 mod snapshot;
 pub mod taper;
 
@@ -32,4 +33,5 @@ pub use setup::{
     AppRef, Channel, ChannelKind, DeviceDirection, DeviceInfo, DeviceRef, Insert, MAX_CHANNELS,
     Mix, PluginRef, Prefs, Send, Setup, Source,
 };
+pub use slug::slug;
 pub use snapshot::{ChannelSnap, EngineSnapshot, InsertSnap, MixSnap, SendSnap, snapshot};

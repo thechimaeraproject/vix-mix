@@ -395,26 +395,11 @@ pub fn master_out_node_name(app_name: &str) -> String {
     format!("{app_name}.master-out")
 }
 
-/// Lower-case ASCII letters and digits, every other run of characters one `-`, none at the
-/// ends; `channel` when nothing is left.
-pub fn slug(name: &str) -> String {
-    let mut out = String::with_capacity(name.len());
-    for c in name.chars() {
-        if c.is_ascii_alphanumeric() {
-            out.push(c.to_ascii_lowercase());
-        } else if !out.is_empty() && !out.ends_with('-') {
-            out.push('-');
-        }
-    }
-    while out.ends_with('-') {
-        out.pop();
-    }
-    if out.is_empty() {
-        "channel".to_string()
-    } else {
-        out
-    }
-}
+/// The model's `slug`, re-exported where it was: lower-case ASCII letters and digits, every
+/// other run of characters one `-`, none at the ends; `channel` when nothing is left. It is
+/// the model's because the control socket compares a channel written by name with the same
+/// rule on every platform, and this crate builds on Linux only (change request 14).
+pub use vixmix_model::slug;
 
 #[cfg(test)]
 mod tests {
