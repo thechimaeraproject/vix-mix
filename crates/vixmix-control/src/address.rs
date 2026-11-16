@@ -7,19 +7,30 @@
 //! for as long as that thing exists.
 //!
 //! What a request names may also be written as a person reads the console: a channel by its
-//! name, and a plugin under its strip by its slot, counted from 1, or by its name.
-//! [`resolve`] turns either into the addresses as they are kept, or says which names there
-//! are.
+//! name, a plugin under its strip by its slot, counted from 1, or by its name, and a device
+//! the machine has by its description. [`resolve`] turns either into the addresses as they
+//! are kept, or says which names there are.
+//!
+//! The devices the machine has now are listed under `/in` and `/out`, each under its node
+//! name as one plain word (`/out/alsa-output-usb-scarlett-2i2-00-analog-stereo`): a node
+//! name is what PipeWire knows a device by across restarts and replugging.
 
-use vixmix_model::{Channel, ChannelId, Insert, InstanceId, MixId, Setup, Strip, slug};
+use vixmix_model::{
+    Channel, ChannelId, DeviceDirection, DeviceRef, Insert, InstanceId, MixId, Setup, Strip, slug,
+};
+
+use crate::console::Console;
 
 /// Everything.
 pub const ROOT: &str = "/";
 
-/// Every channel, every mix, every plugin: the three places an address starts.
+/// Every channel, every mix, every plugin, and the devices the machine has now, inputs and
+/// outputs: the places an address starts.
 pub const CHANNELS: &str = "/ch";
 pub const MIXES: &str = "/mix";
 pub const PLUGINS: &str = "/fx";
+pub const INPUTS: &str = "/in";
+pub const OUTPUTS: &str = "/out";
 
 /// Whether `address` is `place` or lies under it. Parts are compared whole: `/ch/1` does not
 /// cover `/ch/10`.
@@ -60,8 +71,46 @@ pub fn strip(strip: Strip) -> String {
     }
 }
 
-/// The channel, mix or plugin an address belongs to: its first two parts (`/ch/3` of
-/// `/ch/3/monitor/mute`). An address of fewer parts is its own.
+/// Where the devices of a direction are listed.
+pub fn devices(direction: DeviceDirection) -> &'static str {
+    match direction {
+        DeviceDirection::Input => INPUTS,
+        DeviceDirection::Output => OUTPUTS,
+    }
+}
+
+/// A listed device's address, by the word it is listed under ([`Console::listed`]).
+pub fn device(direction: DeviceDirection, word: &str) -> String {
+    format!("{}/{word}", devices(direction))
+}
+
+/// What a message calls the devices of a direction.
+pub fn way(direction: DeviceDirection) -> &'static str {
+    match direction {
+        DeviceDirection::Input => "input",
+        DeviceDirection::Output => "output",
+    }
+}
+
+/// The devices there are in `direction`, for a refusal: each as it is listed, with its
+/// description.
+pub fn devices_said(listed: &[(String, &DeviceRef)], direction: DeviceDirection) -> String {
+    if listed.is_empty() {
+        return format!("no {} device is there now", way(direction));
+    }
+    let each: Vec<String> = listed
+        .iter()
+        .map(|(word, d)| format!("`{}` ({})", device(direction, word), d.description))
+        .collect();
+    format!(
+        "the {} devices there are: {}",
+        way(direction),
+        each.join(", ")
+    )
+}
+
+/// The channel, mix, plugin or listed device an address belongs to: its first two parts
+/// (`/ch/3` of `/ch/3/monitor/mute`). An address of fewer parts is its own.
 pub fn node(address: &str) -> &str {
     address
         .match_indices('/')
@@ -69,11 +118,13 @@ pub fn node(address: &str) -> &str {
         .map_or(address, |(at, _)| &address[..at])
 }
 
-/// The addresses, as they are kept, that `written` names in `setup`: one for a value or for
-/// a channel, a mix or a plugin, and one for each plugin of a strip for `…/fx` alone (none
-/// when the strip has no plugins). An address that names nothing is refused with the names
-/// there are.
-pub fn resolve(setup: &Setup, written: &str) -> Result<Vec<String>, String> {
+/// The addresses, as they are kept, that `written` names in a console: one for a value or
+/// for a channel, a mix, a plugin or a listed device, and one for each plugin of a strip for
+/// `…/fx` alone (none when the strip has no plugins). An address that names nothing is
+/// refused with the names there are.
+pub fn resolve<'a>(console: impl Into<Console<'a>>, written: &str) -> Result<Vec<String>, String> {
+    let console = console.into();
+    let setup = console.setup;
     let Some(rest) = written.strip_prefix('/') else {
         return Err(format!(
             "`{written}` is not an address: an address starts with `/`, as `/ch/1/monitor/mute` does, and `get /` lists every one"
@@ -111,9 +162,61 @@ pub fn resolve(setup: &Setup, written: &str) -> Result<Vec<String>, String> {
                 Ok(vec![join(plugin(instance), &parts[2..])])
             }
         },
+        root @ ("in" | "out") => {
+            let direction = if root == "in" {
+                DeviceDirection::Input
+            } else {
+                DeviceDirection::Output
+            };
+            match parts.get(1) {
+                None => Ok(vec![devices(direction).to_string()]),
+                Some(named) => {
+                    let word = find_listed(&console, direction, named)?;
+                    Ok(vec![join(device(direction, &word), &parts[2..])])
+                }
+            }
+        }
         other => Err(format!(
-            "there is nothing at `/{other}`: an address starts with `{CHANNELS}` (a channel), `{MIXES}` (Monitor or Master) or `{PLUGINS}` (a plugin by its instance id)"
+            "there is nothing at `/{other}`: an address starts with `{CHANNELS}` (a channel), `{MIXES}` (Monitor or Master), `{PLUGINS}` (a plugin by its instance id), or `{INPUTS}` or `{OUTPUTS}` (the devices the machine has)"
         )),
+    }
+}
+
+/// The word a present device is listed under: `named` is that word (or the node name it
+/// was made from), or the device's description, compared as one plain word.
+fn find_listed(
+    console: &Console<'_>,
+    direction: DeviceDirection,
+    named: &str,
+) -> Result<String, String> {
+    let listed = console.listed(direction);
+    let wanted = slug(named);
+    if let Some((word, _)) = listed.iter().find(|(word, _)| *word == wanted) {
+        return Ok(word.clone());
+    }
+    let described: Vec<&(String, &DeviceRef)> = listed
+        .iter()
+        .filter(|(_, d)| slug(&d.description) == wanted)
+        .collect();
+    match described.as_slice() {
+        [(word, _)] => Ok(word.clone()),
+        [] => Err(format!(
+            "no {} device is `{named}`: {}",
+            way(direction),
+            devices_said(&listed, direction)
+        )),
+        several => {
+            let each: Vec<String> = several
+                .iter()
+                .map(|(word, _)| format!("`{}`", device(direction, word)))
+                .collect();
+            Err(format!(
+                "`{named}` describes {} {} devices: write the one meant as it is listed, {}",
+                several.len(),
+                way(direction),
+                each.join(" or ")
+            ))
+        }
     }
 }
 
@@ -286,7 +389,7 @@ fn find_insert<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vixmix_model::{Command, apply, example};
+    use vixmix_model::{Command, DeviceInfo, apply, example};
 
     fn one(setup: &Setup, written: &str) -> String {
         let found = resolve(setup, written).unwrap_or_else(|e| panic!("{written}: {e}"));
@@ -367,7 +470,7 @@ mod tests {
             ("/ch//mute", "empty part"),
             (
                 "/channel/1",
-                "`/ch` (a channel), `/mix` (Monitor or Master) or `/fx`",
+                "`/ch` (a channel), `/mix` (Monitor or Master), `/fx` (a plugin by its instance id), or `/in` or `/out`",
             ),
             (
                 "/ch/9/mute",
@@ -425,6 +528,72 @@ mod tests {
         assert!(
             refused.contains("names 2 plugins on Master")
                 && refused.contains("`/mix/master/fx/1` or `/mix/master/fx/3`"),
+            "{refused}"
+        );
+    }
+
+    #[test]
+    fn a_device_is_written_as_it_is_listed_by_its_node_name_or_as_it_is_described() {
+        let setup = example::setup();
+        let devices = crate::console::example_devices();
+        let console = Console {
+            setup: &setup,
+            devices: &devices,
+        };
+        let one = |written: &str| {
+            let found = resolve(console, written).unwrap_or_else(|e| panic!("{written}: {e}"));
+            assert_eq!(found.len(), 1, "{written} named {found:?}");
+            found.into_iter().next().unwrap()
+        };
+        // Listed under its node name as one word.
+        let speakers = "/out/alsa-output-built-in-speakers";
+        assert_eq!(one(speakers), speakers);
+        assert_eq!(
+            one("/out/alsa_output.built_in_speakers/name"),
+            format!("{speakers}/name")
+        );
+        // Or as a person reads it: its description.
+        assert_eq!(
+            one("/out/built-in-speakers/description"),
+            format!("{speakers}/description")
+        );
+        assert_eq!(one("/in/Wave:3"), "/in/alsa-input-wave-3");
+        assert_eq!(one("/in"), "/in");
+        assert_eq!(one("/OUT/"), "/out");
+        // An output is not an input; what is not there lists what is.
+        let refused = resolve(console, "/in/built-in-speakers").expect_err("an output");
+        assert!(
+            refused.contains("no input device is `built-in-speakers`")
+                && refused.contains("`/in/alsa-input-wave-3` (Wave:3)"),
+            "{refused}"
+        );
+        // A setup alone has no machine: nothing is listed.
+        let refused = resolve(&setup, "/out/built-in-speakers").expect_err("no devices");
+        assert!(
+            refused.contains("no output device is there now"),
+            "{refused}"
+        );
+        // Two devices described alike: the description alone is refused, naming both.
+        let mut twins = devices.clone();
+        twins.push(DeviceInfo {
+            device: DeviceRef {
+                name: "alsa_output.second".to_string(),
+                description: "Built-in speakers".to_string(),
+            },
+            direction: DeviceDirection::Output,
+        });
+        let refused = resolve(
+            Console {
+                setup: &setup,
+                devices: &twins,
+            },
+            "/out/built-in-speakers",
+        )
+        .expect_err("two alike");
+        assert!(
+            refused.contains("describes 2 output devices")
+                && refused
+                    .contains("`/out/alsa-output-built-in-speakers` or `/out/alsa-output-second`"),
             "{refused}"
         );
     }

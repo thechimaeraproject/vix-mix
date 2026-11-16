@@ -198,8 +198,17 @@ same command again brings you back. Then, each with its expectation:
   `watch` prints it, and two seconds later `setup.ron` in the configuration directory holds
   the mute (`grep -n mute ~/.config/vix-mix/setup.ron`). This is the one path no test reaches
   on the real host: a window that draws nothing, woken by a request.
-- Put the toggle on a key (the cookbook's step 4) and use it while another window has the
+- Put the toggle on a key (the cookbook's step 5) and use it while another window has the
   focus.
+- **Switch Monitor's output**: `vix-mix ctl get /out` lists the outputs, and
+  `vix-mix ctl set /mix/monitor/device/name "<another output's description>"` moves what you
+  hear to it, with no gap longer than a click, while Discord and OBS go on recording Master;
+  Monitor's output panel shows the new radio picked. Switch Mic's input the same way
+  (`/ch/mic/device/name`) and speak into the other microphone. Nothing but real devices
+  shows whether PipeWire takes the new graph, so write down what you hear at each switch.
+- **Pull a device out** while `vix-mix ctl watch /out` runs: it prints
+  `/out/<the device> gone`, and `vix-mix ctl get /mix/monitor/device/present` reads `false`
+  if it was Monitor's; plugged back, it is listed again and `present` is `true`.
 - Quit Vix Mix: the `watch` says the mixer closed and ends, `vix-mix ctl get /` exits 3, and
   `ls $XDG_RUNTIME_DIR/vix-mix/` shows the lock file and no socket.
 

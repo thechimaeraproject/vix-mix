@@ -3,15 +3,19 @@
 //! [`leaves`] is the one list the protocol is read from: what `get` prints, what a write may
 //! name and what it sends ([`Kind`]), and what a follower is told ([`diff`]). A channel's
 //! plugins are not under the channel: a plugin keeps its address when it is moved to another
-//! strip, and says where it is in `strip` and `slot`.
+//! strip, and says where it is in `strip` and `slot`. The devices the machine has now are
+//! listed last, and are the one part that is not the setup's ([`Console`]).
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use vixmix_model::taper::position_to_db;
-use vixmix_model::{ChannelId, ChannelKind, InstanceId, MixId, Send, Setup, Strip};
+use vixmix_model::{
+    ChannelId, ChannelKind, DeviceDirection, DeviceRef, InstanceId, MixId, Send, Strip,
+};
 
 use crate::address;
+use crate::console::Console;
 use crate::value::{Value, rounded};
 
 /// What a value is, and so what a write to it sends.
@@ -49,6 +53,14 @@ pub enum Kind {
     PluginStrip(InstanceId),
     /// A plugin's place in its strip's chain, counted from 1. Read only.
     PluginSlot(InstanceId),
+    /// The device a strip uses, by its node name: the output a mix plays to, the input a
+    /// hardware channel captures. Empty text when it has none.
+    Device(Strip),
+    /// That device's description, and whether it is there now. Read only: they follow the
+    /// device.
+    DeviceDetail(Strip),
+    /// A device the machine has now: its node name, its description. Read only.
+    Listed(DeviceDirection),
 }
 
 /// One address with its value.
@@ -78,20 +90,17 @@ fn db(send: &Send) -> Value {
     Value::Number(rounded(f64::from(position_to_db(send.position)), DB_PLACES))
 }
 
-/// Every address of `setup` with its value: the channels left to right, then Monitor and
-/// Master, then every plugin, strip by strip in the same order.
-pub fn leaves(setup: &Setup) -> Vec<Leaf> {
+/// Every address of a console with its value: the channels left to right, then Monitor and
+/// Master, then every plugin strip by strip in the same order, then the devices the machine
+/// has now, inputs before outputs.
+pub fn leaves<'a>(console: impl Into<Console<'a>>) -> Vec<Leaf> {
+    let console = console.into();
+    let setup = console.setup;
     let mut out = Vec::new();
-    let mut leaf = |home: &str, word: &str, value: Value, kind: Kind| {
-        out.push(Leaf {
-            address: format!("{home}/{word}"),
-            value,
-            kind,
-        });
-    };
     for ch in &setup.channels {
         let home = address::channel(ch.id);
         leaf(
+            &mut out,
             &home,
             "name",
             Value::Text(ch.name.clone()),
@@ -102,13 +111,21 @@ pub fn leaves(setup: &Setup) -> Vec<Leaf> {
             ChannelKind::Apps => "apps",
         };
         leaf(
+            &mut out,
             &home,
             "kind",
             Value::Text(kind.to_string()),
             Kind::ChannelKind(ch.id),
         );
-        leaf(&home, "link", Value::Switch(ch.link), Kind::Link(ch.id));
         leaf(
+            &mut out,
+            &home,
+            "link",
+            Value::Switch(ch.link),
+            Kind::Link(ch.id),
+        );
+        leaf(
+            &mut out,
             &home,
             "mute",
             Value::Switch(ch.monitor.mute && ch.master.mute),
@@ -118,40 +135,58 @@ pub fn leaves(setup: &Setup) -> Vec<Leaf> {
             let send = ch.send(mix);
             let home = format!("{home}/{}", address::mix_word(mix));
             leaf(
+                &mut out,
                 &home,
                 "mute",
                 Value::Switch(send.mute),
                 Kind::SendMute(ch.id, mix),
             );
-            leaf(&home, "db", db(send), Kind::SendDb(ch.id, mix));
+            leaf(&mut out, &home, "db", db(send), Kind::SendDb(ch.id, mix));
             leaf(
+                &mut out,
                 &home,
                 "position",
                 position(send),
                 Kind::SendPosition(ch.id, mix),
             );
             leaf(
+                &mut out,
                 &home,
                 "processed",
                 Value::Switch(ch.chain_to(mix)),
                 Kind::Processed(ch.id, mix),
             );
         }
+        device_leaves(&mut out, &console, &home, Strip::Channel(ch.id));
     }
     for mix in [MixId::Monitor, MixId::Master] {
         let level = &setup.mix(mix).level;
         let home = address::mix(mix);
-        leaf(&home, "mute", Value::Switch(level.mute), Kind::MixMute(mix));
-        leaf(&home, "db", db(level), Kind::MixDb(mix));
-        leaf(&home, "position", position(level), Kind::MixPosition(mix));
+        leaf(
+            &mut out,
+            &home,
+            "mute",
+            Value::Switch(level.mute),
+            Kind::MixMute(mix),
+        );
+        leaf(&mut out, &home, "db", db(level), Kind::MixDb(mix));
+        leaf(
+            &mut out,
+            &home,
+            "position",
+            position(level),
+            Kind::MixPosition(mix),
+        );
         if mix == MixId::Master {
             leaf(
+                &mut out,
                 &home,
                 "preview",
                 Value::Switch(setup.preview_master),
                 Kind::Preview,
             );
         }
+        device_leaves(&mut out, &console, &home, Strip::Mix(mix));
     }
     let strips = setup
         .channels
@@ -166,24 +201,28 @@ pub fn leaves(setup: &Setup) -> Vec<Leaf> {
             let id = insert.instance;
             let home = address::plugin(id);
             leaf(
+                &mut out,
                 &home,
                 "name",
                 Value::Text(insert.plugin.name.clone()),
                 Kind::PluginName(id),
             );
             leaf(
+                &mut out,
                 &home,
                 "strip",
                 Value::Text(address::strip(strip)),
                 Kind::PluginStrip(id),
             );
             leaf(
+                &mut out,
                 &home,
                 "slot",
                 Value::Number((index + 1) as f64),
                 Kind::PluginSlot(id),
             );
             leaf(
+                &mut out,
                 &home,
                 "enabled",
                 Value::Switch(insert.enabled),
@@ -191,7 +230,64 @@ pub fn leaves(setup: &Setup) -> Vec<Leaf> {
             );
         }
     }
+    for direction in [DeviceDirection::Input, DeviceDirection::Output] {
+        for (word, device) in console.listed(direction) {
+            let home = address::device(direction, &word);
+            let listed = Kind::Listed(direction);
+            leaf(
+                &mut out,
+                &home,
+                "name",
+                Value::Text(device.name.clone()),
+                listed,
+            );
+            leaf(
+                &mut out,
+                &home,
+                "description",
+                Value::Text(device.description.clone()),
+                listed,
+            );
+        }
+    }
     out
+}
+
+fn leaf(out: &mut Vec<Leaf>, home: &str, word: &str, value: Value, kind: Kind) {
+    out.push(Leaf {
+        address: format!("{home}/{word}"),
+        value,
+        kind,
+    });
+}
+
+/// The three values of the device a strip uses, under `device`: its node name, its
+/// description and whether it is there now. Nothing for a strip with no device of its own (an
+/// app channel).
+fn device_leaves(out: &mut Vec<Leaf>, console: &Console<'_>, home: &str, strip: Strip) {
+    let Some((direction, device)) = console.device(strip) else {
+        return;
+    };
+    let home = format!("{home}/device");
+    let text = |pick: fn(&DeviceRef) -> &String| {
+        Value::Text(device.map(pick).cloned().unwrap_or_default())
+    };
+    leaf(out, &home, "name", text(|d| &d.name), Kind::Device(strip));
+    leaf(
+        out,
+        &home,
+        "description",
+        text(|d| &d.description),
+        Kind::DeviceDetail(strip),
+    );
+    let present = device.is_some_and(|d| console.present(direction, d));
+    leaf(
+        out,
+        &home,
+        "present",
+        Value::Switch(present),
+        Kind::DeviceDetail(strip),
+    );
 }
 
 /// One thing a follower is told.
@@ -256,7 +352,7 @@ pub fn diff(before: &[Leaf], after: &[Leaf]) -> Vec<Change> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vixmix_model::{Command, SlotRef, apply, example};
+    use vixmix_model::{Command, Setup, SlotRef, apply, example};
 
     fn lines(setup: &Setup, under: &str) -> Vec<String> {
         leaves(setup)
@@ -303,10 +399,16 @@ mod tests {
                 "/mix/monitor/mute false",
                 "/mix/monitor/db 0",
                 "/mix/monitor/position 0.84",
+                "/mix/monitor/device/name \"alsa_output.scarlett_2i2___phones\"",
+                "/mix/monitor/device/description \"Scarlett 2i2 \u{b7} Phones\"",
+                "/mix/monitor/device/present false",
                 "/mix/master/mute false",
                 "/mix/master/db 0",
                 "/mix/master/position 0.84",
                 "/mix/master/preview false",
+                "/mix/master/device/name \"alsa_output.scarlett_2i2___out_1_2\"",
+                "/mix/master/device/description \"Scarlett 2i2 \u{b7} Out 1\u{2013}2\"",
+                "/mix/master/device/present false",
             ]
         );
     }
@@ -492,6 +594,147 @@ mod tests {
                 "/ch/2/monitor/position 0.84",
                 "/ch/2/master/db -4.29",
                 "/ch/2/master/position 0.74",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_strip_reads_the_device_it_uses_and_whether_it_is_there() {
+        let mut setup = example::setup();
+        let devices = crate::console::example_devices();
+        let with =
+            |setup: &Setup, devices: &[vixmix_model::DeviceInfo], under: &str| -> Vec<String> {
+                leaves(Console { setup, devices })
+                    .iter()
+                    .filter(|l| address::covers(under, &l.address))
+                    .map(Leaf::to_string)
+                    .collect()
+            };
+        // Mic captures the Wave:3, which is plugged in.
+        assert_eq!(
+            with(&setup, &devices, "/ch/1/device"),
+            [
+                "/ch/1/device/name \"alsa_input.wave_3\"",
+                "/ch/1/device/description \"Wave:3\"",
+                "/ch/1/device/present true",
+            ]
+        );
+        // Unplugged: the setup still names it, and it is not there.
+        let without: Vec<_> = devices
+            .iter()
+            .filter(|d| d.device.description != "Wave:3")
+            .cloned()
+            .collect();
+        assert_eq!(
+            with(&setup, &without, "/ch/1/device"),
+            [
+                "/ch/1/device/name \"alsa_input.wave_3\"",
+                "/ch/1/device/description \"Wave:3\"",
+                "/ch/1/device/present false",
+            ]
+        );
+        // An app channel has no device of its own.
+        assert_eq!(with(&setup, &devices, "/ch/2/device"), Vec::<String>::new());
+        // Master with no device, and a hardware channel with none picked: empty text.
+        let _ = apply(
+            &mut setup,
+            Command::SetMixDevice {
+                mix: MixId::Master,
+                device: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            with(&setup, &devices, "/mix/master/device"),
+            [
+                "/mix/master/device/name \"\"",
+                "/mix/master/device/description \"\"",
+                "/mix/master/device/present false",
+            ]
+        );
+    }
+
+    #[test]
+    fn the_devices_the_machine_has_are_listed_last_inputs_before_outputs() {
+        let setup = example::setup();
+        let devices = crate::console::example_devices();
+        let table = leaves(Console {
+            setup: &setup,
+            devices: &devices,
+        });
+        let listed: Vec<String> = table
+            .iter()
+            .filter(|l| matches!(l.kind, Kind::Listed(_)))
+            .map(Leaf::to_string)
+            .collect();
+        assert_eq!(
+            listed.len(),
+            16,
+            "eight devices, a name and a description each"
+        );
+        assert_eq!(
+            listed[..2],
+            [
+                "/in/alsa-input-wave-3/name \"alsa_input.wave_3\"",
+                "/in/alsa-input-wave-3/description \"Wave:3\"",
+            ]
+        );
+        assert_eq!(
+            listed[14..],
+            [
+                "/out/alsa-output-built-in-speakers/name \"alsa_output.built_in_speakers\"",
+                "/out/alsa-output-built-in-speakers/description \"Built-in speakers\"",
+            ]
+        );
+        // Nothing follows them, and a setup alone lists none.
+        assert!(matches!(table.last().unwrap().kind, Kind::Listed(_)));
+        assert!(
+            !leaves(&setup)
+                .iter()
+                .any(|l| matches!(l.kind, Kind::Listed(_)))
+        );
+    }
+
+    #[test]
+    fn a_device_unplugged_is_gone_and_the_strip_that_uses_it_says_it_is_not_there() {
+        let setup = example::setup();
+        let devices = crate::console::example_devices();
+        // Monitor's phones are unplugged.
+        let without: Vec<_> = devices
+            .iter()
+            .filter(|d| d.device.description != example::OUTPUTS[0])
+            .cloned()
+            .collect();
+        let before = leaves(Console {
+            setup: &setup,
+            devices: &devices,
+        });
+        let after = leaves(Console {
+            setup: &setup,
+            devices: &without,
+        });
+        let said: Vec<String> = diff(&before, &after)
+            .iter()
+            .map(Change::to_string)
+            .collect();
+        assert_eq!(
+            said,
+            [
+                "/out/alsa-output-scarlett-2i2-phones gone",
+                "/mix/monitor/device/present false",
+            ]
+        );
+        // Plugged back: listed again, and there.
+        let said: Vec<String> = diff(&after, &before)
+            .iter()
+            .map(Change::to_string)
+            .collect();
+        assert_eq!(
+            said,
+            [
+                "/mix/monitor/device/present true",
+                "/out/alsa-output-scarlett-2i2-phones/name \"alsa_output.scarlett_2i2___phones\"",
+                "/out/alsa-output-scarlett-2i2-phones/description \"Scarlett 2i2 \u{b7} Phones\"",
             ]
         );
     }

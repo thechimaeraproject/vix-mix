@@ -30,3 +30,5 @@ doc it names.
   fixed; seeded with the items the earlier lanes left open for it.
 - [10-control-socket.md](10-control-socket.md) — `vixmix-control`: other programs read, change
   and follow the console through a Unix socket that speaks address lines; `vix-mix ctl`.
+- [11-control-devices.md](11-control-devices.md) — devices over the control socket: a mix's
+  output and a hardware channel's input read, set and followed; `/in` and `/out`.

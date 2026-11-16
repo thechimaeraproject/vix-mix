@@ -19,6 +19,7 @@
 pub mod address;
 #[cfg(unix)]
 mod client;
+mod console;
 mod request;
 mod service;
 #[cfg(unix)]
@@ -29,7 +30,8 @@ mod value;
 pub use address::resolve;
 #[cfg(unix)]
 pub use client::{Answer, ClientError, Sender, Session};
-pub use request::{Plan, Request, TOP_DB, Verb, parse, plan};
+pub use console::Console;
+pub use request::{NO_DEVICE, Plan, Request, TOP_DB, Verb, parse, plan};
 pub use service::{
     Client, ClientId, Connector, Full, INBOX, MAX_CLIENTS, MAX_LINE, MAX_WATCHES, OUTBOX, Requests,
     SERVE_BUDGET, Served, Service, Target, service,

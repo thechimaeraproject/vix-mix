@@ -8,28 +8,33 @@
 //! is applied with [`Host::apply`] and nothing else: no toast (a refusal is the client's to
 //! read, on its own line) and no undo, as a fader moved in the window has none. [`poll`] is
 //! the one place the window polls its host, and it tells the socket's followers when the
-//! poll reported a change to the setup, so a gesture in the window reaches a controller as a
-//! request from another controller does.
+//! poll reported a change to the setup or to the devices the machine has, so a gesture in the
+//! window, or a device unplugged, reaches a controller as a request from another controller
+//! does. A request that names a device is held to the devices the host lists.
 //!
 //! On a platform without Unix sockets there is no socket and nothing is said about it: the
 //! service is made and nobody can reach it.
 
 #[cfg(test)]
 use vixmix_control::Connector;
-use vixmix_control::{SERVE_BUDGET, Served, Service, Target, service};
+use vixmix_control::{Console, SERVE_BUDGET, Served, Service, Target, service};
 use vixmix_host::{Host, HostEvent};
-use vixmix_model::{Applied, Command, Refused, Setup};
+use vixmix_model::{Applied, Command, DeviceInfo, Refused, Setup};
 
 /// The profile name `--fake` runs under: its console is an example, so it never takes the
 /// socket of a mixer that plays.
 pub const FAKE_PROFILE: &str = "fake";
 
-/// The host as a request needs it: its setup, and a command applied to it.
+/// The host as a request needs it: its setup, the devices it lists, and a command applied
+/// to it.
 struct Desk<'a>(&'a mut dyn Host);
 
 impl Target for Desk<'_> {
     fn setup(&self) -> &Setup {
         self.0.setup()
+    }
+    fn devices(&self) -> &[DeviceInfo] {
+        self.0.devices()
     }
     fn apply(&mut self, command: Command) -> Result<Applied, Refused> {
         self.0.apply(command)
@@ -110,11 +115,18 @@ impl Control {
 }
 
 /// Polls `host`, and tells the socket's followers what changed when the poll reported a
-/// change to the setup. Every frame and every tick between frames polls through here.
+/// change to the setup or to the devices the machine has. Every frame and every tick between
+/// frames polls through here.
 pub fn poll(host: &mut dyn Host, control: &mut Control) -> Vec<HostEvent> {
     let events = host.poll();
-    if events.contains(&HostEvent::SetupChanged) {
-        control.service.publish(host.setup());
+    let changed = events
+        .iter()
+        .any(|event| matches!(event, HostEvent::SetupChanged | HostEvent::Devices(_)));
+    if changed {
+        control.service.publish(Console {
+            setup: host.setup(),
+            devices: host.devices(),
+        });
     }
     events
 }
@@ -133,7 +145,7 @@ pub fn profile_name(fake: bool) -> String {
 mod tests {
     use egui::Pos2;
     use vixmix_control::{Client, ERROR};
-    use vixmix_model::{ChannelId, MixId, Strip};
+    use vixmix_model::{ChannelId, MixId, Source, Strip, example};
 
     use super::*;
     use crate::fader::Target as Fader;
@@ -315,6 +327,9 @@ mod tests {
                 "/ch/1/master/db 0",
                 "/ch/1/master/position 0.84",
                 "/ch/1/master/processed true",
+                "/ch/1/device/name \"alsa_input.wave_3\"",
+                "/ch/1/device/description \"Wave:3\"",
+                "/ch/1/device/present true",
                 "ok",
             ]
         );
@@ -345,5 +360,105 @@ mod tests {
     fn fake_runs_under_a_name_of_its_own() {
         assert_eq!(profile_name(true), FAKE_PROFILE);
         assert_ne!(profile_name(false), FAKE_PROFILE);
+    }
+
+    #[test]
+    fn a_request_for_a_device_sends_the_command_its_panel_sends() {
+        let mut h = Harness::new();
+        let controller = client(&mut h);
+        let speakers = example::device("Built-in speakers", false);
+        // The output panel in the window: Master to the built-in speakers.
+        let _ = h.click(h.head(Strip::Mix(MixId::Master)).center());
+        h.idle(2);
+        let picked = h.click(h.text("Built-in speakers"));
+        assert_eq!(
+            picked,
+            [Command::SetMixDevice {
+                mix: MixId::Master,
+                device: Some(speakers.clone())
+            }]
+        );
+        let _ = h.click(h.text("Done"));
+        // The same from outside for Monitor, written as the device is described: the same
+        // device, the host's own, in the same command.
+        let from = h.host.calls.len();
+        assert_eq!(
+            ask(
+                &mut h,
+                &controller,
+                "set /mix/monitor/device/name built-in-speakers"
+            ),
+            [
+                "/mix/monitor/device/name \"alsa_output.built_in_speakers\"",
+                "/mix/monitor/device/description \"Built-in speakers\"",
+                "ok",
+            ]
+        );
+        assert_eq!(
+            h.host.sent_since(from),
+            [Command::SetMixDevice {
+                mix: MixId::Monitor,
+                device: Some(speakers)
+            }]
+        );
+        // A hardware channel's input, as its source panel sends it.
+        let synth = h.channel(5);
+        let from = h.host.calls.len();
+        assert_eq!(
+            ask(
+                &mut h,
+                &controller,
+                "set /ch/synth/device/name c920-webcam-mic"
+            )
+            .last()
+            .unwrap(),
+            "ok"
+        );
+        assert_eq!(
+            h.host.sent_since(from),
+            [Command::SetSource {
+                ch: synth,
+                source: Source::Hardware(Some(example::device("C920 webcam mic", true)))
+            }]
+        );
+        // An app channel is never made a hardware one, and the host is not asked.
+        let from = h.host.calls.len();
+        let refused = ask(&mut h, &controller, "set /ch/game/device/name Wave:3");
+        assert!(
+            refused[0].starts_with(ERROR) && refused[0].contains("Game is an app channel"),
+            "{refused:?}"
+        );
+        assert_eq!(h.host.sent_since(from), Vec::<Command>::new());
+    }
+
+    #[test]
+    fn a_device_unplugged_reaches_a_client_that_follows_the_list_or_the_strip() {
+        let mut h = Harness::new();
+        let follower = client(&mut h);
+        // The example's four outputs, a name and a description each.
+        assert_eq!(ask(&mut h, &follower, "watch /out").len(), 8 + 1);
+        assert_eq!(
+            ask(&mut h, &follower, "watch /mix/monitor/device/present"),
+            ["/mix/monitor/device/present true", "ok"]
+        );
+        // Monitor's phones are unplugged: the host lists what is left and says so at its
+        // next poll.
+        let left: Vec<DeviceInfo> = h
+            .host
+            .devices()
+            .iter()
+            .filter(|d| d.device.description != example::OUTPUTS[0])
+            .cloned()
+            .collect();
+        h.host.devices = Some(left.clone());
+        h.host.news.push(HostEvent::Devices(left));
+        h.idle(1);
+        assert_eq!(
+            said(&follower),
+            [
+                "event /out/alsa-output-scarlett-2i2-phones gone",
+                "event /mix/monitor/device/present false",
+            ]
+        );
     }
 }

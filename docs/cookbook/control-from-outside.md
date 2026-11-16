@@ -1,14 +1,15 @@
 # Control Vix Mix from outside
 
-Mute a channel from a key, turn a plugin off from a script, show a mute on a Stream Deck:
-every switch and fader of the console can be read, written and followed by another program
-of yours while Vix Mix runs. `vix-mix ctl` is the command for it, and under it is a Unix
+Mute a channel from a key, turn a plugin off from a script, switch from headphones to
+speakers, show a mute on a Stream Deck: every switch and fader of the console, and the
+device each mix and hardware channel uses, can be read, written and followed by another
+program of yours while Vix Mix runs. `vix-mix ctl` is the command for it, and under it is a Unix
 socket that speaks one request a line. What each address reads and what a write sends is
 [reference/control.md](../reference/control.md); the command and when the window serves it
 are [reference/app.md](../reference/app.md) § The command line and § The control socket.
 
 It changes what the console's own controls change and nothing else: no channel or plugin is
-added, removed, moved or renamed from outside. Any program that runs as you may use it, as
+added, removed, moved or renamed from outside, and no app is moved between channels. Any program that runs as you may use it, as
 any may run `wpctl`; nothing listens on the network.
 
 To write a controller without touching the mixer that plays, run `vix-mix --fake` (the
@@ -84,7 +85,36 @@ link is on, the other send moves with the one you set, as it does in the window.
 A request the mixer refuses prints why on standard error, ending with what to send instead,
 and exits 1.
 
-## 4. Put a mute on a key
+## 4. Switch a device
+
+```bash
+vix-mix ctl get /out                                          # the outputs the machine has now
+vix-mix ctl get /mix/monitor/device                           # the one Monitor plays to
+vix-mix ctl set /mix/monitor/device/name Built-in speakers    # by its description
+vix-mix ctl set /mix/monitor/device/name alsa_output.pci-0000_00_1f.3.analog-stereo
+vix-mix ctl set /ch/mic/device/name "Yeti Stereo Microphone"  # a hardware channel's input
+vix-mix ctl set /mix/master/device/name none                  # Master may have no device
+```
+
+`get /out` and `get /in` list every device the machine has now, a `name` and a `description`
+each:
+
+```
+/out/alsa-output-pci-0000-00-1f-3-analog-stereo/name "alsa_output.pci-0000_00_1f.3.analog-stereo"
+/out/alsa-output-pci-0000-00-1f-3-analog-stereo/description "Built-in Audio Analog Stereo"
+```
+
+Write a device by its `name` (PipeWire's node name, which stays the same across restarts and
+replugging: what a program should keep) or by its `description` (what you read in the
+window's output panel), in any case and with or without double quotes. A mix takes an output
+and a hardware channel an input; an app channel has no device, and its apps are ticked in
+the window. A device that is not plugged in cannot be picked, and the refusal lists the ones
+that are. Monitor always keeps a device, so `none` is refused for it.
+
+A mix's and a hardware channel's `device` has three values: `name`, `description`, and
+`present`, which turns `false` when the device it is set to is unplugged.
+
+## 5. Put a mute on a key
 
 In KDE Plasma 6: *System Settings → Keyboard → Shortcuts → Add New → Command or Script…*.
 Give it the command
@@ -96,7 +126,7 @@ vix-mix ctl toggle /ch/mic/mute
 a name, and the key. Any desktop that runs a command on a key does the same. The command
 takes a few milliseconds, and exits 3 without doing anything when Vix Mix is not running.
 
-## 5. Follow a value from a script
+## 6. Follow a value from a script
 
 ```bash
 vix-mix ctl watch /ch/mic/mute | while read -r address value; do
@@ -110,7 +140,7 @@ quits. `watch /ch/1` follows everything of a channel and `watch /` everything; a
 plugin that is removed prints `/ch/3 gone`. It prints where a value stands, not every step: a
 mute switched on and off again within a sixtieth of a second prints nothing.
 
-## 6. Exchange lines from a program
+## 7. Exchange lines from a program
 
 A controller that shows state wants one connection it keeps. Two ways to have one:
 
@@ -153,10 +183,10 @@ What a program has to know:
 - Read what you are sent. A connection that leaves 64 messages unread is closed. At most
   eight connections are served at once, and a ninth is told so on its first line.
 
-## 7. Let a deck app in a Flatpak reach the socket
+## 8. Let a deck app in a Flatpak reach the socket
 
 A sandboxed app sees neither the `vix-mix` command nor the socket. Give it the socket's
-directory, and have its plugin open the socket as in step 6:
+directory, and have its plugin open the socket as in step 7:
 
 ```bash
 flatpak override --user --filesystem=xdg-run/vix-mix <the app's id>
@@ -168,7 +198,7 @@ before the deck app; the directory then stays until you log out.
 This step is written from Flatpak's documentation and has not been run with a deck app yet.
 If it turns out wrong, fix it here in the commit that finds out.
 
-## 8. How you know it worked
+## 9. How you know it worked
 
 With Vix Mix running and a channel named Mic:
 
@@ -179,4 +209,10 @@ vix-mix ctl toggle /ch/mic/mute && vix-mix ctl get /ch/mic/mute
 prints the values the toggle changed and then Mic's mute as it now is: `/ch/1/mute true` when
 Mic was not muted (the id is your channel's). Both of Mic's mute buttons are lit in the
 window, and Mic is silent in both mixes. Run it again and it reads `false`, the buttons go
-out, and Mic is heard. The key from step 4 does the same with the window minimised.
+out, and Mic is heard. The key from step 5 does the same with the window minimised. And
+
+```bash
+vix-mix ctl set /mix/monitor/device/name "<another output's description>"
+```
+
+moves what you hear to that output, with its radio picked in Monitor's output panel.
