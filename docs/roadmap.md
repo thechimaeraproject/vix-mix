@@ -65,6 +65,12 @@ itself; an issue closes when its item is struck through in handoff 09.
 | [#17](https://github.com/thechimaeraproject/vix-mix/issues/17) | a frame for the meters alone, to get under 5 % of one core | item 13 |
 | [#18](https://github.com/thechimaeraproject/vix-mix/issues/18) | the window's app id on Wayland and the launcher's activation token; fixed and closed 2026-11-11 | item 9, struck |
 
+Beside round 1, one lane the first build did not plan, taken with the user on 2026-11-16:
+
+| Lane | What it delivers | Status |
+|---|---|---|
+| [10 — Control socket](handoffs/10-control-socket.md) | every switch and fader of the console read, written and followed by other programs: a Unix socket that speaks address lines, and `vix-mix ctl` as its command | not yet built |
+
 ## Named but not built
 
 - **A Windows backend**, `vixmix-cpal`, over the kit's `audio-io` crate with its device layer

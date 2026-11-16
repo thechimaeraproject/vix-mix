@@ -44,6 +44,7 @@ a kit-managed Rust repository is laid out.
 | Plugin editors on Linux | winit runs on X11 (XWayland under KDE Wayland). | The kit's VST3 host refuses Wayland handles: a VST3 editor embeds only in an X11 window. |
 | Default branch | `master`. | As the kit, Nexus and Vix. |
 | Packaging | **Native: an RPM** (`packaging/linux/vix-mix.spec`, built by `scripts/package/rpm.sh` in a Fedora container by `.github/workflows/linux-build.yml` after every merge), with the tarball and `cargo install` beside it; a COPR once the repository and its licence are public, so `dnf` updates it. | The user's decision (2026-11-10), on handoff 08's finding (under Rejected, Flatpak): a native install sees every plugin the machine has, yabridge works, and nothing needs granting. |
+| Control from outside | **A Unix socket that speaks address lines, and `vix-mix ctl` as its command** (added 2026-11-16, [handoff 10](handoffs/10-control-socket.md); it replaces nothing). Every switch and fader of the console is read, written and followed under an address shaped as OSC's are (`/ch/1/monitor/mute`), one request a line, each answered `ok` or `error:` with what to send instead. Only the user's own programs reach it: the socket is a file in the session's runtime directory, and nothing listens on the network. | The user's ask: other programs turning a plugin on and off, muting a channel and setting a level, for hotkeys and a Stream Deck plugin of their own. Each of those was already a `Command` the window sends, so this is a second way in for them and no new behaviour. A socket, because the mixer is a window and its own stdin is nobody's to write to; text lines, so a shell script and a deck plugin read the same thing and `vix-mix ctl` can hand them to stdin and stdout; addresses, because a controller binds a key to one name it can toggle and follow. The product definition's "Not in v1: Stream Deck or MIDI controller support" still holds for the plugin and for MIDI. |
 
 ## Rejected
 
@@ -95,6 +96,21 @@ a kit-managed Rust repository is laid out.
   - *What the binary needs is small*: the release build links only glibc, `libgcc_s` and
     `libpipewire-0.3` (`ldd`, in the container), and loads the window system and the GPU driver
     at run time.
+- **OSC over UDP as the first way in from outside** (2026-11-16). UDP carries no reply, so a
+  refused request has nowhere to say what to send instead, a controller cannot ask which
+  channels and plugins there are, and following a value needs a subscription that is renewed
+  by convention. The addresses are kept so that each maps onto an OSC message, and a UDP
+  listener for the controllers that speak only OSC is named in the [roadmap](roadmap.md).
+- **D-Bus for the control from outside** (2026-11-16). It is the desktop's own answer, with
+  change signals and one owner per name, but its Rust binding brings an async executor and
+  its dependencies into a workspace that has neither, a channel or an insert that comes and
+  goes is an object tree to keep, and a call written by hand in a shortcut needs its type
+  signature.
+- **A WebSocket for the control from outside** (2026-11-16), which is what Wave Link gives
+  its Stream Deck plugin: a TCP port on the loopback is reachable by every web page the
+  browser opens, so it needs an origin check and a token where a socket file needs neither.
+- **A C ABI** (2026-11-16). An ABI is for code loaded into the mixer's process, and nothing
+  loads code into it; a caller outside the process is served by messages.
 
 ## Open
 
@@ -108,3 +124,6 @@ Not blocking; each is decided by the lane named, or later.
 - **The licence before any public release** (MIT assumed).
 - **Plugin editors on Wayland**: later, editors on an X11 connection of their own while the
   console runs on Wayland.
+- **What else the control socket carries**: the meters, the commands that add, remove, move
+  and rename, an OSC listener over UDP, and a transport on Windows. Each waits for a caller
+  that needs it.

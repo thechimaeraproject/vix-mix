@@ -20,7 +20,7 @@ on every push and in CI.
 
 ## Start here
 
-- [build-map.md](build-map.md) — the plan of record: the nine lanes and their waves, a
+- [build-map.md](build-map.md) — the plan of record: the lanes and their waves, a
   worktree per lane, the conflict rules, the shared contracts and how a change to them is
   requested, how to run a lane.
 - [charter.md](charter.md) — what Vix Mix is for, the decisions settled on 2026-11-03 with
@@ -104,3 +104,5 @@ on every push and in CI.
   pass on Fedora.
 - [handoffs/09-round-1-fixes.md](handoffs/09-round-1-fixes.md) — what the first by-hand pass on
   Fedora finds, fixed; seeded with the fifteen items the earlier lanes left open for it.
+- [handoffs/10-control-socket.md](handoffs/10-control-socket.md) — the console read, written
+  and followed by other programs: a Unix socket that speaks address lines, and `vix-mix ctl`.
