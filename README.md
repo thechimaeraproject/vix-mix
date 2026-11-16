@@ -49,6 +49,14 @@ On Fedora, as a desktop app in the KDE launcher with its icon:
 prerequisites, then `cargo install --path app --locked` and `packaging/linux/install.sh`, or
 the release tarball `scripts/package/linux-tarball.sh` builds.
 
+## Control it from outside
+
+While it runs, another program of yours can read, change and follow every switch and fader
+of the console: `vix-mix ctl toggle /ch/mic/mute` on a key, `vix-mix ctl watch /` from a
+script, or a controller's own connection to the socket under it.
+[docs/cookbook/control-from-outside.md](docs/cookbook/control-from-outside.md) is the how;
+[docs/reference/control.md](docs/reference/control.md) is every address and what it sends.
+
 ## Docs
 
 [docs/README.md](docs/README.md) is the index; its trust table says how much to believe each

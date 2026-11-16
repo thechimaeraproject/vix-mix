@@ -175,7 +175,35 @@ write that down as a finding). Write the three figures, the date, the interface 
 into [reference/pipewire.md](../reference/pipewire.md) § Latency, beside the estimate. Unplug
 the cable before stopping `jack_iodelay`.
 
-## 12. How you know it worked
+## 12. Control it from outside
+
+The control socket ([Control Vix Mix from outside](control-from-outside.md)) has been run
+against the example console only, where nothing sounds; this step is its first use on the
+mixer that plays. With the scene up and your voice in the headphones through Mic:
+
+```bash
+vix-mix ctl toggle /ch/mic/mute
+```
+
+Both of Mic's mute buttons light and you fall silent in the headphones and in Discord; the
+same command again brings you back. Then, each with its expectation:
+
+- `vix-mix ctl set /ch/mic/fx/1/enabled false` turns Mic's first plugin's square off and you
+  hear the plugin go; `true` brings it back.
+- `vix-mix ctl nudge /ch/music/monitor/db -6` moves Music's Monitor fader down in the window
+  and Spotify drops in the headphones, not in the recording.
+- `vix-mix ctl watch /ch/mic` in a second terminal prints a line for each mute and each fader
+  move you then make in the window with the mouse.
+- **Minimise the window**, then run the toggle again: you fall silent all the same, the
+  `watch` prints it, and two seconds later `setup.ron` in the configuration directory holds
+  the mute (`grep -n mute ~/.config/vix-mix/setup.ron`). This is the one path no test reaches
+  on the real host: a window that draws nothing, woken by a request.
+- Put the toggle on a key (the cookbook's step 4) and use it while another window has the
+  focus.
+- Quit Vix Mix: the `watch` says the mixer closed and ends, `vix-mix ctl get /` exits 3, and
+  `ls $XDG_RUNTIME_DIR/vix-mix/` shows the lock file and no socket.
+
+## 13. How you know it worked
 
 Every expectation above held on the Fedora machine in one sitting, and reference/pipewire.md
 § Latency carries the measured figures. Then run, in the checkout:

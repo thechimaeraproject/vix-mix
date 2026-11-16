@@ -35,7 +35,8 @@ on every push and in CI.
   toasts and Undo, editor windows, what the window needs from the host.
 - [reference/control.md](reference/control.md) — the control from outside: one request a
   line, an address for every switch and fader of the console, what a write sends and what a
-  follower is told.
+  follower is told, the service's bounded queues, the Unix socket one mixer holds and its
+  client.
 - [reference/engine.md](reference/engine.md) — the realtime graph: the prepared graph and its
   acknowledged handoff, the allocation-free tick, meters, stats, the null backend.
 - [reference/host.md](reference/host.md) — the orchestrator: the `Host` trait the window
@@ -53,6 +54,9 @@ on every push and in CI.
 - [cookbook/by-hand-pass.md](cookbook/by-hand-pass.md) — the first real test on Fedora: the Wave
   Link scene on real devices and apps, checked by ear and with PipeWire's tools, the latency
   measured.
+- [cookbook/control-from-outside.md](cookbook/control-from-outside.md) — a mute on a key, a
+  value followed from a script, a controller's own connection: `vix-mix ctl`, the socket
+  under it, and what a program that speaks to it has to know.
 - [cookbook/install-on-fedora.md](cookbook/install-on-fedora.md) — Vix Mix as a desktop app
   on Fedora: the build prerequisites, `cargo install` or the release tarball, `install.sh`, and
   the entry in the KDE launcher with its icon.
