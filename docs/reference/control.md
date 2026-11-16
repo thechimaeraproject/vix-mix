@@ -198,7 +198,10 @@ connection.
   message. Something that went is told as `event address gone` to whoever follows it, a
   place above it, or an address under it. With no follower it does nothing
   (`followed()`). The first follower starts from the setup as it stands when it asks; a
-  later one does not disturb what the earlier ones are still owed.
+  later one does not disturb what the earlier ones are still owed. **A follower is told
+  where things stand, not every step on the way**: a value that changed and changed back
+  between two calls is not told, and one that moved three times is told once, as it reads
+  at the call. The window calls it when it polls its host, at most 60 times a second.
 
 A client that asks is always answered before it is told: its answer is sent in `serve`, and
 the event for its own change only at the next `publish`.
@@ -327,7 +330,9 @@ end. `sender()` is the sending side for a second thread.
   send instead, the model's refusal word for word; a follower hears a change another client
   made and one made past every client, only under what it follows, nothing when nothing
   changed and nothing once it unfollowed; a follower that makes a change is answered first
-  and told after; a second follower does not take a change owed to the first; a channel
+  and told after; a follower is told where things stand, not every step (a mute toggled
+  twice between two publishes says nothing, a fader moved three times is told once); a
+  second follower does not take a change owed to the first; a channel
   removed is `gone` to who follows it, a place above it or a value under it, and its values
   come back when it is restored; a client that does not read is dropped at its sixty-fifth
   unread message and the others are served; a ninth connection is refused until one closes;

@@ -19,7 +19,9 @@
 //! proves the window works, and `--dump-png <file>` draws `FakeHost`'s console once, offscreen
 //! at the prototype's scale, into a PNG. `--scan-bundle <bundle>` is for the plugin scan, which
 //! runs this program with it for each bundle it must load, so a plugin that crashes while it
-//! loads takes only that process down. See `docs/reference/app.md`.
+//! loads takes only that process down. `ctl` is the one use that is a user's: `vix-mix ctl
+//! <request>` asks the Vix Mix that is running, over its control socket ([`ctl`]). See
+//! `docs/reference/app.md`.
 //!
 //! [`Host`]: vixmix_host::Host
 
@@ -30,6 +32,7 @@ mod browser;
 mod capture;
 mod console;
 mod control;
+mod ctl;
 mod desktop;
 mod drag;
 mod editors;
@@ -60,7 +63,8 @@ use winit::event_loop::EventLoop;
 use crate::app::Asked;
 
 const USAGE: &str = "\
-usage: vix-mix [--fake] [--quit-after-frames <n>] | --dump-png <file> | --scan-bundle <bundle>
+usage: vix-mix [--fake] [--quit-after-frames <n>] | --dump-png <file> | --scan-bundle <bundle> | ctl <request>
+  ctl                  ask the Vix Mix that is running, e.g. `vix-mix ctl toggle /ch/mic/mute`; `vix-mix ctl --help` says how
   --fake               run against FakeHost: the prototype's example console, simulated meters, no audio
   --quit-after-frames  close the window once this many frames have been drawn
   --dump-png           draw FakeHost's console once, offscreen at twice the size, into a PNG, and exit
@@ -166,6 +170,11 @@ fn plugin_scan() -> Describe {
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // The control socket's command, before any flag is read: no window, no host, and what
+    // follows it is a request, not flags.
+    if args.first().map(String::as_str) == Some(ctl::CTL) {
+        std::process::exit(ctl::run(&args[1..]));
+    }
     let startup = match Startup::parse(&args) {
         Ok(startup) => startup,
         Err(problem) => {
