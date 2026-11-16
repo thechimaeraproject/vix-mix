@@ -26,10 +26,11 @@ close. Its tests also take `vixmix-plugins`, because their
 
 | File | What it is |
 |---|---|
-| `main.rs` | the command line, the event loop (X11 on Linux), or the capture, or the plugin scan's child (`--scan-bundle`); how the real host scans (`plugin_scan`) |
+| `main.rs` | the command line, the event loop (X11 on Linux), or the capture, or the plugin scan's child (`--scan-bundle`), or the control socket's command (`ctl`); how the real host scans (`plugin_scan`) |
 | `app.rs` | the winit `ApplicationHandler`: the host and its polls, the window, the editor windows, one frame (or, hidden, one tick without a frame) at a time, the loop's own events (`Asked`: close, or a control request waiting), what the window's events say of whether it can be seen, egui's viewport facts, the window's least size |
 | `pacing.rs` | when the next frame comes (`Pacer`, `pacing::plan`): the 60 Hz grid, input under the same cap, a refused frame's slot, the hidden window's ticks, the host's own polls between frames, the poll after a change from outside (`serve_soon`) |
 | `control.rs` | the control socket in the window (`Control`): which profile's socket is opened, the requests served against the host, the window's one poll of the host (`control::poll`), which tells the socket's followers |
+| `ctl.rs` | `vix-mix ctl`: which mixer to ask, one request and its answer, `watch` until stopped, `-` as a relay of standard input and output, the exit codes |
 | `shell.rs` | the window's state between frames (`Shell`), what it takes from the host's events (`Shell::events`) and what it does with a frame's `Intent`s: commands applied, refusals to the toast line, popovers opened and closed, Undo, stars and a rescan through the host, editors queued and then opened (`open_editors`) |
 | `ui.rs` | what a frame draws and senses: the header and its display, the banner, the console, the open popover, the toast line |
 | `console.rs` | the console row filling the window (`Geometry`): where each strip goes, the mixes pinned at the right, the channels' sideways scroll and what scrolls it (the wheel, the bar, a channel added, the focus, an insert dragged to an edge), the rects a popover hangs from and a drag lands in (what shows of them), the insert drag resolved after the last strip |
@@ -263,7 +264,48 @@ and every connection ends.
 
 ## The command line
 
-For checks, not users: `--fake` runs against `FakeHost`; `--quit-after-frames N` (N ≥ 1)
+**`vix-mix ctl` is the one use of the command line that is a user's**: it asks the Vix Mix
+that is running, over its control socket ([The control socket](#the-control-socket); the
+requests are [control.md](control.md)'s). `main` hands it everything after `ctl` before any
+flag is read, so it opens no window, boots no host and touches no configuration, and what
+follows it is a request, not flags. On a platform without Unix sockets it says there is no
+mixer to ask and exits 1.
+
+```
+vix-mix ctl toggle /ch/mic/mute
+vix-mix ctl set /ch/music/monitor/db -12
+vix-mix ctl watch /ch/mic/mute
+vix-mix ctl -
+```
+
+- **Which mixer.** With nothing said, the one that runs under this build's profile
+  (`control::profile_name`: the installed mixer for a release build, the `dev` profile's for
+  a debug build, `CHIMAERA_PROFILE` and `VIXMIX_CONTROL_SOCKET` honoured as the mixer honours
+  them). `--fake` asks `vix-mix --fake`; `--socket <path>` asks the mixer whose socket is
+  there. Either comes before the request.
+- **One request.** The words after `ctl` are joined into one line and read by the control
+  crate's own `parse`, so what is not a request is said at once, in the mixer's words,
+  without asking it. The answer's lines go to standard output, one `address value` each, and
+  `ok` prints nothing; a write prints what it changed. An address alone reads it.
+- **`watch`** prints the values and then goes on: every change as `address value`, and
+  `address gone`, a line each, until it is stopped or the mixer quits (which it says on
+  standard error, and exits 0). A value that changed and changed back between two polls of
+  the host is not printed ([control.md](control.md) § The service).
+- **`-`** is the relay: each line of standard input is a request, and everything the mixer
+  says goes to standard output as it says it, the greeting first, then each answer with its
+  `ok` or `error:` line and each `event` line, word for word. When standard input ends the
+  mixer answers what it was sent and closes, and the command exits 0. It is what a program
+  starts when it would rather exchange lines with a child than open a socket.
+- **How it ends.** 0 when the request was carried out. 1 when the mixer refused it or the
+  connection failed, with the refusal on standard error after `vix-mix ctl: `; that includes
+  a mixer that did not answer within 5 seconds (a plugin scan holds its window's thread) and
+  one that speaks another protocol number (two builds). 2 when what was written is not a
+  request, with what one is and the usage. 3 when no Vix Mix answers at the socket, so a
+  script can tell "start it first" from "that was wrong". `vix-mix ctl --help` prints the
+  usage and exits 0.
+- A reader that goes away (a closed pipe, `| head -1`) ends the command quietly with 0.
+
+The rest is for checks, not users: `--fake` runs against `FakeHost`; `--quit-after-frames N` (N ≥ 1)
 closes the window once N frames have reached the screen and exits 0, logging how long they
 took and the rate ("drew 1200 frames in 19.99 s after the first (60.0 a second)"), which is
 the headless proof that the window works and paces at 60 Hz; `--dump-png <file>` draws one
@@ -788,6 +830,23 @@ gesture sent, and what is in view is what the last frame painted whole inside it
   nothing never reaches the host, the model's own refusal comes back word for word, and the
   toast line stays empty); `a_click_in_the_window_reaches_a_client_that_follows_it` (and one
   on another channel does not); `fake_runs_under_a_name_of_its_own`.
+- `ctl.rs`: the words after `ctl` are one request to the mixer this build runs, an address
+  alone a read and a `watch` one that goes on; `--fake`, `--socket <path>`, `-` and `--help`;
+  what is not a request says what one is without asking a mixer (nothing, a flag alone, an
+  unknown verb, a `set` without a value); the usage names every verb but `unwatch` and
+  every exit code.
+- `tests/ctl.rs` (Unix), `vix-mix ctl --socket <path>` run as the program against a socket
+  the test listens on, the control crate's service over the example console served on a
+  thread: `a_request_prints_its_answer_and_exits_0` (a read, a write printing what it
+  changed, a nudge the next run reads back, a write to what already is printing nothing);
+  `a_refusal_is_on_standard_error_and_exits_1` (an unknown channel, the model's own
+  refusal, a read-only address); `what_is_not_a_request_exits_2_without_asking_and_says_what_one_is`
+  (with no mixer anywhere, and `--help` exits 0);
+  `no_vix_mix_at_the_socket_exits_3_and_says_to_start_it`;
+  `a_dash_relays_standard_input_and_ends_when_it_does` (the greeting, two answers, a blank
+  line unanswered, a refusal on its `error:` line, exit 0 once standard input ended);
+  `a_watch_prints_the_value_and_then_each_change_until_it_is_stopped` (two changes made by
+  another connection, the command still running).
 - `meters.rs`: a level reads on the fader's taper; a peak holds 900 ms then falls 0.006 a
   frame to the level; the console's meters follow the host's frame by position.
 - `ui.rs`, headless frames of `ui::draw` that press nothing and ask nothing: the header names
@@ -843,6 +902,19 @@ gesture sent, and what is in view is what the last frame painted whole inside it
 - Minimised and restored (`ShowWindowAsync` from PowerShell, with the window's handle taken
   before it was minimised): no frame while minimised, drawing again at once when restored.
 - `cargo run -p vix-mix -- --quit-after-frames 3` runs on the real host and exits 0.
+- The control socket, on Fedora KDE with `--fake` (2026-11-16, a debug build, the installed
+  mixer running beside it and untouched): the window opened
+  `$XDG_RUNTIME_DIR/vix-mix/control-fake.sock`, mode 600 in a directory of mode 700, and
+  removed it when it closed, the lock file staying. `vix-mix ctl --fake` read Mic's twelve
+  values; toggled `/ch/mic/mute` (both sends); bypassed a plugin by name
+  (`/ch/mic/fx/pro-c-2/enabled`); nudged Music's Monitor send by −3 dB; was refused an
+  unknown channel with the six there are, exit 1; relayed two requests from standard input;
+  exited 3 with no window running; a request took 2 ms. `vix-mix ctl --fake watch
+  /ch/mic/mute` printed each of two toggles made half a second apart by another run of the
+  command, and nothing for two made within one frame, which left the value where it was.
+  The window kept its 60 frames a second throughout. Not run: the real host (a debug build
+  would be a second mixer, issue 34), so not a hidden or an idle window woken by a request,
+  and no sound.
 - A signal, on Fedora KDE with `--fake` (2026-11-11): `kill -TERM` on the window running on
   X11 and `kill -INT` on it running on Wayland each logged "SIGTERM (SIGINT) asked Vix Mix to
   close" and ended the process with 0. Not run: a signal with the real host and apps routed

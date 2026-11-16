@@ -765,6 +765,38 @@ mod tests {
     }
 
     #[test]
+    fn a_follower_is_told_where_things_stand_not_every_step_on_the_way() {
+        let mut rig = Rig::new();
+        let (follower, other) = (rig.client(), rig.client());
+        assert_eq!(rig.ask(&follower, "watch /mix").last().unwrap(), "ok");
+        // Muted and unmuted again before the mixer publishes: the value is where the
+        // follower was last told it is, so nothing is said.
+        assert_eq!(
+            rig.ask(&other, "toggle /mix/master/mute").last().unwrap(),
+            "ok"
+        );
+        assert_eq!(
+            rig.ask(&other, "toggle /mix/master/mute").last().unwrap(),
+            "ok"
+        );
+        rig.service.publish(&rig.desk.setup);
+        assert_eq!(said(&follower), Vec::<String>::new());
+        // Moved three times before the mixer publishes: told once, as it reads then.
+        for db in ["-3", "-6", "-12"] {
+            let line = format!("set /mix/master/db {db}");
+            assert_eq!(rig.ask(&other, &line).last().unwrap(), "ok");
+        }
+        rig.service.publish(&rig.desk.setup);
+        assert_eq!(
+            said(&follower),
+            [
+                "event /mix/master/db -12",
+                "event /mix/master/position 0.56"
+            ]
+        );
+    }
+
+    #[test]
     fn a_second_follower_does_not_take_a_change_owed_to_the_first() {
         let mut rig = Rig::new();
         let (first, second) = (rig.client(), rig.client());
