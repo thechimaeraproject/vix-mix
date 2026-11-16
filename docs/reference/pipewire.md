@@ -67,7 +67,8 @@ a daemon to try it against is [Run a headless PipeWire](../cookbook/run-headless
   (`vix-mix.ch3.voice-chat`), `monitor_out_node_name` `<app>.monitor-out`,
   `master_out_node_name` `<app>.master-out`, `master_node_name` `<app>.master`; `slug` keeps
   lower-case ASCII letters and digits with one `-` for every other run (`channel` when nothing
-  is left). The id keeps two channels whose names slug alike apart; the slug is for whoever reads
+  is left), and is the model's, re-exported here ([model.md](model.md) § The setup; change
+  request 14). The id keeps two channels whose names slug alike apart; the slug is for whoever reads
   `pw-top`. A rename makes the sink again, under a new name, or under the same one when the
   slug does not change (`Test` to `TEST`); either way the backend moves the old sink's apps to
   the new one (§ Registry, identity and routing). `DISPLAY_NAME` (`Vix Mix`) prefixes

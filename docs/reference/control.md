@@ -1,0 +1,205 @@
+# Control (`vixmix-control`)
+**Owns:** `crates/vixmix-control/`
+
+**Reference — the control from outside as [handoff 10](../handoffs/10-control-socket.md)
+builds it; this page holds what is built.** `vixmix-control` is how another program reads,
+changes and follows the console: a request is one line of text, an address names one value of
+the setup, and what a request may change is what the window's switches and faders change, by
+the same commands. It depends on `vixmix-model` and on no other workspace crate, and holds no
+host, no window and no audio.
+
+## What it owns and what the others keep
+
+| This crate | The others |
+|---|---|
+| the request line and its verbs; the addresses and what each reads; the value's text; the protocol's number | the model: what a command means and when it is refused ([model.md](model.md) § Commands); a refusal is passed on word for word |
+| which commands a request can send, and that it sends no other | the host: applying a command, the save, the engine, the backend ([host.md](host.md)) |
+| the table of every address with its value, and the changes between two tables | the window: every gesture, the toasts and undo, and everything that adds, removes, moves or renames ([app.md](app.md)) |
+
+## A request
+
+`parse(line) -> Result<Option<Request>, String>` reads one line into a
+`Request { verb, address, value }`. A blank line is `Ok(None)`: no request and no error. The
+line is `verb address [value]`, the verb in any case, the parts separated by spaces or tabs;
+everything after the address is the value.
+
+| Verb | Takes | What it asks |
+|---|---|---|
+| `get` | an address | every value at or under it |
+| `set` | an address and a value | write a switch or a fader |
+| `toggle` | an address | flip a switch |
+| `nudge` | an address and an amount | move a fader by that much, no further than its ends |
+| `watch` | an address | follow it: be told of every change at or under it |
+| `unwatch` | an address | stop following it |
+
+A line that begins with an address has no verb written: the address alone is a `get`, and an
+address followed by a value is a `set`, which is how OSC writes a message. A line that is not
+a request is refused with what one is: an unknown verb lists the six, a verb without an
+address or a `set` without a value shows the line that was meant, and a value after a verb
+that takes none shows the `set` that writes it.
+
+`plan(&Setup, &Request) -> Result<Plan, String>` says what the request asks of a mixer whose
+setup that is: `Plan::Read(addresses)` and `Plan::Watch(addresses)` name what to print or
+follow, `Plan::Unwatch(addresses)` what to stop following, and `Plan::Write(commands)` the
+commands to apply, in order. Every `Err` ends with what to send instead.
+
+## Addresses
+
+`leaves(&Setup) -> Vec<Leaf>` is every address of a setup with its value and its `Kind`, in
+the console's order: the channels left to right, Monitor, Master, then every plugin strip by
+strip. It is the one list the protocol is read from: what `get` prints, what a write may
+name, and what a follower is told.
+
+### As the mixer prints them
+
+A channel is named by its `ChannelId` and a plugin by the `InstanceId` of its insert. Neither
+changes while the thing exists and neither is ever handed out again ([model.md](model.md)
+§ Ids), so an address a controller keeps stays the same thing.
+
+| Address | Value | A write sends |
+|---|---|---|
+| `/ch/<id>/name` | text | read only |
+| `/ch/<id>/kind` | `"hardware"` or `"apps"` | read only |
+| `/ch/<id>/link` | switch | `SetLink` |
+| `/ch/<id>/mute` | switch: true when both sends are muted | `SetMute` for Monitor, then for Master |
+| `/ch/<id>/monitor/mute`, `/ch/<id>/master/mute` | switch | `SetMute` |
+| `/ch/<id>/monitor/db`, `/ch/<id>/master/db` | number: the fader in decibels | `SetSend` |
+| `/ch/<id>/monitor/position`, `/ch/<id>/master/position` | number, 0 to 1: the fader's travel | `SetSend` |
+| `/ch/<id>/monitor/processed`, `/ch/<id>/master/processed` | switch: MON, MST | `SetChainRouting` |
+| `/mix/monitor/mute`, `/mix/master/mute` | switch | `SetMixMute` |
+| `/mix/monitor/db`, `/mix/master/db` | number | `SetMixLevel` |
+| `/mix/monitor/position`, `/mix/master/position` | number | `SetMixLevel` |
+| `/mix/master/preview` | switch: the ear | `SetPreview` |
+| `/fx/<instance>/name` | text | read only |
+| `/fx/<instance>/strip` | text: the strip's address, `"/ch/3"` or `"/mix/master"` | read only |
+| `/fx/<instance>/slot` | number: its place in the chain, from 1 | read only |
+| `/fx/<instance>/enabled` | switch: the bypass square | `SetInsertEnabled` |
+
+A plugin is not under its channel: an insert dragged to another strip keeps its instance, so
+it keeps its address and its `strip` and `slot` change.
+
+`address::covers(place, address)` is whether an address is a place or lies under it, compared
+part by part (`/ch/1` does not cover `/ch/10`); `/` covers everything. `address::node` is the
+channel, mix or plugin an address belongs to, its first two parts.
+
+### As a person may write them
+
+`resolve(&Setup, written) -> Result<Vec<String>, String>` turns what a request wrote into the
+addresses above:
+
+- **A channel by its name**: `/ch/mic/monitor/mute`. The name is compared as the model's
+  `slug` makes it (lower case, every run of other characters one `-`), which is the rule a
+  channel's PipeWire node name ends by, so `voice-chat`, `Voice_Chat` and `VOICE-CHAT` all
+  name *Voice chat*.
+- **A plugin under its strip**, after `fx`, by its slot counted from 1 or by its name:
+  `/ch/mic/fx/2/enabled`, `/mix/master/fx/pro-l-2/enabled`. Each becomes the plugin's
+  `/fx/<instance>/…`.
+- **`…/fx` alone** is every plugin of that strip, in order: one address each, and none for a
+  strip with no plugins.
+- **A part that is all digits is never a name**: after `/ch` it is an id, after a strip's
+  `fx` a slot, after `/fx` an instance. A channel named `2` is written by its id.
+- The words after the channel, mix or plugin are taken in any case; a trailing slash is
+  ignored; `/` is everything, and `/ch`, `/mix` and `/fx` are every channel, mix and plugin.
+
+What names nothing is refused with the names there are: an unknown channel lists every
+channel with its address, an unknown plugin or slot lists the strip's plugins, an address
+outside `/ch`, `/mix` and `/fx` names the three. A name that two channels, or two plugins of
+one strip, share is refused naming each by its id or its slot.
+
+## Values
+
+`Value` is `Switch(bool)`, `Number(f64)` or `Text(String)`, and its `Display` is what a line
+carries:
+
+- **A switch** prints `true` or `false`. A request may also write `on`, `off`, `1` and `0`,
+  in any case.
+- **A number** prints as short as it reads back (`0.84`, `-12`, `1`). A position is printed
+  to four decimals and decibels to two, so the same fader always reads the same. A silent
+  fader's decibels are `-inf` (`SILENT`); a request may write `-inf` or `-infinity`, and
+  never `inf` or `nan`.
+- **Text** prints in double quotes as JSON writes it, so a quote, a backslash or a line end
+  in a channel's name stays inside its one line, and any JSON reader reads it back.
+
+## What a write sends
+
+`set`, `toggle` and `nudge` name exactly one value. A place that holds several (`/ch/1`,
+`/ch/1/monitor`, a strip's `fx`) is refused with what is under it and one address to write.
+
+- **`set`** of a switch sends its command with the value. Of a `position` it sends the
+  number as the fader's position; one outside 0 to 1 is the model's refusal
+  (`Refused::NotAPosition`). Of a `db` it sends the position the taper gives
+  (`taper::db_to_position`): 0 dB is exactly `taper::UNITY`, `-inf` and anything at or below
+  the taper's floor is 0, and more than `TOP_DB` (+6, the taper's top) is refused here.
+- **`toggle`** sends the switch set to what it is not. For `/ch/<id>/mute` that is: unmute
+  both sends when both are muted, otherwise mute both.
+- **`nudge`** reads where the fader stands in the setup, not in its printed value. A
+  `position` moves by the amount and stops at 0 and at 1. A `db` moves by that many decibels,
+  stops at `TOP_DB`, and falls silent below the taper's floor; from silence it is refused,
+  because silence is no number of decibels to move from, with the two ways on (`set` a
+  level, or nudge the `position`).
+- **A linked channel**: `SetSend` moves the other send by the same amount, as the fader in
+  the window does ([model.md](model.md) § Commands). Nothing here adds to that.
+- **Read only**: a name, a kind, and a plugin's name, strip and slot are refused, saying
+  where each is changed.
+
+**A request sends eight kinds of command and no other**: `SetSend`, `SetMute`, `SetLink`,
+`SetChainRouting`, `SetInsertEnabled`, `SetMixLevel`, `SetMixMute` and `SetPreview`. The
+commands that add, remove, move or rename, and `SetSource`, `SetMixDevice`, `SetPrefs` and
+`SetInsertState`, stay the window's and the host's.
+
+## Changes
+
+`diff(before, after) -> Vec<Change>` is what turned one table into another: first
+`Change::Gone(node)` for each channel and plugin that is no longer there (`/ch/3`, `/fx/4`),
+each once, then `Change::Set { address, value }` for every address that is new or reads
+differently, in the console's order. A `Change` prints as `address value`, or `address gone`
+(`GONE`). A value printed the same reads as unchanged: a fader moved by less than its
+printed decimals says nothing.
+
+## The lines' fixed words
+
+`PROTOCOL` is the protocol's number, and `greeting()` the line that carries it,
+`vix-mix control ` and the number. It moves when an address is renamed or a line changes its
+meaning; a new address or a new verb keeps it. `OK` (`ok`) ends an answer that was carried
+out, `ERROR` (`error: `) begins the line that ends one that was not, and `EVENT` (`event `)
+begins a line that tells a follower of a change.
+
+## Verification
+
+`cargo test -p vixmix-control`, on every platform:
+
+- **`tests/requests.rs`**, from the outside.
+  `each_of_the_eight_commands_has_a_line_that_sends_it_and_no_other`: a `match` over
+  `Command` with no wildcard gives each variant its line or names it the window's, so a new
+  variant does not compile until it is decided, and each of the eight lines sends its own
+  kind of command.
+  `every_value_a_write_may_name_reads_back_what_was_written`: for every address of the
+  example console, a `set` then the table reads the value written (a switch flipped, a
+  position at 0.5, decibels at −12), and every read-only address is refused as such; a
+  `match` over `Kind` with no wildcard says which is which.
+  `a_request_sends_only_the_eight_commands_and_never_changes_the_consoles_shape`: a
+  property over 256 runs of up to 23 lines, well formed or not, written by id, by name and
+  by slot: every command sent is one of the eight, and the changes each run of commands
+  made are never a `Gone` and never to a read-only address.
+- **`request`**: a line read into its verb, address and value, an address alone and an
+  address with a value read as OSC writes them, a blank line no request; every line that is
+  no request says what one is; each switch and fader sends the command its control sends; a
+  channel's mute is both sends, and its toggle mutes both unless both are muted; 0 dB is
+  unity bit for bit, −12 dB is the taper's 0.56, the top and silence, `TOP_DB` held to the
+  taper; a nudge by decibels and by position, stopped at both ends, refused from silence;
+  every write that cannot be made says what to send instead; a read names what to print, an
+  empty place is no error, and what went can still be unfollowed.
+- **`address`**: covering part by part; a channel by id and by name; a plugin by instance,
+  slot and name, on a channel and on a mix; `fx` alone; a number never a name; every
+  address that names nothing refused with the names there are, and a name two channels or
+  two plugins share refused naming each.
+- **`tree`**: a channel's twelve values in order with their decibels worked out by hand,
+  the mixes' seven, a plugin's four; both sends muted is the channel muted and a silent
+  fader reads `-inf`; the changes between two setups turn the first table into the second
+  through ten commands that mute, move a linked fader, move a plugin between strips, remove
+  and restore; what went is said once as gone, before anything else.
+- **`value`**: each value written as one word that reads back; a name with a quote and a
+  line end stays on one line; the switch's six spellings; a number finite or silence and
+  nothing else; rounding keeps a reading steady and zero unsigned.
+
+`kit-check-docs` holds this page's `Owns:` line against the crate.

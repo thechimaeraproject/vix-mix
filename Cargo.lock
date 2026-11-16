@@ -3342,6 +3342,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "vixmix-control"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "proptest",
+ "serde_json",
+ "vixmix-model",
+]
+
+[[package]]
 name = "vixmix-engine"
 version = "0.1.0"
 dependencies = [

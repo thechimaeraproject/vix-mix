@@ -186,6 +186,7 @@ crates/vixmix-engine/      the realtime graph: the prepared graph and its handof
 crates/vixmix-plugins/     the catalog, instances on the UI thread, the rack that lends them, editor sessions
 crates/vixmix-pipewire/    Linux only (empty elsewhere): the PipeWire client
 crates/vixmix-host/        the orchestrator behind the Host trait: RealHost, FakeHost
+crates/vixmix-control/     the control from outside: the request line, the addresses over a setup, what a write sends
 app/                       the vix-mix binary: winit + egui-winit + egui-wgpu over a Host
 docs/                      index, charter, roadmap, build map, reference, handoffs, the design pack, kit-*.md records
 scripts/dev/tasks.mjs      the dev registry; scripts/dev.mjs, dev.bat and dev.sh are its front door
@@ -196,8 +197,8 @@ packaging/linux/           the desktop entry, icon, AppStream metainfo, install.
 ```
 
 The dependency direction: the model depends on no workspace crate; the engine on the model; the
-plugins crate and the PipeWire crate on the model and the engine; the host on all four; the app
-on the host and the model.
+plugins crate and the PipeWire crate on the model and the engine; the host on all four; the
+control crate on the model only; the app on the host and the model.
 
 ## Rules every crate obeys
 
