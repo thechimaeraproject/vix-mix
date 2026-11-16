@@ -14,11 +14,16 @@
 
 pub mod address;
 mod request;
+mod service;
 mod tree;
 mod value;
 
 pub use address::resolve;
 pub use request::{Plan, Request, TOP_DB, Verb, parse, plan};
+pub use service::{
+    Client, ClientId, Connector, Full, INBOX, MAX_CLIENTS, MAX_LINE, MAX_WATCHES, OUTBOX, Requests,
+    SERVE_BUDGET, Served, Service, Target, service,
+};
 pub use tree::{Change, GONE, Kind, Leaf, diff, leaves};
 pub use value::{SILENT, Value};
 
