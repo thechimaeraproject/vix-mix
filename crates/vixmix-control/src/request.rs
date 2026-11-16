@@ -1,20 +1,25 @@
 //! A request: one line read into a verb, an address and a value, and what it asks of the
 //! mixer ([`plan`]): values to print, commands to apply, or addresses to follow.
 //!
-//! A request sends only commands the window's switches and faders send: `SetMute`, `SetSend`,
-//! `SetLink`, `SetChainRouting`, `SetMixLevel`, `SetMixMute`, `SetPreview` and
-//! `SetInsertEnabled`. What they mean, and when one is refused, is the model's
+//! A request sends only commands the window's switches, faders and device lists send:
+//! `SetMute`, `SetSend`, `SetLink`, `SetChainRouting`, `SetMixLevel`, `SetMixMute`,
+//! `SetPreview`, `SetInsertEnabled`, and for a device `SetMixDevice` and, on a hardware
+//! channel only, `SetSource`. What they mean, and when one is refused, is the model's
 //! (`docs/reference/model.md` § Commands); a refusal is passed on word for word.
 
 use vixmix_model::taper::{db_to_position, position_to_db};
-use vixmix_model::{Command, MixId, Setup};
+use vixmix_model::{Command, DeviceRef, MixId, Setup, Source, Strip, slug};
 
-use crate::address::{self, CHANNELS, MIXES, PLUGINS, ROOT};
+use crate::address::{self, CHANNELS, INPUTS, MIXES, OUTPUTS, PLUGINS, ROOT};
+use crate::console::Console;
 use crate::tree::{Kind, Leaf, leaves};
 use crate::value::{self, SILENT, Value};
 
 /// A fader's top, in decibels: the taper's last point.
 pub const TOP_DB: f64 = 6.0;
+
+/// What a request writes for no device: Master may have none, and a hardware channel too.
+pub const NO_DEVICE: &str = "none";
 
 /// What a request asks for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -142,25 +147,32 @@ pub enum Plan {
     Unwatch(Vec<String>),
 }
 
-/// What `request` asks of a mixer whose setup is `setup`, or why it cannot be asked, ending
-/// with what to send instead.
-pub fn plan(setup: &Setup, request: &Request) -> Result<Plan, String> {
-    let table = leaves(setup);
+/// What `request` asks of a mixer whose console that is (its setup, and the devices it has
+/// now; a `&Setup` alone is a console with no device present), or why it cannot be asked,
+/// ending with what to send instead.
+pub fn plan<'a>(console: impl Into<Console<'a>>, request: &Request) -> Result<Plan, String> {
+    let console = console.into();
+    let table = leaves(console);
     let written = request.address.as_str();
     match request.verb {
-        Verb::Get => Ok(Plan::Read(places(setup, &table, written)?)),
-        Verb::Watch => Ok(Plan::Watch(places(setup, &table, written)?)),
+        Verb::Get => Ok(Plan::Read(places(&console, &table, written)?)),
+        Verb::Watch => Ok(Plan::Watch(places(&console, &table, written)?)),
         // Something that went can no longer be named, and may still be followed: an address
         // that names nothing is unfollowed as it was written.
         Verb::Unwatch => Ok(Plan::Unwatch(
-            address::resolve(setup, written).unwrap_or_else(|_| vec![written.to_ascii_lowercase()]),
+            address::resolve(console, written)
+                .unwrap_or_else(|_| vec![written.to_ascii_lowercase()]),
         )),
         Verb::Set | Verb::Toggle | Verb::Nudge => {
-            let leaf = one(setup, &table, written)?;
+            let leaf = one(&console, &table, written)?;
             let commands = match request.verb {
-                Verb::Set => set(leaf, request.value.as_deref().unwrap_or_default())?,
-                Verb::Toggle => toggle(leaf)?,
-                _ => nudge(setup, leaf, request.value.as_deref().unwrap_or_default())?,
+                Verb::Set => set(&console, leaf, request.value.as_deref().unwrap_or_default())?,
+                Verb::Toggle => toggle(&console, leaf)?,
+                _ => nudge(
+                    console.setup,
+                    leaf,
+                    request.value.as_deref().unwrap_or_default(),
+                )?,
             };
             Ok(Plan::Write(commands))
         }
@@ -168,20 +180,37 @@ pub fn plan(setup: &Setup, request: &Request) -> Result<Plan, String> {
 }
 
 /// The addresses `written` names, each holding a value or being a place that may be empty.
-fn places(setup: &Setup, table: &[Leaf], written: &str) -> Result<Vec<String>, String> {
-    let places = address::resolve(setup, written)?;
+fn places(console: &Console<'_>, table: &[Leaf], written: &str) -> Result<Vec<String>, String> {
+    let places = address::resolve(*console, written)?;
     for place in &places {
-        let lists = [ROOT, CHANNELS, MIXES, PLUGINS].contains(&place.as_str());
+        let lists = [ROOT, CHANNELS, MIXES, PLUGINS, INPUTS, OUTPUTS].contains(&place.as_str());
         if !lists && !table.iter().any(|l| address::covers(place, &l.address)) {
-            return Err(nothing_at(table, place));
+            return Err(no_device(console, place).unwrap_or_else(|| nothing_at(table, place)));
         }
     }
     Ok(places)
 }
 
+/// Why there is no device at `place`, when `place` is an app channel's `device`: an app
+/// channel has apps, not an input.
+fn no_device(console: &Console<'_>, place: &str) -> Option<String> {
+    let mut parts = place.strip_prefix(CHANNELS)?.strip_prefix('/')?.split('/');
+    let id = parts.next()?.parse::<u32>().ok()?;
+    if parts.next()? != "device" {
+        return None;
+    }
+    let channel = console.setup.channel(vixmix_model::ChannelId(id))?;
+    matches!(channel.source, Source::Apps(_)).then(|| {
+        format!(
+            "{} is an app channel and has no input device: its apps are ticked in the window, and only a hardware channel has `device`",
+            channel.name
+        )
+    })
+}
+
 /// The one value `written` names, for a write.
-fn one<'a>(setup: &Setup, table: &'a [Leaf], written: &str) -> Result<&'a Leaf, String> {
-    let places = address::resolve(setup, written)?;
+fn one<'a>(console: &Console<'_>, table: &'a [Leaf], written: &str) -> Result<&'a Leaf, String> {
+    let places = address::resolve(*console, written)?;
     let [place] = places.as_slice() else {
         return Err(format!(
             "`{written}` is every plugin of its strip, not one value: name a plugin by its slot or its name and then the value, as `{written}/1/enabled`"
@@ -192,7 +221,7 @@ fn one<'a>(setup: &Setup, table: &'a [Leaf], written: &str) -> Result<&'a Leaf, 
     }
     let under = children(table, place);
     if under.is_empty() {
-        return Err(nothing_at(table, place));
+        return Err(no_device(console, place).unwrap_or_else(|| nothing_at(table, place)));
     }
     let first = if place == ROOT {
         format!("/{}", under[0])
@@ -239,9 +268,84 @@ fn nothing_at(table: &[Leaf], place: &str) -> String {
 
 fn read_only(leaf: &Leaf, how: &str) -> String {
     format!(
-        "`{}` is read only: the control socket changes the console's switches and faders, and {how}",
+        "`{}` is read only: the control socket changes the console's switches, faders and devices, and {how}",
         leaf.address
     )
+}
+
+/// The device a request wrote for a strip: `None` for no device, else one the machine has
+/// now in the strip's direction, written as its node name, as it is listed, or as it is
+/// described.
+fn device(
+    console: &Console<'_>,
+    leaf: &Leaf,
+    strip: Strip,
+    token: &str,
+) -> Result<Option<DeviceRef>, String> {
+    let address = &leaf.address;
+    let Some(written) = value::word(token) else {
+        return Err(format!(
+            "`{address}` takes a device's name, and `{token}` opens a quote it does not close: send the name plain, or whole in double quotes"
+        ));
+    };
+    if written.is_empty() || written.eq_ignore_ascii_case(NO_DEVICE) {
+        return Ok(None);
+    }
+    let Some((direction, current)) = console.device(strip) else {
+        return Err(format!(
+            "`{address}` has no device to set: `get /` lists every address"
+        ));
+    };
+    let listed = console.listed(direction);
+    let wanted = slug(&written);
+    let found = listed
+        .iter()
+        .find(|(_, d)| d.name == written)
+        .or_else(|| listed.iter().find(|(word, _)| *word == wanted));
+    if let Some((_, device)) = found {
+        return Ok(Some((*device).clone()));
+    }
+    let described: Vec<&(String, &DeviceRef)> = listed
+        .iter()
+        .filter(|(_, d)| slug(&d.description) == wanted)
+        .collect();
+    match described.as_slice() {
+        [(_, device)] => Ok(Some((*device).clone())),
+        [] => {
+            // The device the setup already names, though it is not there now: nothing to do.
+            if let Some(same) = current.filter(|d| d.name == written) {
+                return Ok(Some(same.clone()));
+            }
+            Err(format!(
+                "no {} device is `{written}`: {}; write one by its name or its description, or `{NO_DEVICE}`",
+                address::way(direction),
+                address::devices_said(&listed, direction)
+            ))
+        }
+        several => {
+            let each: Vec<String> = several
+                .iter()
+                .map(|(_, d)| format!("`{}`", d.name))
+                .collect();
+            Err(format!(
+                "`{written}` describes {} {} devices: write the one meant by its name, {}",
+                several.len(),
+                address::way(direction),
+                each.join(" or ")
+            ))
+        }
+    }
+}
+
+/// The command that gives `strip` a device: a mix its output, a hardware channel its input.
+fn use_device(strip: Strip, device: Option<DeviceRef>) -> Command {
+    match strip {
+        Strip::Mix(mix) => Command::SetMixDevice { mix, device },
+        Strip::Channel(ch) => Command::SetSource {
+            ch,
+            source: Source::Hardware(device),
+        },
+    }
 }
 
 /// A switch written in a request, or what to send instead.
@@ -282,8 +386,21 @@ fn fader(leaf: &Leaf, decibels: bool, token: &str) -> Result<f32, String> {
 }
 
 /// The commands a `set` of `leaf` to `token` sends.
-fn set(leaf: &Leaf, token: &str) -> Result<Vec<Command>, String> {
+fn set(console: &Console<'_>, leaf: &Leaf, token: &str) -> Result<Vec<Command>, String> {
     Ok(match leaf.kind {
+        Kind::Device(strip) => vec![use_device(strip, device(console, leaf, strip, token)?)],
+        Kind::DeviceDetail(_) => {
+            return Err(read_only(
+                leaf,
+                "a device's description and whether it is there follow the device: set the `name` beside it",
+            ));
+        }
+        Kind::Listed(_) => {
+            return Err(read_only(
+                leaf,
+                "this is a device the machine has: to use it, set a mix's or a hardware channel's `device/name` to it",
+            ));
+        }
         Kind::Name(_) => return Err(read_only(leaf, "a channel is renamed in the window")),
         Kind::ChannelKind(_) => {
             return Err(read_only(
@@ -335,9 +452,9 @@ fn set(leaf: &Leaf, token: &str) -> Result<Vec<Command>, String> {
 }
 
 /// The commands a `toggle` of `leaf` sends: the switch set to what it is not.
-fn toggle(leaf: &Leaf) -> Result<Vec<Command>, String> {
+fn toggle(console: &Console<'_>, leaf: &Leaf) -> Result<Vec<Command>, String> {
     match leaf.value {
-        Value::Switch(on) => set(leaf, if on { "false" } else { "true" }),
+        Value::Switch(on) => set(console, leaf, if on { "false" } else { "true" }),
         _ => Err(format!(
             "`{}` is not a switch, so there is nothing to toggle: `set` it to a value, or `nudge` a fader by an amount",
             leaf.address
@@ -632,7 +749,7 @@ mod tests {
             ("set /ch/1/monitor/db inf", "is not one"),
             (
                 "set /ch/1 true",
-                "under it there is name, kind, link, mute, monitor, master; name one, as `/ch/1/name`",
+                "under it there is name, kind, link, mute, monitor, master, device; name one, as `/ch/1/name`",
             ),
             (
                 "set /ch/1/monitor true",
@@ -705,6 +822,195 @@ mod tests {
         assert_eq!(
             plan(&setup, &request("unwatch /ch/mic")),
             Ok(Plan::Unwatch(vec!["/ch/1".to_string()]))
+        );
+    }
+
+    /// The example console with its eight devices.
+    fn with_devices<T>(run: impl FnOnce(Console<'_>) -> T) -> T {
+        let setup = example::setup();
+        let devices = crate::console::example_devices();
+        run(Console {
+            setup: &setup,
+            devices: &devices,
+        })
+    }
+
+    fn sent(console: Console<'_>, line: &str) -> Vec<Command> {
+        match plan(console, &request(line)).unwrap_or_else(|e| panic!("{line}: {e}")) {
+            Plan::Write(commands) => commands,
+            other => panic!("{line} is not a write: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_device_is_set_by_its_name_as_it_is_listed_or_as_it_is_described() {
+        with_devices(|console| {
+            let speakers = example::device("Built-in speakers", false);
+            let to_speakers = [Command::SetMixDevice {
+                mix: MixId::Monitor,
+                device: Some(speakers.clone()),
+            }];
+            for line in [
+                "set /mix/monitor/device/name alsa_output.built_in_speakers",
+                "set /mix/monitor/device/name alsa-output-built-in-speakers",
+                "set /mix/monitor/device/name built-in-speakers",
+                // The description itself, with its space, plain or in double quotes.
+                "set /mix/monitor/device/name Built-in speakers",
+                "set /mix/monitor/device/name \"Built-in speakers\"",
+                "/mix/monitor/device/name BUILT_IN_SPEAKERS",
+            ] {
+                assert_eq!(sent(console, line), to_speakers, "{line}");
+            }
+            // A hardware channel's input: the command its source panel sends.
+            assert_eq!(
+                sent(console, "set /ch/synth/device/name c920-webcam-mic"),
+                [Command::SetSource {
+                    ch: ChannelId(6),
+                    source: Source::Hardware(Some(example::device("C920 webcam mic", true))),
+                }]
+            );
+            // No device: Master may have none, and so may a hardware channel.
+            for none in ["none", "NONE", "\"\""] {
+                assert_eq!(
+                    sent(console, &format!("set /mix/master/device/name {none}")),
+                    [Command::SetMixDevice {
+                        mix: MixId::Master,
+                        device: None,
+                    }]
+                );
+            }
+            assert_eq!(
+                sent(console, "set /ch/mic/device/name none"),
+                [Command::SetSource {
+                    ch: ChannelId(1),
+                    source: Source::Hardware(None),
+                }]
+            );
+        });
+    }
+
+    #[test]
+    fn monitor_without_a_device_is_the_models_to_refuse() {
+        with_devices(|console| {
+            let commands = sent(console, "set /mix/monitor/device/name none");
+            let mut setup = console.setup.clone();
+            let refused = apply(&mut setup, commands.into_iter().next().unwrap())
+                .expect_err("Monitor keeps a device");
+            assert!(
+                refused
+                    .to_string()
+                    .contains("only Master can have No device"),
+                "{refused}"
+            );
+        });
+    }
+
+    #[test]
+    fn a_device_that_cannot_be_set_says_which_there_are() {
+        with_devices(|console| {
+            for (line, expected) in [
+                // Not there, or the other way round: what there is, each as it is listed.
+                (
+                    "set /mix/monitor/device/name headphones",
+                    "no output device is `headphones`: the output devices there are: `/out/alsa-output-scarlett-2i2-phones` (Scarlett 2i2 \u{b7} Phones)",
+                ),
+                (
+                    "set /mix/monitor/device/name Wave:3",
+                    "write one by its name or its description, or `none`",
+                ),
+                (
+                    "set /ch/mic/device/name built-in-speakers",
+                    "no input device is `built-in-speakers`: the input devices there are: `/in/alsa-input-wave-3` (Wave:3)",
+                ),
+                // An app channel has apps, not an input, and a request never makes it one.
+                (
+                    "set /ch/game/device/name Wave:3",
+                    "Game is an app channel and has no input device",
+                ),
+                (
+                    "get /ch/game/device",
+                    "only a hardware channel has `device`",
+                ),
+                // The place is not the value.
+                (
+                    "set /mix/monitor/device built-in-speakers",
+                    "under it there is name, description, present; name one, as `/mix/monitor/device/name`",
+                ),
+                // What follows the device, and what the machine has, are read only.
+                (
+                    "set /mix/monitor/device/description Speakers",
+                    "set the `name` beside it",
+                ),
+                ("toggle /mix/monitor/device/present", "read only"),
+                (
+                    "set /out/built-in-speakers/name x",
+                    "set a mix's or a hardware channel's `device/name` to it",
+                ),
+                (
+                    "set /mix/monitor/device/name \"Built-in",
+                    "opens a quote it does not close",
+                ),
+                ("nudge /mix/monitor/device/name 1", "nothing to nudge"),
+                ("toggle /mix/monitor/device/name", "nothing to toggle"),
+            ] {
+                let refused = plan(console, &request(line)).expect_err(line);
+                assert!(refused.contains(expected), "{line} said `{refused}`");
+            }
+        });
+        // Two devices described alike: the description is refused, naming both by name.
+        let setup = example::setup();
+        let mut devices = crate::console::example_devices();
+        devices.push(vixmix_model::DeviceInfo {
+            device: DeviceRef {
+                name: "alsa_output.second".to_string(),
+                description: "Built-in speakers".to_string(),
+            },
+            direction: vixmix_model::DeviceDirection::Output,
+        });
+        let console = Console {
+            setup: &setup,
+            devices: &devices,
+        };
+        let refused = plan(
+            console,
+            &request("set /mix/master/device/name built-in-speakers"),
+        )
+        .expect_err("two alike");
+        assert!(
+            refused.contains("describes 2 output devices")
+                && refused.contains("`alsa_output.built_in_speakers` or `alsa_output.second`"),
+            "{refused}"
+        );
+        // By its name it is one.
+        assert_eq!(
+            sent(console, "set /mix/master/device/name alsa_output.second").len(),
+            1
+        );
+    }
+
+    #[test]
+    fn the_device_a_setup_names_can_be_named_again_though_it_is_unplugged() {
+        // No device is there now: the one Monitor already uses is still its device.
+        let setup = example::setup();
+        let phones = example::device(example::OUTPUTS[0], false);
+        assert_eq!(
+            sends(
+                &setup,
+                &format!("set /mix/monitor/device/name {}", phones.name)
+            ),
+            [Command::SetMixDevice {
+                mix: MixId::Monitor,
+                device: Some(phones),
+            }]
+        );
+        let refused = plan(
+            &setup,
+            &request("set /mix/monitor/device/name built-in-speakers"),
+        )
+        .expect_err("not there");
+        assert!(
+            refused.contains("no output device is there now"),
+            "{refused}"
         );
     }
 }

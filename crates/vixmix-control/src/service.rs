@@ -24,9 +24,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 
-use vixmix_model::{Applied, Command, Refused, Setup};
+use vixmix_model::{Applied, Command, DeviceInfo, Refused, Setup};
 
 use crate::address::covers;
+use crate::console::Console;
 use crate::request::{Plan, parse, plan};
 use crate::tree::{Change, Leaf, diff, leaves};
 use crate::{ERROR, EVENT, OK, greeting};
@@ -50,6 +51,11 @@ pub const SERVE_BUDGET: usize = 64;
 pub trait Target {
     /// The setup as it stands.
     fn setup(&self) -> &Setup;
+    /// The devices the machine has now, which a request for a device is held to. None by
+    /// default: a target that is a setup alone has no machine.
+    fn devices(&self) -> &[DeviceInfo] {
+        &[]
+    }
     /// Applies one command, whole or not at all.
     fn apply(&mut self, command: Command) -> Result<Applied, Refused>;
 }
@@ -293,11 +299,11 @@ impl Service {
     /// under what it follows as `event` lines in one message; something that went is also
     /// told to whoever follows an address under it. Call it when the setup may have changed
     /// (the host's `SetupChanged`); with no follower it does nothing.
-    pub fn publish(&mut self, setup: &Setup) {
+    pub fn publish<'a>(&mut self, console: impl Into<Console<'a>>) {
         if !self.followed() {
             return;
         }
-        let now = leaves(setup);
+        let now = leaves(console);
         let changes = diff(&self.told, &now);
         self.told = now;
         if changes.is_empty() {
@@ -345,13 +351,13 @@ impl Service {
             Ok(None) => return (None, false),
             Err(refused) => return (Some(error(&refused)), false),
         };
-        let asked = match plan(target.setup(), &request) {
+        let asked = match plan(console(target), &request) {
             Ok(asked) => asked,
             Err(refused) => return (Some(error(&refused)), false),
         };
         match asked {
-            Plan::Read(places) => (Some(listed(&leaves(target.setup()), &places)), false),
-            Plan::Watch(places) => (Some(self.watch(client, places, target.setup())), false),
+            Plan::Read(places) => (Some(listed(&leaves(console(target)), &places)), false),
+            Plan::Watch(places) => (Some(self.watch(client, places, console(target))), false),
             Plan::Unwatch(places) => {
                 if let Some(entry) = self.clients.iter_mut().find(|c| c.id == client) {
                     entry.watches.retain(|watch| !places.contains(watch));
@@ -362,7 +368,7 @@ impl Service {
                 (Some(format!("{OK}\n")), false)
             }
             Plan::Write(commands) => {
-                let before = leaves(target.setup());
+                let before = leaves(console(target));
                 let mut changed = false;
                 let mut refused = None;
                 for command in commands {
@@ -376,7 +382,7 @@ impl Service {
                 }
                 // What the commands changed, as it reads now: a linked fader's other send
                 // with the one that was set.
-                let mut answer: String = diff(&before, &leaves(target.setup()))
+                let mut answer: String = diff(&before, &leaves(console(target)))
                     .iter()
                     .map(|change| format!("{change}\n"))
                     .collect();
@@ -390,7 +396,7 @@ impl Service {
     }
 
     /// Adds `places` to what `client` follows and answers with what is there now.
-    fn watch(&mut self, client: ClientId, places: Vec<String>, setup: &Setup) -> String {
+    fn watch(&mut self, client: ClientId, places: Vec<String>, console: Console<'_>) -> String {
         let first = !self.followed();
         let Some(entry) = self.clients.iter_mut().find(|c| c.id == client) else {
             return String::new();
@@ -407,7 +413,7 @@ impl Service {
             ));
         }
         entry.watches.extend(new);
-        let now = leaves(setup);
+        let now = leaves(console);
         let answer = listed(&now, &places);
         // The first follower starts from the setup as it stands. With followers already,
         // what they were last told stays: a change not yet told is still owed to them.
@@ -444,6 +450,14 @@ impl Service {
     }
 }
 
+/// The target as a request is asked against it: its setup, and the devices it has now.
+fn console(target: &dyn Target) -> Console<'_> {
+    Console {
+        setup: target.setup(),
+        devices: target.devices(),
+    }
+}
+
 /// Whether a client that follows `watches` is told `change`: the change is at or under one of
 /// them, or something went that one of them is under.
 fn hears(watches: &[String], change: &Change) -> bool {
@@ -475,9 +489,11 @@ mod tests {
     use super::*;
     use vixmix_model::{ChannelId, MixId, apply, example};
 
-    /// The model alone as a target, keeping what was applied.
+    /// The model alone as a target, keeping what was applied, with whatever devices a test
+    /// plugs in.
     struct Desk {
         setup: Setup,
+        devices: Vec<DeviceInfo>,
         applied: Vec<Command>,
     }
 
@@ -485,6 +501,7 @@ mod tests {
         fn example() -> Desk {
             Desk {
                 setup: example::setup(),
+                devices: Vec::new(),
                 applied: Vec::new(),
             }
         }
@@ -493,6 +510,9 @@ mod tests {
     impl Target for Desk {
         fn setup(&self) -> &Setup {
             &self.setup
+        }
+        fn devices(&self) -> &[DeviceInfo] {
+            &self.devices
         }
         fn apply(&mut self, command: Command) -> Result<Applied, Refused> {
             self.applied.push(command.clone());
@@ -1006,5 +1026,83 @@ mod tests {
         drop(service);
         assert!(!client.requests.send("get /"));
         assert_eq!(client.answers.iter().count(), 0);
+    }
+
+    #[test]
+    fn a_device_is_set_against_the_devices_the_target_has_and_one_that_goes_is_told() {
+        let mut rig = Rig::new();
+        rig.desk.devices = crate::console::example_devices();
+        let client = rig.client();
+        // The four outputs, a name and a description each.
+        assert_eq!(rig.ask(&client, "watch /out").len(), 8 + 1);
+        assert_eq!(
+            rig.ask(&client, "watch /mix/monitor/device"),
+            [
+                "/mix/monitor/device/name \"alsa_output.scarlett_2i2___phones\"",
+                "/mix/monitor/device/description \"Scarlett 2i2 \u{b7} Phones\"",
+                "/mix/monitor/device/present true",
+                "ok",
+            ]
+        );
+        // Monitor to the speakers, written as they are described: answered with what
+        // changed. Both are plugged in, so `present` does not move.
+        assert_eq!(
+            rig.ask(&client, "set /mix/monitor/device/name built-in-speakers"),
+            [
+                "/mix/monitor/device/name \"alsa_output.built_in_speakers\"",
+                "/mix/monitor/device/description \"Built-in speakers\"",
+                "ok",
+            ]
+        );
+        assert_eq!(
+            rig.desk.applied,
+            [Command::SetMixDevice {
+                mix: MixId::Monitor,
+                device: Some(example::device("Built-in speakers", false)),
+            }]
+        );
+        let console = |desk: &Desk| -> Vec<Leaf> {
+            leaves(Console {
+                setup: &desk.setup,
+                devices: &desk.devices,
+            })
+        };
+        let before = console(&rig.desk);
+        rig.service.publish(Console {
+            setup: &rig.desk.setup,
+            devices: &rig.desk.devices,
+        });
+        assert_eq!(
+            said(&client),
+            [
+                "event /mix/monitor/device/name \"alsa_output.built_in_speakers\"",
+                "event /mix/monitor/device/description \"Built-in speakers\"",
+            ]
+        );
+        // The speakers are unplugged: gone from the list, and Monitor's device not there.
+        rig.desk
+            .devices
+            .retain(|d| d.device.description != "Built-in speakers");
+        assert_ne!(console(&rig.desk), before);
+        rig.service.publish(Console {
+            setup: &rig.desk.setup,
+            devices: &rig.desk.devices,
+        });
+        assert_eq!(
+            said(&client),
+            [
+                "event /out/alsa-output-built-in-speakers gone",
+                "event /mix/monitor/device/present false",
+            ]
+        );
+        // A device that is not there cannot be picked, and the answer lists the three left.
+        let refused = rig.ask(&client, "set /mix/master/device/name built-in-speakers");
+        assert_eq!(refused.len(), 1, "{refused:?}");
+        assert!(
+            refused[0].starts_with(ERROR)
+                && refused[0].contains("no output device is `built-in-speakers`")
+                && refused[0].contains("(HDMI \u{b7} LG UltraGear)"),
+            "{refused:?}"
+        );
     }
 }

@@ -53,6 +53,16 @@ pub fn number(token: &str) -> Option<f64> {
     token.parse::<f64>().ok().filter(|n| n.is_finite())
 }
 
+/// Text as a request writes it: in double quotes as JSON writes text, or a bare word (or
+/// several) as it stands. `None` for text that opens a quote and is not JSON's.
+pub fn word(token: &str) -> Option<String> {
+    if token.starts_with('"') {
+        serde_json::from_str::<String>(token).ok()
+    } else {
+        Some(token.to_string())
+    }
+}
+
 /// `n` to `places` decimals, and never negative zero: what a reply prints for a position or
 /// for decibels, so the same fader always reads the same.
 pub fn rounded(n: f64, places: i32) -> f64 {
@@ -91,6 +101,22 @@ mod tests {
         assert!(!written.contains('\n'), "{written}");
         // Any JSON reader reads the name back.
         assert_eq!(serde_json::from_str::<String>(&written).unwrap(), name);
+    }
+
+    #[test]
+    fn text_is_a_bare_word_or_in_double_quotes() {
+        assert_eq!(word("headphones").as_deref(), Some("headphones"));
+        assert_eq!(
+            word("Built-in speakers").as_deref(),
+            Some("Built-in speakers")
+        );
+        assert_eq!(
+            word("\"Built-in speakers\"").as_deref(),
+            Some("Built-in speakers")
+        );
+        assert_eq!(word("\"\"").as_deref(), Some(""));
+        // A quote that is opened is JSON's, or it is not text.
+        assert_eq!(word("\"Built-in"), None);
     }
 
     #[test]

@@ -54,8 +54,8 @@ on every push and in CI.
 - [cookbook/by-hand-pass.md](cookbook/by-hand-pass.md) — the first real test on Fedora: the Wave
   Link scene on real devices and apps, checked by ear and with PipeWire's tools, the latency
   measured.
-- [cookbook/control-from-outside.md](cookbook/control-from-outside.md) — a mute on a key, a
-  value followed from a script, a controller's own connection: `vix-mix ctl`, the socket
+- [cookbook/control-from-outside.md](cookbook/control-from-outside.md) — a mute on a key, an
+  output switched, a value followed from a script, a controller's own connection: `vix-mix ctl`, the socket
   under it, and what a program that speaks to it has to know.
 - [cookbook/install-on-fedora.md](cookbook/install-on-fedora.md) — Vix Mix as a desktop app
   on Fedora: the build prerequisites, `cargo install` or the release tarball, `install.sh`, and
@@ -113,3 +113,6 @@ on every push and in CI.
   Fedora finds, fixed; seeded with the fifteen items the earlier lanes left open for it.
 - [handoffs/10-control-socket.md](handoffs/10-control-socket.md) — the console read, written
   and followed by other programs: a Unix socket that speaks address lines, and `vix-mix ctl`.
+- [handoffs/11-control-devices.md](handoffs/11-control-devices.md) — devices over the control
+  socket: a mix's output and a hardware channel's input set from outside, the machine's
+  devices listed.

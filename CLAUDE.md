@@ -175,6 +175,20 @@ step 12. See [docs/reference/control.md](docs/reference/control.md),
 [docs/cookbook/control-from-outside.md](docs/cookbook/control-from-outside.md) and
 [handoff 10](docs/handoffs/10-control-socket.md).
 
+**Devices over the control socket are implemented (2026-11-16):**
+[handoff 11](docs/handoffs/11-control-devices.md), lane 10's follow-up on the user's ask. The
+control reads, sets and follows the output a mix plays to and the input a hardware channel
+captures (`/mix/monitor/device/name`, with `description` and `present` beside it), written
+by PipeWire node name or by description, and lists the devices the machine has under `/in`
+and `/out`, a device unplugged told as gone. `vixmix-control` gained `Console` (a setup with
+the devices present) and sends ten kinds of command, the two new ones the window's panels'
+own; the app gives it the host's devices and publishes on the host's `Devices` event. It
+never touches an app channel's apps or makes one a hardware channel, and a device that is
+not there cannot be picked. Run by hand against `--fake`; with real devices it is the
+by-hand pass's step 12. See [docs/reference/control.md](docs/reference/control.md)
+§ Addresses and § What a write sends and
+[docs/cookbook/control-from-outside.md](docs/cookbook/control-from-outside.md) step 4.
+
 ## Git workflow (read first)
 
 **Work on a branch, never on `master`/`main`.** Every change is a PR: `kit push --yes` runs
@@ -205,7 +219,7 @@ crates/vixmix-engine/      the realtime graph: the prepared graph and its handof
 crates/vixmix-plugins/     the catalog, instances on the UI thread, the rack that lends them, editor sessions
 crates/vixmix-pipewire/    Linux only (empty elsewhere): the PipeWire client
 crates/vixmix-host/        the orchestrator behind the Host trait: RealHost, FakeHost
-crates/vixmix-control/     the control from outside: the request line, the addresses over a setup, the service that answers clients; on Unix the socket and its client
+crates/vixmix-control/     the control from outside: the request line, the addresses over a setup and its devices, the service that answers clients; on Unix the socket and its client
 app/                       the vix-mix binary: winit + egui-winit + egui-wgpu over a Host
 docs/                      index, charter, roadmap, build map, reference, handoffs, the design pack, kit-*.md records
 scripts/dev/tasks.mjs      the dev registry; scripts/dev.mjs, dev.bat and dev.sh are its front door

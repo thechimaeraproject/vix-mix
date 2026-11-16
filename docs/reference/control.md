@@ -2,10 +2,10 @@
 **Owns:** `crates/vixmix-control/`
 
 **Reference — the control from outside as [handoff 10](../handoffs/10-control-socket.md)
-builds it; this page holds what is built.** `vixmix-control` is how another program reads,
-changes and follows the console: a request is one line of text, an address names one value of
-the setup, and what a request may change is what the window's switches and faders change, by
-the same commands. It depends on `vixmix-model` and on no other workspace crate, and holds no
+built it and [handoff 11](../handoffs/11-control-devices.md) added the devices to it.**
+`vixmix-control` is how another program reads, changes and follows the console: a request is
+one line of text, an address names one value of the setup, and what a request may change is
+what the window's switches, faders and device lists change, by the same commands. It depends on `vixmix-model` and on no other workspace crate, and holds no
 host, no window and no audio.
 
 ## What it owns and what the others keep
@@ -40,17 +40,24 @@ a request is refused with what one is: an unknown verb lists the six, a verb wit
 address or a `set` without a value shows the line that was meant, and a value after a verb
 that takes none shows the `set` that writes it.
 
-`plan(&Setup, &Request) -> Result<Plan, String>` says what the request asks of a mixer whose
-setup that is: `Plan::Read(addresses)` and `Plan::Watch(addresses)` name what to print or
+`plan(console, &Request) -> Result<Plan, String>` says what the request asks of a mixer whose
+console that is ([Addresses](#addresses)): `Plan::Read(addresses)` and `Plan::Watch(addresses)` name what to print or
 follow, `Plan::Unwatch(addresses)` what to stop following, and `Plan::Write(commands)` the
 commands to apply, in order. Every `Err` ends with what to send instead.
 
 ## Addresses
 
-`leaves(&Setup) -> Vec<Leaf>` is every address of a setup with its value and its `Kind`, in
-the console's order: the channels left to right, Monitor, Master, then every plugin strip by
-strip. It is the one list the protocol is read from: what `get` prints, what a write may
-name, and what a follower is told.
+`leaves(console) -> Vec<Leaf>` is every address with its value and its `Kind`, in the
+console's order: the channels left to right, Monitor, Master, then every plugin strip by
+strip, then the devices the machine has now, inputs before outputs. It is the one list the
+protocol is read from: what `get` prints, what a write may name, and what a follower is told.
+
+**A `Console`** is what a request is asked against: `Console { setup, devices }`, the setup
+and the devices the machine has now, as the host lists them (`DeviceInfo`: a `DeviceRef` and
+its direction). The devices are the one part that is not the setup's: a setup names the
+device a mix or a hardware channel uses whether or not it is plugged in. `leaves`, `plan`,
+`resolve` and `Service::publish` take anything that becomes a console, and a `&Setup` alone
+is one with no device present.
 
 ### As the mixer prints them
 
@@ -76,18 +83,34 @@ changes while the thing exists and neither is ever handed out again ([model.md](
 | `/fx/<instance>/strip` | text: the strip's address, `"/ch/3"` or `"/mix/master"` | read only |
 | `/fx/<instance>/slot` | number: its place in the chain, from 1 | read only |
 | `/fx/<instance>/enabled` | switch: the bypass square | `SetInsertEnabled` |
+| `/mix/monitor/device/name`, `/mix/master/device/name` | text: the PipeWire node name of the output the mix plays to; `""` for none | `SetMixDevice` |
+| `/ch/<id>/device/name`, on a hardware channel only | text: the node name of the input it captures; `""` for none | `SetSource` with `Source::Hardware` |
+| `…/device/description` beside either | text: that device's description; `""` for none | read only |
+| `…/device/present` beside either | switch: whether that device is there now | read only |
+| `/in/<word>/name`, `/in/<word>/description` | text: an input the machine has now | read only |
+| `/out/<word>/name`, `/out/<word>/description` | text: an output the machine has now | read only |
 
 A plugin is not under its channel: an insert dragged to another strip keeps its instance, so
 it keeps its address and its `strip` and `slot` change.
 
+**Devices.** A mix's `device` is the output it plays to and a hardware channel's the input
+it captures; an app channel has none, and no `device` under it. The setup names a device by
+its node name, which PipeWire keeps across restarts and replugging, so `name` and
+`description` read the same while the device is unplugged and `present` says whether it is
+there now. `/in` and `/out` list the devices the machine has now, each under `<word>`, its
+node name as one plain word (`Console::listed`: the model's `slug`, with a number after it
+when two names make the same word): `alsa_output.usb-Scarlett_2i2-00.analog-stereo` is
+`/out/alsa-output-usb-scarlett-2i2-00-analog-stereo`. A device that is unplugged is no
+longer listed.
+
 `address::covers(place, address)` is whether an address is a place or lies under it, compared
 part by part (`/ch/1` does not cover `/ch/10`); `/` covers everything. `address::node` is the
-channel, mix or plugin an address belongs to, its first two parts.
+channel, mix, plugin or listed device an address belongs to, its first two parts.
 
 ### As a person may write them
 
-`resolve(&Setup, written) -> Result<Vec<String>, String>` turns what a request wrote into the
-addresses above:
+`resolve(console, written) -> Result<Vec<String>, String>` turns what a request wrote into
+the addresses above:
 
 - **A channel by its name**: `/ch/mic/monitor/mute`. The name is compared as the model's
   `slug` makes it (lower case, every run of other characters one `-`), which is the rule a
@@ -100,13 +123,18 @@ addresses above:
   strip with no plugins.
 - **A part that is all digits is never a name**: after `/ch` it is an id, after a strip's
   `fx` a slot, after `/fx` an instance. A channel named `2` is written by its id.
-- The words after the channel, mix or plugin are taken in any case; a trailing slash is
-  ignored; `/` is everything, and `/ch`, `/mix` and `/fx` are every channel, mix and plugin.
+- **A listed device by its description**, or by the node name its word was made from:
+  `/out/built-in-speakers`, `/out/alsa_output.built_in_speakers`.
+- The words after the channel, mix, plugin or device are taken in any case; a trailing slash
+  is ignored; `/` is everything, and `/ch`, `/mix`, `/fx`, `/in` and `/out` are every
+  channel, mix, plugin, input and output.
 
 What names nothing is refused with the names there are: an unknown channel lists every
-channel with its address, an unknown plugin or slot lists the strip's plugins, an address
-outside `/ch`, `/mix` and `/fx` names the three. A name that two channels, or two plugins of
-one strip, share is refused naming each by its id or its slot.
+channel with its address, an unknown plugin or slot lists the strip's plugins, an unknown
+device lists the devices of that direction as they are listed, with their descriptions, and
+an address outside `/ch`, `/mix`, `/fx`, `/in` and `/out` names the five. A name that two
+channels, or two plugins of one strip, share is refused naming each by its id or its slot,
+and a description two devices share naming each as it is listed.
 
 ## Values
 
@@ -120,12 +148,15 @@ carries:
   fader's decibels are `-inf` (`SILENT`); a request may write `-inf` or `-infinity`, and
   never `inf` or `nan`.
 - **Text** prints in double quotes as JSON writes it, so a quote, a backslash or a line end
-  in a channel's name stays inside its one line, and any JSON reader reads it back.
+  in a channel's name stays inside its one line, and any JSON reader reads it back. A
+  request writes text the same way or bare, as it stands to the end of the line
+  (`Built-in speakers`); text that opens a quote and does not close it is refused.
 
 ## What a write sends
 
 `set`, `toggle` and `nudge` name exactly one value. A place that holds several (`/ch/1`,
-`/ch/1/monitor`, a strip's `fx`) is refused with what is under it and one address to write.
+`/ch/1/monitor`, a strip's `fx`, a strip's `device`) is refused with what is under it and one
+address to write.
 
 - **`set`** of a switch sends its command with the value. Of a `position` it sends the
   number as the fader's position; one outside 0 to 1 is the model's refusal
@@ -141,13 +172,27 @@ carries:
   level, or nudge the `position`).
 - **A linked channel**: `SetSend` moves the other send by the same amount, as the fader in
   the window does ([model.md](model.md) § Commands). Nothing here adds to that.
-- **Read only**: a name, a kind, and a plugin's name, strip and slot are refused, saying
-  where each is changed.
+- **A device**: `set` of a strip's `device/name` sends `SetMixDevice` for a mix and
+  `SetSource` with `Source::Hardware` for a hardware channel, carrying the `DeviceRef` the
+  host lists, description and all. The device is written as its node name, as the word it
+  is listed under, or as its description, the last two compared as `slug` makes them
+  (`Built-in speakers`, `built-in-speakers` and `BUILT_IN_SPEAKERS` are one). It must be one
+  the machine has now, an output for a mix and an input for a channel, or the answer lists
+  the ones there are; the one exception is the device the setup already names, which may be
+  named again while it is unplugged and changes nothing. `none` (`NO_DEVICE`) or `""` is no
+  device: Master may have none and so may a hardware channel, and for Monitor it is the
+  model's refusal (`Refused::MonitorNeedsDevice`). A description two devices share is
+  refused naming both by their node names. An app channel is refused, saying that it has
+  apps and no input: a request never makes an app channel a hardware one.
+- **Read only**: a name, a kind, a plugin's name, strip and slot, a device's description and
+  whether it is there, and the devices the machine has are refused, saying where each is
+  changed.
 
-**A request sends eight kinds of command and no other**: `SetSend`, `SetMute`, `SetLink`,
-`SetChainRouting`, `SetInsertEnabled`, `SetMixLevel`, `SetMixMute` and `SetPreview`. The
-commands that add, remove, move or rename, and `SetSource`, `SetMixDevice`, `SetPrefs` and
-`SetInsertState`, stay the window's and the host's.
+**A request sends ten kinds of command and no other**: `SetSend`, `SetMute`, `SetLink`,
+`SetChainRouting`, `SetInsertEnabled`, `SetMixLevel`, `SetMixMute`, `SetPreview`,
+`SetMixDevice`, and `SetSource` for a hardware channel's input alone, never for an app
+channel and never with apps. The commands that add, remove, move or rename, and `SetPrefs`
+and `SetInsertState`, stay the window's and the host's.
 
 ## Changes
 
@@ -187,13 +232,14 @@ connection.
   of it (`SERVE_BUDGET`, 64, is the usual one). A client that came is greeted with
   `greeting()`. Each request line is answered with one message: its `address value` lines
   and then exactly one `ok` or `error: …`; a blank line is not answered. `Target` is the
-  mixer as a request needs it, `setup()` and `apply(Command)`; the commands of a write are
+  mixer as a request needs it, `setup()`, `devices()` (the devices it has now; none unless a
+  target says otherwise) and `apply(Command)`; the commands of a write are
   applied in order and stop at the first the model refuses, whose words are the error. A
   write answers with what it changed as it reads now, so a linked fader's other send comes
   with the one that was set, and a write to what already is answers `ok` alone.
   `Served { requests, changed }` says how many lines were answered and whether any command
   changed the setup.
-- **`publish(&Setup)`** tells the followers what changed since they were last told: for each
+- **`publish(console)`** tells the followers what changed since they were last told: for each
   client, the changes at or under what it follows, as `event address value` lines in one
   message. Something that went is told as `event address gone` to whoever follows it, a
   place above it, or an address under it. With no follower it does nothing
@@ -201,7 +247,9 @@ connection.
   later one does not disturb what the earlier ones are still owed. **A follower is told
   where things stand, not every step on the way**: a value that changed and changed back
   between two calls is not told, and one that moved three times is told once, as it reads
-  at the call. The window calls it when it polls its host, at most 60 times a second.
+  at the call. The window calls it when its host's poll reports that the setup or the list
+  of devices changed, at most 60 times a second; a device unplugged is `gone` from its list,
+  and `present` turns false on the strip that uses it.
 
 A client that asks is always answered before it is told: its answer is sent in `serve`, and
 the event for its own change only at the next `publish`.
@@ -286,18 +334,24 @@ end. `sender()` is the sending side for a second thread.
 `cargo test -p vixmix-control`, on every platform:
 
 - **`tests/requests.rs`**, from the outside.
-  `each_of_the_eight_commands_has_a_line_that_sends_it_and_no_other`: a `match` over
+  `each_of_the_ten_commands_has_a_line_that_sends_it_and_no_other`: a `match` over
   `Command` with no wildcard gives each variant its line or names it the window's, so a new
-  variant does not compile until it is decided, and each of the eight lines sends its own
+  variant does not compile until it is decided, and each of the ten lines sends its own
   kind of command.
   `every_value_a_write_may_name_reads_back_what_was_written`: for every address of the
-  example console, a `set` then the table reads the value written (a switch flipped, a
-  position at 0.5, decibels at −12), and every read-only address is refused as such; a
-  `match` over `Kind` with no wildcard says which is which.
-  `a_request_sends_only_the_eight_commands_and_never_changes_the_consoles_shape`: a
-  property over 256 runs of up to 23 lines, well formed or not, written by id, by name and
-  by slot: every command sent is one of the eight, and the changes each run of commands
-  made are never a `Gone` and never to a read-only address.
+  example console with its eight devices, a `set` then the table reads the value written (a
+  switch flipped, a position at 0.5, decibels at −12, another device than the one in use,
+  written as it is described), and every read-only address is refused as such; a `match`
+  over `Kind` with no wildcard says which is which.
+  `a_request_sends_only_the_ten_commands_and_never_changes_the_consoles_shape`: a
+  property over 256 runs of up to 23 lines, well formed or not, written by id, by name, by
+  slot and by device: every command sent is one of the ten, a `SetSource` only ever carries
+  a hardware input, and the changes each run of commands made are never a `Gone` and never
+  to what the console is made of (a name, a kind, a plugin's name, strip or slot, a listed
+  device), so no app channel becomes a hardware one.
+- **`console`**: a device listed under its node name as one word, each direction apart, two
+  names that make one word numbered; a mix and a hardware channel have a device and an app
+  channel none.
 - **`tests/socket.rs`**, on Unix, over a real socket in a short path under the system's
   temporary directory (a socket's path holds about a hundred bytes, which Cargo's own
   temporary directory exceeds), with the model served on a thread as the app serves its
@@ -340,6 +394,19 @@ end. `sender()` is the sending side for a second thread.
   wake; a line past the limit is refused and its connection closed, one of exactly the
   limit is a request; the thirty-third address followed is refused with the way out; a
   client that went is forgotten, and a service that went stops its clients.
+- **Devices**, in `request`, `address`, `tree` and `service`: a device set by its node name,
+  as it is listed, and as it is described, bare with its space and in double quotes, and
+  `none` in three spellings; Monitor without a device is the model's refusal; every device
+  that cannot be set says which there are (not there, the other direction, an app channel, a
+  place that is not a value, a description, `present`, a listed device, an unclosed quote),
+  and a description two devices share names both; the device a setup names can be named
+  again while it is unplugged; a listed device written as it is listed, by its node name
+  and by its description, an output not an input, a setup alone listing none; a strip reads
+  its device and whether it is there, an app channel none, no device as empty text; the
+  machine's devices listed last, inputs first; a device unplugged is `gone` and the strip
+  that uses it not `present`, and plugged back it is listed again; through the service, a
+  device set against the target's devices answers with what changed, a follower of the list
+  and of the strip is told when it is unplugged, and it can then no longer be picked.
 - **`request`**: a line read into its verb, address and value, an address alone and an
   address with a value read as OSC writes them, a blank line no request; every line that is
   no request says what one is; each switch and fader sends the command its control sends; a

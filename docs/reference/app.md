@@ -245,7 +245,7 @@ and nothing is said.
 
 **Served** on `Asked::Control`, with no frame: `Control::serve` answers the requests that
 wait, at most 64 a wake, against the host. A request is applied with `Host::apply` and
-nothing else. It shows no toast: a refusal is the client's to read, on the line that ends its
+nothing else, and one that names a device is held to the devices `Host::devices` lists. It shows no toast: a refusal is the client's to read, on the line that ends its
 answer. It has no undo, as a fader moved in the window has none, and it can remove nothing
 ([control.md](control.md) § What a write sends), so no editor closes for it.
 
@@ -255,8 +255,9 @@ or follows asks for nothing.
 
 **Told.** `control::poll(host, control)` is the one place the window polls its host: every
 frame, every tick between frames and every hidden tick goes through it. When the poll
-reports `HostEvent::SetupChanged` it has the service publish, so a follower hears a change
-whoever made it: another controller, or a gesture in the window. A client is answered when
+reports `HostEvent::SetupChanged` or `HostEvent::Devices` it has the service publish, so a
+follower hears a change whoever made it: another controller, a gesture in the window, or a
+device plugged in or pulled out. A client is answered when
 its request is served and told at the poll after, so its answer comes first.
 
 **Closed** on `exiting`, after the editors and before the host: the socket file is removed
@@ -829,7 +830,13 @@ gesture sent, and what is in view is what the last frame painted whole inside it
   `a_refused_request_is_the_clients_to_read_and_shows_no_toast` (an address that names
   nothing never reaches the host, the model's own refusal comes back word for word, and the
   toast line stays empty); `a_click_in_the_window_reaches_a_client_that_follows_it` (and one
-  on another channel does not); `fake_runs_under_a_name_of_its_own`.
+  on another channel does not); `fake_runs_under_a_name_of_its_own`;
+  `a_request_for_a_device_sends_the_command_its_panel_sends` (the output panel's
+  `SetMixDevice` for Master, then the same device for Monitor from outside, written as it
+  is described; a hardware channel's input as its source panel sends it; an app channel
+  refused without the host being asked);
+  `a_device_unplugged_reaches_a_client_that_follows_the_list_or_the_strip` (the host's
+  `Devices` event is `gone` on the list and `present false` on Monitor).
 - `ctl.rs`: the words after `ctl` are one request to the mixer this build runs, an address
   alone a read and a `watch` one that goes on; `--fake`, `--socket <path>`, `-` and `--help`;
   what is not a request says what one is without asking a mixer (nothing, a flag alone, an
@@ -915,6 +922,14 @@ gesture sent, and what is in view is what the last frame painted whole inside it
   The window kept its 60 frames a second throughout. Not run: the real host (a debug build
   would be a second mixer, issue 34), so not a hidden or an idle window woken by a request,
   and no sound.
+- Devices over the control socket, the same day and way: `get /out` listed the example's
+  four outputs; Monitor was switched to the speakers by description
+  (`set /mix/monitor/device/name Built-in speakers`) and to the HDMI output by node name,
+  and a `watch` in a second terminal printed both; Mic's input was switched; Master took
+  `none`; Monitor's `none` was the model's refusal, an unknown device listed the four there
+  are, and an app channel was told it has no input, each exit 1. Not run: a real device,
+  so not the graph PipeWire is given when a mix changes its output, and not a device
+  pulled out.
 - A signal, on Fedora KDE with `--fake` (2026-11-11): `kill -TERM` on the window running on
   X11 and `kill -INT` on it running on Wayland each logged "SIGTERM (SIGINT) asked Vix Mix to
   close" and ended the process with 0. Not run: a signal with the real host and apps routed

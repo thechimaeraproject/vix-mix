@@ -25,7 +25,7 @@ pub const USAGE: &str = "\
 usage: vix-mix ctl [--fake | --socket <path>] <verb> <address> [value]
        vix-mix ctl [--fake | --socket <path>] -
   get <address>             print every value at or under an address; `get /` prints them all
-  set <address> <value>     write a switch (true or false) or a fader (its position, or decibels)
+  set <address> <value>     write a switch (true or false), a fader (its position, or decibels) or a device (its name)
   toggle <address>          flip a switch
   nudge <address> <amount>  move a fader by an amount
   watch <address>           print the values, then every change, until stopped
