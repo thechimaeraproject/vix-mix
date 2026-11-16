@@ -25,6 +25,7 @@ the [build map](build-map.md) holds the order and the conflict rules.
 | Packaging for Linux: the desktop entry, the icon and the AppStream metadata in `packaging/linux/` with `install.sh`, installed as an RPM (`packaging/linux/vix-mix.spec`, `dev rpm`, built with every crate vendored), after `cargo install` or from the release tarball (`dev package`), the RPM and the tarball both built by GitHub on `master` after every merge; proven in the Ubuntu container, and the RPM installed and started from the launcher on Fedora KDE (2026-11-10) | [cookbook/install-on-fedora.md](cookbook/install-on-fedora.md), [handoff 08](handoffs/08-packaging-and-first-real-test.md) | 2026-11-04 |
 | The packaging finding: native, not Flatpak, with the evidence and the three options; the user took it (2026-11-10): an RPM | [charter.md](charter.md) § Decisions and § Rejected | 2026-11-04 |
 | The kit lifts: the engine's meter bank and counters taken from the kit's `audio-io`, the console's meter faders, scale, peak hold and taper trait from its `egui-audio`, the copies deleted, the look gate's capture byte-identical | [kit-audio-io.md](kit-audio-io.md), [kit-egui-audio.md](kit-egui-audio.md), [handoff 07](handoffs/07-kit-lifts.md) | 2026-11-07 |
+| The control from outside: every switch and fader of the console read, written and followed by another program of the user's, under an address each (`/ch/1/monitor/mute`); one request a line, each answered `ok` or `error:` with what to send instead; eight kinds of command and no other, so nothing is added, removed, moved or renamed from outside; a Unix socket one mixer holds, in the session's runtime directory, the user's alone; `vix-mix ctl` for one request, for `watch`, and as a relay of standard input and output; served on the window's thread, a change told to every follower whoever made it; run by hand against the example console, not yet on the mixer that plays | [reference/control.md](reference/control.md), [reference/app.md](reference/app.md) § The control socket, [cookbook/control-from-outside.md](cookbook/control-from-outside.md), [handoff 10](handoffs/10-control-socket.md) | 2026-11-16 |
 
 ## Next
 
@@ -69,7 +70,7 @@ Beside round 1, one lane the first build did not plan, taken with the user on 20
 
 | Lane | What it delivers | Status |
 |---|---|---|
-| [10 — Control socket](handoffs/10-control-socket.md) | every switch and fader of the console read, written and followed by other programs: a Unix socket that speaks address lines, and `vix-mix ctl` as its command | not yet built |
+| [10 — Control socket](handoffs/10-control-socket.md) | every switch and fader of the console read, written and followed by other programs: a Unix socket that speaks address lines, and `vix-mix ctl` as its command | shipped 2026-11-16 (see Built); its first use on the mixer that plays is the by-hand pass's step 12 |
 
 ## Named but not built
 
@@ -84,3 +85,12 @@ Beside round 1, one lane the first build did not plan, taken with the user on 20
   rings through an arrival bitmask (one quantum less), and a single `pw_filter` node through
   `pipewire-sys`.
 - **Editors on their own X11 connection**, so the console can run on Wayland.
+- **More over the control socket** ([reference/control.md](reference/control.md)), each
+  waiting for a caller that needs it: the meters; the commands that add, remove, move and
+  rename, with sources, devices and preferences; an OSC listener over UDP on the same
+  addresses, for the controllers that speak only OSC; a transport on Windows.
+- **A Stream Deck plugin** against the control socket: the user's own to write
+  ([cookbook/control-from-outside.md](cookbook/control-from-outside.md) step 6).
+- **One Vix Mix at a time** ([#34](https://github.com/thechimaeraproject/vix-mix/issues/34)):
+  a second one now runs without the control socket and says so; stopping it, and bringing
+  the first forward, can build on the socket's lock and one more request.

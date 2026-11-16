@@ -41,9 +41,13 @@ pub const REFUSED: i32 = 1;
 /// What was written is not a request.
 pub const NOT_A_REQUEST: i32 = 2;
 /// No Vix Mix answers at the socket.
+// Where there is no Unix socket there is no mixer to ask, so nothing answers with this or
+// reads which mixer and which request were meant; the parsing is the same everywhere.
+#[cfg_attr(not(unix), allow(dead_code))]
 pub const NO_MIXER: i32 = 3;
 
 /// Which mixer to ask.
+#[cfg_attr(not(unix), allow(dead_code))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Place {
     /// The one that runs under this build's profile.
@@ -55,6 +59,7 @@ enum Place {
 }
 
 /// What to do once connected.
+#[cfg_attr(not(unix), allow(dead_code))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum What {
     /// One request, and whether it follows (a `watch`).
@@ -65,6 +70,7 @@ enum What {
     Help,
 }
 
+#[cfg_attr(not(unix), allow(dead_code))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Asked {
     place: Place,

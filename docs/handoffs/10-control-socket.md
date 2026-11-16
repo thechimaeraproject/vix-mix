@@ -1,10 +1,72 @@
 # 10 — Control socket
 
-**Record — not yet built.** The intention, taken with the user on 2026-11-16: other programs
-read, change and follow the console through a Unix socket that speaks address lines, with
-`vix-mix ctl` as its command. The decision and what was considered and left are the
-[charter](../charter.md)'s (§ Decisions, *Control from outside*, and § Rejected); the change
-to the shared contracts is the [build map](../build-map.md)'s change request 14.
+**Record — shipped 2026-11-16.** Other programs of the user's read, change and follow the
+console: `vixmix-control` holds the request line, an address for every switch and fader,
+the eight commands a request can send, the service that answers clients and tells followers,
+and on Unix the socket one mixer holds with its client; the app opens the socket once the
+host has booted, serves requests on the window's thread, tells followers at the host's next
+poll, and has `vix-mix ctl`. The contract is [reference/control.md](../reference/control.md)
+and [reference/app.md](../reference/app.md) § The control socket and § The command line; the
+how is [cookbook/control-from-outside.md](../cookbook/control-from-outside.md). The decision
+and what was considered and left are the [charter](../charter.md)'s (§ Decisions, *Control
+from outside*, and § Rejected); the change to the shared contracts is the
+[build map](../build-map.md)'s change request 14, applied. `dev check` is green on Linux
+(Fedora 44, this machine); **the Windows leg has not run anywhere but CI**, where everything
+but the socket, its client and their tests builds.
+
+**What was proven and what was not.** Proven by tests: the protocol and the service in
+memory on every platform; the socket and `vix-mix ctl` end to end over a real socket on
+Unix; the window's wiring against `FakeHost` under the headless harness. Run by hand on
+Fedora KDE against `vix-mix --fake`, beside the installed mixer and without touching it:
+reads, a channel's mute, a plugin's bypass by name, a nudge, a refusal, the relay, a
+follower from the shell and from Python, each exit code, the socket's modes and its removal
+at exit ([reference/app.md](../reference/app.md) § Verification, By hand). **Not run: the
+real host.** A debug build on it would be a second mixer beside the installed one
+([#34](https://github.com/thechimaeraproject/vix-mix/issues/34)), so nothing was heard, and
+a hidden or an idle window woken by a request has run only in the pacer's test. The by-hand
+pass's step 12 is that run, and the user's.
+
+Deviations from the brief below, each with its reason:
+
+- **A follower is told where things stand, not every step.** The first run by hand showed
+  it: two toggles of one mute inside one frame told the follower nothing, because the value
+  was back where it had last been told. That is what telling at the host's poll gives, and
+  what a key's light wants; it is now a sentence in the reference and a test
+  (`a_follower_is_told_where_things_stand_not_every_step_on_the_way`), not a surprise.
+- **An address alone reads, and an address with a value writes.** Beside the six verbs, a
+  line that begins with an address needs none, which is how OSC writes a message and what a
+  later OSC listener maps onto. Additive.
+- **A plugin's values are under `/fx/<instance>` only.** `get /ch/1` and `watch /ch/1` are
+  the channel's own twelve values, not its plugins': a plugin dragged to another strip keeps
+  its address, and a place that followed "the channel's plugins" would have to change what
+  it follows as they come and go. `/ch/<id>/fx` names the strip's plugins as they are when
+  it is asked.
+- **Step 3's caps as built**: 8 clients, 4096 bytes a line, 256 requests waiting, 64
+  messages unread a client (an answer or one change's events is one message, whatever its
+  length, so a long `get /` cannot drop its own client), 32 addresses followed a client, 64
+  requests a wake.
+- **Step 4: the lock file stays.** `control.lock` beside the socket is never removed:
+  removing it would race a mixer that is starting, and it is empty. The socket's name comes
+  from the profile inside one directory (`control.sock`, `control-dev.sock`,
+  `control-fake.sock`), so one Flatpak grant covers them all. With no `XDG_RUNTIME_DIR` there
+  is no fallback: the socket is off and the toast says to set `VIXMIX_CONTROL_SOCKET`.
+- **Step 4: a write that times out is not tested over the socket.** A client that reads
+  nothing is dropped by the service at its sixty-fifth unread message, which is tested in
+  memory; the two-second write timeout behind it would need a client that fills the kernel's
+  socket buffer.
+- **Step 5: the socket's failure is a toast.** When the socket cannot be opened the reason
+  goes to the toast line as well as the log, since it says what to do; a second Vix Mix is
+  the case that matters, and it now says so on screen.
+- **Step 6: `ctl` exits 2 for what is not a request**, beside the 0, 1 and 3 the brief
+  names, read with the control crate's own parser before any mixer is asked; `--fake` and
+  `--socket <path>` say which mixer; one request waits 5 seconds for its answer, so a
+  shortcut pressed during a plugin scan says so instead of hanging; a mixer that speaks
+  another protocol number is refused with exit 1.
+- **Two dependencies the brief did not name**, both already in the lock: `serde_json`, for
+  a name in double quotes that survives a quote or a line end, and `thiserror`.
+- **The cookbook's Flatpak step has not been run** with a deck app; it says so.
+- **Not done here, as the brief says**: issue 34. A second Vix Mix is refused the socket,
+  runs without it and says so; it is not stopped.
 
 ## Goal
 

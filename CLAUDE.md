@@ -156,6 +156,25 @@ small memory blocks, so it holds 4 MiB of an NVIDIA card's 256 MiB CPU-visible w
 where it held 64 (37). Still open in round 1: issues 16 and 17, the measured figures of
 handoff 09 items 1, 2 and 5, and the by-hand check on Fedora that each fix left in its item.
 
+**The control from outside is implemented (2026-11-16):** `vixmix-control` owns how another
+program of the user's reads, changes and follows the console: one request a line
+(`get`, `set`, `toggle`, `nudge`, `watch`, `unwatch`), an address for every switch and fader
+(`/ch/1/monitor/mute`, a channel and a plugin by ids that never change, or as a person writes
+them, by name and slot), the eight commands a request can send and no other, the service that
+answers clients and tells followers with every queue bounded, and on Unix the socket one
+mixer holds (`$XDG_RUNTIME_DIR/vix-mix/control.sock`, the user's alone) with its client; the
+app owns when: the socket opened once the host has booted, requests served on the window's
+thread through `Host::apply` with no toast, a change told at the host's next poll whoever
+made it, a hidden window polled after a request (`Pacer::serve_soon`), and `vix-mix ctl` for
+one request, `watch` and the relay of standard input. It does not add, remove, move or
+rename anything, carry the meters, speak OSC over UDP or run on Windows, and it does not stop
+a second Vix Mix, which runs without the socket and says so (issue 34). Run by hand against
+`--fake`; on the mixer that plays, and a window woken while hidden, it is the by-hand pass's
+step 12. See [docs/reference/control.md](docs/reference/control.md),
+[docs/reference/app.md](docs/reference/app.md) § The control socket,
+[docs/cookbook/control-from-outside.md](docs/cookbook/control-from-outside.md) and
+[handoff 10](docs/handoffs/10-control-socket.md).
+
 ## Git workflow (read first)
 
 **Work on a branch, never on `master`/`main`.** Every change is a PR: `kit push --yes` runs
@@ -241,6 +260,8 @@ cargo run -p vix-mix                 # the window on the real host: PipeWire on 
                                      # the VST3 folders are scanned before the window opens
 cargo run -p vix-mix -- --fake       # the window on FakeHost: the prototype's example console
 cargo run -p vix-mix -- --quit-after-frames 3   # draws three frames and exits 0
+vix-mix ctl toggle /ch/mic/mute      # ask the Vix Mix that is running (docs/cookbook/control-from-outside.md);
+                                     # from a checkout: cargo run -p vix-mix -- ctl --fake get /  asks `--fake`
 kit doctor                           # what is off in this checkout, and the fix for each
 ```
 
