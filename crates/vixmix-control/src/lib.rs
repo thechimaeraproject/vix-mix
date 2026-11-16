@@ -8,21 +8,36 @@
 //!
 //! **Data in, data out.** This crate depends on the model and on nothing else of the
 //! workspace: it holds no host, no window and no audio. What applies a command is behind a
-//! two-method seam the app implements.
+//! two-method seam the app implements ([`Target`]), served by a [`Service`].
+//!
+//! **On Unix, a socket.** [`Listener`] brings connections to the service and [`Session`] is
+//! the other end, which `vix-mix ctl` is made of. Elsewhere neither is built: the protocol
+//! and the service are the same on every platform, and only the transport is missing.
 //!
 //! See `docs/reference/control.md`.
 
 pub mod address;
+#[cfg(unix)]
+mod client;
 mod request;
 mod service;
+#[cfg(unix)]
+mod socket;
 mod tree;
 mod value;
 
 pub use address::resolve;
+#[cfg(unix)]
+pub use client::{Answer, ClientError, Sender, Session};
 pub use request::{Plan, Request, TOP_DB, Verb, parse, plan};
 pub use service::{
     Client, ClientId, Connector, Full, INBOX, MAX_CLIENTS, MAX_LINE, MAX_WATCHES, OUTBOX, Requests,
     SERVE_BUDGET, Served, Service, Target, service,
+};
+#[cfg(unix)]
+pub use socket::{
+    DEFAULT_PROFILE, DIR_NAME, ListenError, Listener, RUNTIME_ENV, SOCKET_ENV, WRITE_TIMEOUT,
+    socket_path, socket_path_from_env,
 };
 pub use tree::{Change, GONE, Kind, Leaf, diff, leaves};
 pub use value::{SILENT, Value};
@@ -31,9 +46,12 @@ pub use value::{SILENT, Value};
 /// address is renamed or a line changes its meaning; a new address or a new verb keeps it.
 pub const PROTOCOL: u32 = 1;
 
+/// What the mixer's first line on a connection begins with; the protocol's number follows.
+pub const GREETING: &str = "vix-mix control ";
+
 /// The first line the mixer says on a connection: who answers, and the protocol's number.
 pub fn greeting() -> String {
-    format!("vix-mix control {PROTOCOL}")
+    format!("{GREETING}{PROTOCOL}")
 }
 
 /// The line that ends a request's answer when it was carried out.
