@@ -56,6 +56,9 @@ use crate::ui;
 pub enum Asked {
     /// Close, as the close button does. It names who asked: a signal (`crate::signals`, on
     /// Unix).
+    // Only a signal sends it, and signals are taken on Unix alone: elsewhere the desktop
+    // asks through the window, and nothing makes this.
+    #[cfg_attr(not(unix), allow(dead_code))]
     Close(&'static str),
     /// A control request waits to be served ([`crate::control`]). Sent once however many
     /// wait.
