@@ -14,6 +14,9 @@ path = "src/main.rs"
 [dependencies]
 vixmix-host.workspace = true
 vixmix-model.workspace = true
+# The control from outside: the service the window serves against its host, the socket other
+# programs reach it by, and the client `vix-mix ctl` is (docs/reference/control.md).
+vixmix-control.workspace = true
 egui.workspace = true
 egui-wgpu.workspace = true
 egui-winit.workspace = true
@@ -39,5 +42,6 @@ signal-hook = "0.4"
 
 [dev-dependencies]
 # The tests' `Recorder` wraps `FakeHost` and implements `Host`, whose `catalog` names the
-# plugins crate's `Catalog`. Tests only: the window itself depends on the host and the model.
+# plugins crate's `Catalog`. Tests only: the window itself depends on the host, the model and
+# the control crate.
 vixmix-plugins.workspace = true

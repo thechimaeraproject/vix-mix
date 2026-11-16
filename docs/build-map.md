@@ -124,7 +124,7 @@ the direction are fixed; exact shapes are each lane's to refine through a change
 The dependency direction: `vixmix-model` depends on no other workspace crate; `vixmix-engine`
 on the model; `vixmix-plugins` on the model and the engine (for `Lender`); `vixmix-pipewire` on
 the model and the engine; `vixmix-host` on all four; `vixmix-control` on the model only (change
-request 14); `app/` on the host and the model only.
+request 14); `app/` on the host, the model and `vixmix-control`.
 
 ## Change requests
 

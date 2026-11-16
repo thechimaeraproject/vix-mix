@@ -186,6 +186,18 @@ impl Pacer {
         self.next()
     }
 
+    /// The setup was changed from outside the window (a control request) at `now`: the host
+    /// is served as soon as the 60 Hz cap allows, without a frame. For the hidden window,
+    /// which draws nothing and may be waiting for no event at all: the host's poll is what
+    /// tells the control's followers of the change and makes the save due. A serve already
+    /// due sooner keeps its time. In view, [`Pacer::wake`] is asked instead: the frame it
+    /// draws serves the host.
+    pub fn serve_soon(&mut self, now: Instant) -> Next {
+        let at = now.max(self.slot + FRAME_INTERVAL);
+        self.serve = Some(self.serve.map_or(at, |due| due.min(at)));
+        self.next()
+    }
+
     /// An input event that egui wants drawn: as soon as the 60 Hz cap allows, never while
     /// the window is hidden.
     pub fn wake(&mut self, now: Instant) -> Wake {
@@ -514,6 +526,44 @@ mod tests {
         let slot = pacer.begin(served + FRAME_INTERVAL);
         pacer.end(slot, slot, None, Wants::default());
         assert_eq!(pacer.polled(slot + MS, None, true), Next::Wait);
+    }
+
+    #[test]
+    fn a_change_from_outside_serves_a_hidden_idle_window_and_then_when_the_host_asks() {
+        let t = Instant::now();
+        let mut pacer = Pacer::new(t);
+        pacer.seen.minimized = true;
+        let slot = pacer.begin(t);
+        // Hidden, no backend, nothing the host waits for: the loop sleeps until an event,
+        // and input does not wake it.
+        assert_eq!(pacer.end(slot, t + MS, None, Wants::default()), Next::Wait);
+        assert_eq!(pacer.wake(t + Duration::from_secs(60)), Wake::Nothing);
+        // A minute later a control request changes the setup: the host is served at once
+        // (the last tick is long past), with no frame.
+        let changed = t + Duration::from_secs(60);
+        assert_eq!(pacer.serve_soon(changed), Next::Serve(changed));
+        // Served, the host wants its debounced save in half a second: the tick after.
+        let slot = pacer.begin(changed);
+        assert_eq!(slot, changed);
+        let saves = Wants {
+            poll: Some(Duration::from_millis(500)),
+            ..Wants::default()
+        };
+        assert_eq!(
+            pacer.end(slot, changed + MS, None, saves),
+            Next::Serve(changed + MS + Duration::from_millis(500))
+        );
+        // A second change a moment after the tick: no sooner than the cap, and sooner than
+        // the save.
+        assert_eq!(
+            pacer.serve_soon(changed + 2 * MS),
+            Next::Serve(changed + FRAME_INTERVAL)
+        );
+        // Asked again before it ran: the serve that is due keeps its time.
+        assert_eq!(
+            pacer.serve_soon(changed + 3 * MS),
+            Next::Serve(changed + FRAME_INTERVAL)
+        );
     }
 
     #[test]

@@ -3334,6 +3334,7 @@ dependencies = [
  "png",
  "pollster",
  "signal-hook",
+ "vixmix-control",
  "vixmix-host",
  "vixmix-model",
  "vixmix-plugins",
